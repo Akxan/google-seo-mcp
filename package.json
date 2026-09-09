@@ -1,0 +1,61 @@
+{
+  "name": "google-seo-mcp",
+  "version": "0.3.0",
+  "description": "MCP server for Google Search Console and Google Analytics 4 Data API",
+  "main": "index.js",
+  "scripts": {
+    "test": "node test/smoke.mjs",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "auth": "tsx src/auth.ts",
+    "inspector": "npx @modelcontextprotocol/inspector node dist/index.js",
+    "start:http": "node dist/index.js --http",
+    "check:secrets": "scripts/check-secrets.sh --all",
+    "prepare": "git config core.hooksPath .githooks"
+  },
+  "keywords": [
+    "mcp",
+    "seo",
+    "geo",
+    "search-console",
+    "google-analytics",
+    "wordpress",
+    "model-context-protocol"
+  ],
+  "type": "module",
+  "bin": {
+    "google-seo-mcp": "dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "cheerio": "^1.2.0",
+    "google-auth-library": "^11.0.2",
+    "googleapis": "^178.1.1",
+    "image-size": "^2.0.2",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.0",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  },
+  "files": [
+    "dist",
+    "scripts",
+    "test"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "author": "Akxan",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Akxan/google-seo-mcp.git"
+  },
+  "homepage": "https://github.com/Akxan/google-seo-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/Akxan/google-seo-mcp/issues"
+  }
+}

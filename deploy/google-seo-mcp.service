@@ -1,0 +1,24 @@
+# /etc/systemd/system/google-seo-mcp.service
+[Unit]
+Description=Google SEO MCP server (Search Console + GA4)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=seo
+Group=seo
+WorkingDirectory=/opt/google-seo-mcp
+EnvironmentFile=/etc/google-seo-mcp.env
+ExecStart=/usr/bin/node /opt/google-seo-mcp/dist/index.js --http
+Restart=always
+RestartSec=5
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/google-seo-mcp
+
+[Install]
+WantedBy=multi-user.target

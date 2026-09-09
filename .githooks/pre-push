@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Scan every commit tree that is about to be pushed.
+set -e
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
+  scripts/check-secrets.sh --tree "$local_sha"
+done
