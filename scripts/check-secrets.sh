@@ -16,7 +16,7 @@ PATTERN="$GENERIC"; [ -n "$LOCAL" ] && PATTERN="$GENERIC|$LOCAL"
 # Files that legitimately contain example IPs / paths are excluded from the IP/path rules only via allowlist below.
 ALLOW='^(package-lock\.json|test/tools\.snap\.json|scripts/check-secrets\.sh|\.githooks/.*)$'
 # Placeholder / loopback values that are fine to publish.
-BENIGN='127\.0\.0\.1|0\.0\.0\.0|1\.2\.3\.4|example\.com|/Users/<|/home/<'
+BENIGN='127\.0\.0\.1|0\.0\.0\.0|1\.2\.3\.4|example\.com|/Users/<|/home/<|/home/node/'
 
 mode="${1:-staged}"
 status=0

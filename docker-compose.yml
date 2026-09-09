@@ -1,11 +1,22 @@
+# Production deployment on a VPS behind a reverse proxy (see deploy/ for Caddy / Nginx samples).
+#   mkdir -p secrets/ssh && cp /path/service-account.json secrets/ && ssh-keygen -t ed25519 -f secrets/ssh/id_ed25519 -N ""
+#   cp .env.example .env && edit .env (WP_SITES identityFile must be /home/node/.ssh/id_ed25519)
+#   docker compose up -d --build && curl http://127.0.0.1:8787/healthz
 services:
   google-seo-mcp:
     build: .
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8787:8080"
+    env_file: .env
     environment:
-      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?set MCP_AUTH_TOKEN in .env}
-      GOOGLE_APPLICATION_CREDENTIALS: /secrets/credentials.json
+      MCP_TRANSPORT: http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8080
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/service-account.json
     volumes:
-      - ./credentials.json:/secrets/credentials.json:ro
+      - ./secrets/service-account.json:/secrets/service-account.json:ro
+      - ./secrets/ssh:/home/node/.ssh:ro
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
