@@ -11,3 +11,9 @@ env
 !.env.example
 CLAUDE.local.md
 .secret-patterns.local
+
+# Any JSON at the repo root is treated as a credential unless explicitly allowed
+/*.json
+!/package.json
+!/package-lock.json
+!/tsconfig.json
