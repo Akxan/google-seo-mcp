@@ -205,7 +205,7 @@ MCP_TRANSPORT=http MCP_AUTH_TOKEN=$(openssl rand -hex 32) node dist/index.js --h
 curl http://127.0.0.1:8080/healthz
 ```
 
-Stateless Streamable HTTP: a fresh server instance per request, Bearer-token auth, loopback bind by default. [`deploy/`](deploy/) contains a systemd unit, an env-file example and Caddy/Nginx reverse-proxy samples (Nginx needs `proxy_buffering off`). `Dockerfile` and `docker-compose.yml` are provided. Connect remote clients with
+Stateless Streamable HTTP: a fresh server instance per request, Bearer-token auth, loopback bind by default. `deploy/vps-self-update.sh` updates a Docker deployment in place, and `.github/workflows/deploy.yml` runs it on every push to `main` through a forced-command SSH deploy key stored in repository secrets (`VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`). [`deploy/`](deploy/) contains a systemd unit, an env-file example and Caddy/Nginx reverse-proxy samples (Nginx needs `proxy_buffering off`). `Dockerfile` and `docker-compose.yml` are provided. Connect remote clients with
 
 ```bash
 claude mcp add --transport http google-seo https://mcp.example.com/mcp --header "Authorization: Bearer <token>"
