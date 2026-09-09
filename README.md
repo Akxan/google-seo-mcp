@@ -2,7 +2,7 @@
 
 # google-seo-mcp
 
-**An MCP server that lets an AI assistant run SEO and GEO operations for your websites — diagnose, then fix, in one conversation.**
+**SEO & GEO MCP server for Claude and other AI agents — Google Search Console, Google Analytics 4, PageSpeed Insights, structured data, llms.txt, WordPress and GitHub as 72 tools, so an assistant can diagnose and fix technical SEO, content and generative-engine-optimization issues in one conversation.**
 
 [![GitHub stars](https://img.shields.io/github/stars/Akxan/google-seo-mcp?style=flat&logo=github)](https://github.com/Akxan/google-seo-mcp/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -21,6 +21,8 @@ Google Search Console · Google Analytics 4 · PageSpeed & CrUX · on-page and G
 ---
 
 ## Why
+
+**google-seo-mcp** is a [Model Context Protocol](https://modelcontextprotocol.io) server for **SEO automation with AI agents**. It connects **Google Search Console**, **Google Analytics 4 (GA4)**, **PageSpeed Insights / Core Web Vitals**, the **Chrome UX Report**, **Knowledge Graph**, **Wikidata**, **IndexNow**, **WordPress** (Yoast SEO, WP-CLI over SSH) and **GitHub**, and adds **GEO (generative engine optimization)** checks: AI crawler access for GPTBot, OAI-SearchBot, ClaudeBot and PerplexityBot, `llms.txt`, JSON-LD / schema.org structured data, E-E-A-T signals and AI citation tracking.
 
 Most SEO MCP servers wrap one API. Real SEO work crosses several: you find a striking-distance keyword in Search Console, check the landing page's engagement in GA4, audit the page, rewrite its title and FAQ, publish the change to WordPress or a static-site repo, then watch the numbers. This server gives an assistant every step of that loop as tools, with the guard-rails a public-facing site needs: read-only mode, destructive-action annotations, and untrusted-content instructions.
 
@@ -243,6 +245,10 @@ test/               smoke test + tool snapshot
 ## Contributing
 
 Issues and pull requests are welcome. Run `npm test` and `npm run check:secrets` before pushing; add new tools to the matching `src/tools/*.ts` module, give every parameter a `.describe()`, and update this README.
+
+## Keywords
+
+MCP server · Model Context Protocol · SEO MCP · GEO · generative engine optimization · AI SEO agent · Claude MCP · Claude Code · Google Search Console API · Google Analytics 4 API · GA4 Data API · PageSpeed Insights API · Core Web Vitals · CrUX · technical SEO audit · site crawler · structured data · schema.org · JSON-LD · FAQPage · llms.txt · AI crawlers · GPTBot · ClaudeBot · PerplexityBot · robots.txt · sitemap · hreflang · keyword cannibalization · striking distance keywords · content decay · E-E-A-T · Knowledge Graph · IndexNow · WordPress SEO automation · Yoast SEO · WP-CLI · TypeScript
 
 ## Star history
 
