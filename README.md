@@ -415,3 +415,7 @@ MCP server · Model Context Protocol · SEO MCP · GEO · generative engine opti
 ## License
 
 [MIT](LICENSE)
+
+## Community
+
+This project takes part in and acknowledges the [LINUX DO](https://linux.do/) community. 本项目积极参与并认可 [linux.do 社区](https://linux.do/)。

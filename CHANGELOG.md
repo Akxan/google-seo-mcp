@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Changed
 - README (both languages): client setup for the Claude apps, OpenAI Codex, Cursor, VS Code, Gemini CLI and any other MCP client, with timeout notes and the ChatGPT OAuth limitation; tagline, keywords and repository description mention Codex/Cursor and the current tool count.
 - README (both languages): "Works with any agent" section: compatibility table, Claude Agent SDK and OpenAI Agents SDK examples (DeepSeek through an OpenAI-compatible endpoint), third-party and local models with a read-only trimmed second instance, and the known limits (ChatGPT OAuth-only connectors, legacy SSE clients, Codex providers needing the Responses API).
+- README (both languages): community acknowledgment of LINUX DO.
 
 ## [0.5.1] - 2026-09-09
 
