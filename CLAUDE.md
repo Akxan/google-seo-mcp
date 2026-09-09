@@ -83,7 +83,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 
 按需的，触发条件明确：
 - **新增了集成领域或依赖**（接入新的外部服务、换了库）：更新 README 的「Tech stack」表和架构图/说明、「Keywords」段；`package.json` 的 `description`/`keywords`；用 `gh repo edit --description ... --add-topic ...` 同步仓库描述和主题（主题上限 20 个，加新的要先删旧的）。
-- **新增或改动工具**：README 两份的工具表、示例提示（如果新工具值得展示）、配置表（新密钥）、CHANGELOG。
+- **新增或改动工具**：README 两份的工具表、示例提示（如果新工具值得展示）、配置表（新密钥）、CHANGELOG；仓库描述里写死的工具总数要同步（`gh repo edit --description`，README 的计数是脚本自动同步的，描述不是）。
 - **发版**：版本号、CHANGELOG 段落、tag、GitHub Release（见上面第 8 步）。发行说明用英文、按领域分组，和 README 口径一致。
 - **不要做的**：不为纯文档或重构提交改版本号；不手改徽章数字；不在描述里写无法验证的形容词。
 - **不发布到 npm 或 MCP 注册中心**（用户决定，2026-09-09）：`package.json` 标了 `private: true`，安装方式只有 clone 加构建。

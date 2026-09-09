@@ -4,6 +4,9 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+- README (both languages): client setup for the Claude apps, OpenAI Codex, Cursor, VS Code, Gemini CLI and any other MCP client, with timeout notes and the ChatGPT OAuth limitation; tagline, keywords and repository description mention Codex/Cursor and the current tool count.
+
 ## [0.5.1] - 2026-09-09
 
 ### Added

@@ -1,8 +1,8 @@
 # Google SEO MCP
 
-把 **Google Search Console API** 和 **Google Analytics 4 Data API** 封装成一个 MCP 服务，
-让 Claude（Claude Code / Claude Desktop / 任何 MCP 客户端）可以直接查询你网站的搜索表现、
-索引状态、站点地图和 GA4 流量数据，用于日常 SEO 运维。
+把 **Google Search Console**、**Google Analytics 4**、PageSpeed 与 CrUX、网页与 GEO 审计（结构化数据、llms.txt、AI 爬虫）、
+可选的 WordPress（SSH + WP-CLI）和 GitHub 封装成一个 MCP 服务，让 Claude、Codex、Cursor 等任何 MCP 客户端
+可以直接查询你网站的搜索表现、索引状态和 GA4 流量，并动手修改页面，用于日常 SEO / GEO 运维。
 
 支持两种运行方式：
 
@@ -129,6 +129,8 @@ Claude Desktop（`claude_desktop_config.json`）：
 }
 ```
 
+Codex、Cursor、VS Code、Gemini CLI 的接法见下文「连接客户端」，本机 stdio 同样只需要启动命令。
+
 调试：`npm run inspector` 会打开 MCP Inspector。
 
 ## 4. 部署到 Linux 服务器（24 小时运行）
@@ -170,14 +172,82 @@ echo "MCP_AUTH_TOKEN=$(openssl rand -hex 32)" > .env
 docker compose up -d --build
 ```
 
-### 从 Claude 连接远程服务
+### 连接客户端（Claude、Codex、Cursor、VS Code、Gemini CLI 或任何 MCP 客户端）
+
+服务走的是标准 MCP 协议，不只给 Claude 用。远程接法对所有客户端都一样：URL 填 `https://mcp.example.com/mcp`，请求头加 `Authorization: Bearer <MCP_AUTH_TOKEN>`。
+
+**Claude Code**
 
 ```bash
 claude mcp add --transport http google-seo https://mcp.example.com/mcp \
   --header "Authorization: Bearer <MCP_AUTH_TOKEN>"
 ```
 
-Claude Desktop / claude.ai 的「自定义连接器」同样填 URL 和 Bearer Token。
+**Claude Desktop / claude.ai / 手机 App**：设置 → 连接器 → 添加自定义连接器，URL 填上面的地址，认证选「无」，在「Request headers」里加 `Authorization: Bearer <MCP_AUTH_TOKEN>`。
+
+**OpenAI Codex**（`~/.codex/config.toml`；令牌从环境变量读，先在 shell 配置里 `export GOOGLE_SEO_MCP_TOKEN=…`）：
+
+```toml
+[mcp_servers.google-seo]
+url = "https://mcp.example.com/mcp"
+bearer_token_env_var = "GOOGLE_SEO_MCP_TOKEN"
+tool_timeout_sec = 600          # pagespeed、site_crawl 会超过 Codex 默认的 60 秒
+
+# 本机 stdio 写法
+# [mcp_servers.google-seo]
+# command = "node"
+# args = ["/绝对路径/Google-SEO-MCP/dist/index.js"]
+```
+
+**Cursor**（`~/.cursor/mcp.json`，或项目内的 `.cursor/mcp.json`）：
+
+```json
+{
+  "mcpServers": {
+    "google-seo": {
+      "url": "https://mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer <MCP_AUTH_TOKEN>" }
+    }
+  }
+}
+```
+
+**VS Code**（Copilot 代理模式；`.vscode/mcp.json` 或用户级 mcp.json）：
+
+```json
+{
+  "servers": {
+    "google-seo": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer <MCP_AUTH_TOKEN>" }
+    }
+  }
+}
+```
+
+**Gemini CLI**（`~/.gemini/settings.json`；`httpUrl` 表示 Streamable HTTP，`timeout` 单位是毫秒）：
+
+```json
+{
+  "mcpServers": {
+    "google-seo": {
+      "httpUrl": "https://mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer <MCP_AUTH_TOKEN>" },
+      "timeout": 600000
+    }
+  }
+}
+```
+
+**其他 MCP 客户端**：填同样的 URL 和请求头即可（Streamable HTTP，无状态，每次调用都是一个 POST，没有会话要维持），或者本机用 stdio 启动 `node dist/index.js`。命令行快速验证：
+
+```bash
+curl -s https://mcp.example.com/mcp -H "Authorization: Bearer <MCP_AUTH_TOKEN>" -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+两点注意：`pagespeed`、`site_crawl`、`gsc_index_coverage` 这类工具会跑几分钟（期间有进度通知），客户端的单工具超时若默认 60 秒要调大；ChatGPT 的自定义连接器目前只接受 OAuth，填不了固定令牌，暂时接不上。
 
 ## WordPress 工具（可选）
 
