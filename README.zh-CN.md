@@ -428,3 +428,9 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 - 「GA4 里过去 7 天自然搜索流量最高的落地页，带跳出率」→ `ga_run_report`，
   `dimensions: ["landingPage"]`, `metrics: ["sessions","bounceRate"]`,
   `dimensionFilters: [{ field: "sessionDefaultChannelGroup", value: "Organic Search" }]`
+
+## 许可与社区
+
+[MIT](LICENSE) 协议。
+
+本项目积极参与并认可 [linux.do 社区](https://linux.do/)。
