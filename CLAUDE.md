@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目是什么
 
-一个 MCP 服务（TypeScript，`@modelcontextprotocol/sdk`），把 Google Search Console、Google Analytics 4 Data API，以及可选的 WordPress（通过 SSH 执行 WP-CLI）封装成工具，用于 SEO 运维。本地客户端走 stdio，服务器 24 小时运行走 Streamable HTTP。面向用户的说明在 `README.md`（英文）和 `README.zh-CN.md`（中文）。
+一个 MCP 服务（TypeScript，`@modelcontextprotocol/sdk`），把 Google Search Console、Google Analytics 4（Data API 与只读 Admin API）、网页与 GEO 审计（PageSpeed、CrUX、结构化数据、AI 爬虫、llms.txt 等）、跨数据源分析，以及可选的 WordPress（通过 SSH 执行 WP-CLI）和 GitHub 读写封装成约 80 个工具，用于 SEO/GEO 运维。生产环境是部署在服务器上的 Streamable HTTP 实例，所有客户端都连它；本机 stdio 只用于开发验证。面向用户的说明在 `README.md`（英文）和 `README.zh-CN.md`（中文）。
 
 ## 常用命令
 
@@ -29,6 +29,8 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 
 脚本要放在仓库根目录运行（需要从 `node_modules` 解析 SDK），用完删掉。测 HTTP 模式用 `curl -X POST /mcp`，带 `Authorization: Bearer` 和 `Accept: application/json, text/event-stream` 两个头。
 
+**写入类工具的测试只能作用于临时对象**：WordPress 用 `wp post create --post_status=draft` 建的草稿（测完 `--force` 删除）、临时重定向（建了就删）、与当前值相同的无变化写入；GitHub 用临时分支（`createBranch`，测完删分支）；Search Console 只重新提交已有站点地图。绝不在真实文章、真实分支上做测试写入。
+
 ## 架构
 
 - `src/server.ts`：`createServer()` 创建 `McpServer` 并注册全部工具。两种传输都调用它；HTTP 传输是**每个请求新建一个服务实例**（无状态，`sessionIdGenerator: undefined`）。它包了一层 `registerTool`：按工具名推断注解（`WRITE_TOOLS`、`DESTRUCTIVE_TOOLS` 正则）、只读模式下跳过写入工具、按 `toolsetOf()` 应用工具集筛选。**新增写入类工具时必须让名字匹配这两个正则**，否则会被当成只读。服务器 instructions 在 `buildInstructions()` 里。
@@ -36,6 +38,8 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 - `src/google.ts`：单例 `GoogleAuth`，以及 `googleapis` 客户端工厂（`searchconsole v1`、`analyticsdata v1beta`、`analyticsadmin v1beta`）。凭据查找顺序：`GOOGLE_CREDENTIALS_JSON` → `GOOGLE_APPLICATION_CREDENTIALS` → `~/.config/google-seo-mcp/credentials.json` → ADC。GA4 用的是 `googleapis` 的 REST 客户端而不是 `@google-analytics/data`，避免引入 gRPC。
 - `src/util.ts`：`tool(fn)` 包装所有处理函数，返回值 JSON 序列化进文本内容，抛出的异常经 `formatError` 变成 `isError` 结果（缺凭据和 403 会附加提示）。`resolveDate()` 把 `today`、`yesterday`、`NdaysAgo` 转成 `YYYY-MM-DD`，因为 Search Console 只接受绝对日期。
 - `src/tools/gsc.ts`、`src/tools/ga.ts`：Google 工具。输入 schema 是传给 `registerTool` 的 zod raw shape，`.describe()` 文本要写清楚，那是 LLM 唯一能看到的说明。GA 的行数据由 `tabulate()` 拍平成 `{维度: 值, 指标: 数字}` 对象。
+  - `gsc.ts` 导出 `query()`、`normalizePath()` 供其他模块复用；`gsc_delete_*`、`gsc_add_site` 是写入工具，名字必须保持这些前缀。
+  - `ga.ts`：漏斗报告走 v1alpha，`googleapis` 没封装，用 `getAuth().getClient().request()` 直接 POST；漏斗步骤里页面条件要用 `unifiedPagePathScreen`（`pagePath` 不被接受），返回的 `metricHeaders` 会重复一遍，按名字去重后再对应 `metricValues`。`ga_property_config` 混用 admin v1beta 和 v1alpha（受众、增强型衡量只在 alpha）。`ga_check_compatibility` 在组合本身不兼容时 API 返回 400 而不是列表，已捕获成 `compatible:false`。
 - `src/tools/web.ts`：不依赖 Google 授权的网页检查（`page_audit` 用 cheerio 解析、`pagespeed`、`sitemap_check`、`robots_check`）。`collectSitemapUrls()` 和 `parseRobots()` 被 gsc 模块复用。
 - `src/tools/crawl.ts`：`site_crawl`（去重用去尾斜杠的 key，但请求始终用原始 URL，否则会误报 301 链）、`hreflang_check`、`compare_pages`（识别反爬页）、`social_preview_check`、`keyword_suggest`。
 - `src/tools/analysis.ts`：跨数据源分析（`migration_check`、`cross_site_links`、`content_refresh_candidates`、`knowledge_graph_check`、`crux_history`、`brand_mentions`、`reviews_snapshot`），依赖 `gsc.ts` 导出的 `query()` 和 `normalizePath()`。
@@ -45,7 +49,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
   - Yoast 字段就是原始 post meta（`_yoast_wpseo_title`、`_yoast_wpseo_metadesc` 等）。写完 meta 后 `rebuildYoastIndexable()` 用 `wp eval` 调 Yoast 的 `Indexable_Builder`，否则前台标题不会变。`purgeCache()` 清该文章在 WP Rocket、Super Cache、W3TC、LiteSpeed 中的缓存。
   - `scripts/wp-helper.php` 承载所有批量或需要 PHP 逻辑的操作（SEO 状态、批量 Yoast、媒体、分类、内链建议、Yoast Premium 重定向），输入输出都是 STDIN/STDOUT 的 JSON，由 `runHelper()` 调用。`wpPostIndexForHost()` 缓存全站 URL 到文章 ID 的映射，供 `gsc_opportunities` 使用。
   - `scripts/mfn-builder.php` 处理 BeTheme（Muffin Builder）的文章，这类文章正文以 base64 加 PHP 序列化的形式存在 `mfn-page-items` meta 里，`post_content` 是空的。`ensureHelper()` 在 sha256 不一致时把脚本上传到主机的 `~/.google-seo-mcp/`，再用 `wp eval-file` 执行。`eval-file` 的代码跑在函数作用域内，PHP 里不能依赖 `global` 变量。`set` 动作会重新生成 `mfn-page-items-seo` 并调用 `wp_update_post`，让 Yoast 和缓存插件感知到变化。
-- `deploy/`：systemd 单元、环境变量样例、Caddy 和 Nginx 反代示例（Nginx 必须 `proxy_buffering off`，否则 SSE 不通）。`Dockerfile` 和 `docker-compose.yml` 用于 HTTP 模式。
+- 部署：`Dockerfile`（镜像内含 openssh-client、`scripts/`，以 `node` 用户运行，带 HEALTHCHECK）与 `docker-compose.yml`（`env_file: .env`，挂载 `secrets/service-account.json` 与 `secrets/ssh/`，宿主 `127.0.0.1:8787`）是生产方式；`deploy/vps-self-update.sh` 在服务器上拉取、重建、健康检查，`deploy/deploy-vps.sh` 从本机远程触发它；`deploy/` 里另有 systemd、Caddy、Nginx 样例（Nginx 必须 `proxy_buffering off`，否则 SSE 不通）。`src/env.ts` 按包根目录定位 `.env`，容器内由 compose 提供环境变量。
 
 ## 公共仓库规则（必须遵守）
 
@@ -59,16 +63,29 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 - 提交身份用仓库本地设置的 GitHub noreply 邮箱，不用个人邮箱。
 - 不要把 `.env`、`service-account.json`、`CLAUDE.local.md`、`.secret-patterns.local` 从 `.gitignore` 移除。
 
+## 新增或修改工具的完整流程
+
+1. 在对应的 `src/tools/*.ts` 模块里用 `server.registerTool` 注册；名字用 `前缀_动作` 形式，前缀决定工具集（见 `toolsetOf()`）；写入类工具名必须匹配 `WRITE_TOOLS`（删除类再匹配 `DESTRUCTIVE_TOOLS`）。每个参数都要 `.describe()`，可枚举的用 `z.enum`。
+2. 需要新密钥的：`.env` 与 `.env.example` 各加一行带用途注释的条目；密钥缺失时抛出带申请路径的错误。
+3. `npm run build`，用临时客户端脚本对真实数据验证（写入只用临时对象），删掉脚本。
+4. `UPDATE_SNAPSHOT=1 npm test` 刷新工具清单快照，再 `npm test` 确认通过。
+5. 更新 `README.md`（工具表、分组计数、顶部徽章里的工具数、配置表）和 `README.zh-CN.md`；必要时更新 `buildInstructions()`。
+6. 中文提交信息，`git push`；推送会自动部署，用 `gh run watch` 看到成功后，用线上地址调一次新工具确认（`/healthz` 先通）。
+7. 涉及服务器 `.env` 的变更（新密钥、`WP_SITES`）要在服务器上同步并重启容器。
+
 ## 配置与密钥
 
 - **`.env` 是唯一真源**（gitignored）：Google 凭据路径、各 API 密钥、`WP_SITES`、可选第三方密钥、HTTP 模式参数，外加注释形式的站点信息、资源 ID、客户端配置位置和依赖清单。`src/env.ts` 在 `index.ts` / `auth.ts` 启动时读取它（按包根目录定位，与工作目录无关；已存在的环境变量优先）。`.env.example` 是脱敏模板。
-- 两个客户端配置只包含启动命令，不再各自存密钥：新增或更换密钥只改 `.env`，然后重启桌面 App / 新开 Claude Code 会话。
+- **服务器有自己的一份 `.env`**（位置见 `CLAUDE.local.md`），不会自动同步：新增或更换密钥要本机和服务器各改一次，服务器改完需要 `docker compose up -d` 重启容器才生效（`env_file` 只在启动时读取）。
+- 客户端（Claude Code、桌面 App、网页、手机）都连生产 HTTP 实例，本机不再有 stdio 注册；新工具部署后客户端在下一次新对话自动拿到，不需要重连。
 - 新增需要密钥的工具时：在 `.env` 和 `.env.example` 各加一行带用途注释的条目，工具在密钥缺失时抛出带申请路径的错误（不要在注册阶段隐藏工具）。
 
 ## 约定与注意事项
 
 - stdio 模式下除 MCP 协议外不能往 stdout 写任何东西，日志一律用 `console.error`。
 - `.env`、`service-account.json`、`credentials.json`、`client_secret*.json` 已在 `.gitignore`，秘密不进仓库，也不要出现在工具描述里。
-- 工具同时注册在 Claude Code（用户级，`claude mcp get google-seo`）和 Claude 桌面 App（`~/Library/Application Support/Claude/claude_desktop_config.json`），两边都只指向 `dist/index.js`。新增工具只需重新构建；改密钥只改 `.env`。
+- 80 个工具的定义约 2.2 万 token，每次对话都会加载：描述写得准确但不要啰嗦，新工具优先合并进现有模块而不是再拆文件；`SEO_MCP_TOOLSETS` 可按需裁剪。
+- `buildInstructions()` 里点名了推荐先用的工具（snapshot、opportunities 等），新增重要的分析类工具时把它加进去。
+- 密钥扫描器误报时，在 `scripts/check-secrets.sh` 的 `BENIGN`（合法占位值）或 `ALLOW`（合法文件）里加豁免，不要绕过钩子提交。
 - Search Console 数据延迟 2 到 3 天；URL 检查每个资源每天约 2000 次配额，不要对整站循环调用。
 - 对基于构建器的文章，`wp_update_post` 的 `content` 参数会被主题忽略，要用 `wp_builder_*` 工具。第一次编辑某篇文章前先跑 `wp_builder_check`。
