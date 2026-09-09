@@ -16,7 +16,7 @@
 
 Google Search Console · Google Analytics 4 · PageSpeed & CrUX · on-page and GEO audits · WordPress over SSH · GitHub
 
-[Quick start](#quick-start) · [Tools](#what-it-can-do) · [Architecture](#architecture) · [Configuration](#configuration) · [Deploy 24/7](#running-as-a-247-http-server) · [中文文档](README.zh-CN.md)
+[Quick start](#quick-start) · [Tools](#what-it-can-do) · [Any agent](#works-with-any-agent) · [Architecture](#architecture) · [Configuration](#configuration) · [Deploy 24/7](#running-as-a-247-http-server) · [中文文档](README.zh-CN.md)
 
 </div>
 
@@ -235,6 +235,100 @@ curl -s https://mcp.example.com/mcp -H "Authorization: Bearer <token>" -H "Conte
 
 Two things to know: `pagespeed`, `site_crawl` and `gsc_index_coverage` stream progress notifications but can run for minutes, so raise the client's per-tool timeout if it defaults to 60 s; and ChatGPT's custom connectors accept only OAuth, so they cannot use a static token yet.
 
+## Works with any agent
+
+MCP is an open standard, so nothing here is tied to Claude. Whatever speaks MCP connects directly; whatever can call functions connects through a thin bridge. The one hard limit is a model without function calling: it cannot call tools at all, whichever vendor it comes from.
+
+| You have | How it connects | Notes |
+|---|---|---|
+| An MCP client: Claude apps, Codex, Cursor, VS Code, Gemini CLI, Cline, Cherry Studio, n8n, Dify, … | URL + `Authorization: Bearer <token>` ([Connect a client](#connect-a-client)) | Raise the per-tool timeout for `pagespeed` and `site_crawl` |
+| An agent you write: Claude Agent SDK, OpenAI Agents SDK, LangChain, Google ADK, Vercel AI SDK | The SDK's MCP client, same URL and header | Examples below |
+| A third-party or local model: DeepSeek, Qwen, GLM, Kimi, Ollama | An MCP client that lets you choose the model (Cherry Studio, Cline), or an SDK pointed at the provider's OpenAI-compatible `base_url` | Needs function calling; give it a trimmed read-only instance (below) |
+| A no-code platform that can send a URL but no headers | A read-only instance behind a reverse-proxy path that injects the header | Keeps the main instance's token out of any URL |
+
+### From an agent SDK
+
+Claude Agent SDK (TypeScript; Python has the same shape):
+
+```ts
+import { query } from "@anthropic-ai/claude-agent-sdk";
+
+for await (const m of query({
+  prompt: "Snapshot example.com for the last 28 days and list the queries ranking 8-20 with the most impressions",
+  options: {
+    mcpServers: {
+      "google-seo": {
+        type: "http",
+        url: "https://mcp.example.com/mcp",
+        headers: { Authorization: `Bearer ${process.env.GOOGLE_SEO_MCP_TOKEN}` },
+      },
+    },
+    allowedTools: ["mcp__google-seo__*"], // without this the agent sees the tools but will not call them
+  },
+})) {
+  if (m.type === "result" && m.subtype === "success") console.log(m.result);
+}
+```
+
+OpenAI Agents SDK (Python). The same code drives any OpenAI-compatible provider; DeepSeek shown, drop the `model=` line for OpenAI itself:
+
+```python
+import os
+from agents import Agent, Runner, AsyncOpenAI, OpenAIChatCompletionsModel, set_tracing_disabled
+from agents.mcp import MCPServerStreamableHttp
+
+async def main():
+    async with MCPServerStreamableHttp(
+        name="google-seo",
+        params={"url": "https://mcp.example.com/mcp",
+                "headers": {"Authorization": f"Bearer {os.environ['GOOGLE_SEO_MCP_TOKEN']}"}},
+    ) as seo:
+        set_tracing_disabled(disabled=True)
+        deepseek = AsyncOpenAI(base_url="https://api.deepseek.com", api_key=os.environ["DEEPSEEK_API_KEY"])
+        agent = Agent(
+            name="seo",
+            instructions="Use the tools; quote numbers with their period and source.",
+            model=OpenAIChatCompletionsModel(model="deepseek-v4-flash", openai_client=deepseek),
+            mcp_servers=[seo],
+        )
+        result = await Runner.run(agent, "Can GPTBot and PerplexityBot fetch https://example.com/ ?")
+        print(result.final_output)
+```
+
+LangChain (`langchain-mcp-adapters`), Google ADK (`MCPToolset`) and the Vercel AI SDK (`experimental_createMCPClient`) take the same URL and header.
+
+### Third-party and local models
+
+- Desktop: Cherry Studio and Cline let you pick DeepSeek, Qwen, GLM, Kimi or a local Ollama model and add this server as a Streamable HTTP MCP server with the Authorization header.
+- The tool catalogue is about 21k tokens and travels with every turn, and 80 tools are a lot for smaller models. Point them at a second, read-only instance with a trimmed toolset and its own token, so a confused model can neither write nor see what it does not need:
+
+```yaml
+# docker-compose.yml: a second service next to the main one
+  google-seo-mcp-lite:
+    build: .
+    restart: unless-stopped
+    ports: ["127.0.0.1:8788:8080"]
+    env_file: .env
+    environment:
+      MCP_TRANSPORT: http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8080
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN_LITE}     # its own token, defined in .env
+      SEO_MCP_READ_ONLY: "1"
+      SEO_MCP_TOOLSETS: gsc,ga4,web,analysis
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/service-account.json
+    volumes:
+      - ./secrets/service-account.json:/secrets/service-account.json:ro
+```
+
+- Whatever you connect, tool results (Search Console rows, GA4 numbers, WordPress content) are sent to that model's provider. Choose accordingly.
+
+### Known limits
+
+- ChatGPT's custom connectors accept only OAuth, so a static token does not work there yet; an OAuth layer in front of the server would fix it.
+- Clients that only implement the legacy HTTP+SSE transport: this server speaks Streamable HTTP only (stateless, one `POST` per call). Open an issue if you need SSE.
+- Codex custom model providers must implement the Responses API, so Codex cannot drive a Chat-Completions-only provider such as DeepSeek; use an SDK or Cherry Studio for those.
+
 ## Configuration
 
 All settings live in `.env` (see [`.env.example`](.env.example), which documents every key).
@@ -312,7 +406,7 @@ Issues and pull requests are welcome. CI runs build, tests and the secret scan o
 
 ## Keywords
 
-MCP server · Model Context Protocol · SEO MCP · GEO · generative engine optimization · AI SEO agent · Claude MCP · Claude Code · OpenAI Codex MCP · Cursor MCP · Gemini CLI MCP · Google Search Console API · Google Analytics 4 API · GA4 Data API · PageSpeed Insights API · Core Web Vitals · CrUX · technical SEO audit · site crawler · structured data · schema.org · JSON-LD · FAQPage · llms.txt · AI crawlers · GPTBot · ClaudeBot · PerplexityBot · robots.txt · sitemap · hreflang · keyword cannibalization · striking distance keywords · content decay · E-E-A-T · Knowledge Graph · IndexNow · WordPress SEO automation · Yoast SEO · WP-CLI · TypeScript
+MCP server · Model Context Protocol · SEO MCP · GEO · generative engine optimization · AI SEO agent · Claude MCP · Claude Code · OpenAI Codex MCP · Cursor MCP · Gemini CLI MCP · Claude Agent SDK · OpenAI Agents SDK · LangChain MCP · n8n · Dify · DeepSeek · Google Search Console API · Google Analytics 4 API · GA4 Data API · PageSpeed Insights API · Core Web Vitals · CrUX · technical SEO audit · site crawler · structured data · schema.org · JSON-LD · FAQPage · llms.txt · AI crawlers · GPTBot · ClaudeBot · PerplexityBot · robots.txt · sitemap · hreflang · keyword cannibalization · striking distance keywords · content decay · E-E-A-T · Knowledge Graph · IndexNow · WordPress SEO automation · Yoast SEO · WP-CLI · TypeScript
 
 ## Star history
 
