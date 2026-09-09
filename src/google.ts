@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { envValue } from "./env.js";
 import os from "node:os";
 import path from "node:path";
 import { GoogleAuth } from "google-auth-library";
@@ -24,11 +25,11 @@ export const DEFAULT_CREDENTIALS_PATH = path.join(
  * 4. Application Default Credentials (gcloud auth application-default login)
  */
 function resolveCredentialOptions(): { keyFile?: string; credentials?: object } {
-  const inline = process.env.GOOGLE_CREDENTIALS_JSON;
+  const inline = envValue("GOOGLE_CREDENTIALS_JSON");
   if (inline) {
     return { credentials: JSON.parse(inline) };
   }
-  const envPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  const envPath = envValue("GOOGLE_APPLICATION_CREDENTIALS");
   if (envPath) {
     if (!fs.existsSync(envPath)) {
       throw new Error(`GOOGLE_APPLICATION_CREDENTIALS points to a missing file: ${envPath}`);
@@ -64,9 +65,9 @@ export function analyticsAdmin() {
 
 /** Describe which credential source is active, for diagnostics. */
 export function describeCredentialSource(): string {
-  if (process.env.GOOGLE_CREDENTIALS_JSON) return "GOOGLE_CREDENTIALS_JSON (inline)";
-  if (process.env.GOOGLE_APPLICATION_CREDENTIALS)
-    return `GOOGLE_APPLICATION_CREDENTIALS=${process.env.GOOGLE_APPLICATION_CREDENTIALS}`;
+  if (envValue("GOOGLE_CREDENTIALS_JSON")) return "GOOGLE_CREDENTIALS_JSON (inline)";
+  const envPath = envValue("GOOGLE_APPLICATION_CREDENTIALS");
+  if (envPath) return `GOOGLE_APPLICATION_CREDENTIALS=${envPath}`;
   if (fs.existsSync(DEFAULT_CREDENTIALS_PATH)) return DEFAULT_CREDENTIALS_PATH;
   return "Application Default Credentials (gcloud)";
 }

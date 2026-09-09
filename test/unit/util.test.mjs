@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolveDate, round, toNumber, formatError } from "../../dist/util.js";
-import { parseDotEnv } from "../../dist/env.js";
+import { parseDotEnv, envValue } from "../../dist/env.js";
 
 test("resolveDate keeps ISO dates and resolves relative ones", () => {
   assert.equal(resolveDate("2026-01-31"), "2026-01-31");
@@ -29,4 +29,15 @@ test("parseDotEnv handles quotes, comments and empty values", () => {
   const env = parseDotEnv(`# comment\nA=1\nB="two words"\nC='x' \nD=val # trailing comment\nE=\nexport F=6\nBAD LINE\n`);
   assert.deepEqual(env, { A: "1", B: "two words", C: "x", D: "val", F: "6" });
   assert.equal("E" in env, false);
+});
+
+test("envValue treats empty and blank variables as unset", () => {
+  process.env.SEO_MCP_TEST_EMPTY = "";
+  process.env.SEO_MCP_TEST_BLANK = "   ";
+  process.env.SEO_MCP_TEST_SET = " value ";
+  assert.equal(envValue("SEO_MCP_TEST_EMPTY"), undefined);
+  assert.equal(envValue("SEO_MCP_TEST_BLANK"), undefined);
+  assert.equal(envValue("SEO_MCP_TEST_SET"), "value");
+  assert.equal(envValue("SEO_MCP_TEST_MISSING"), undefined);
+  assert.equal(envValue("SEO_MCP_TEST_EMPTY") ?? "fallback", "fallback");
 });

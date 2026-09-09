@@ -1,7 +1,8 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { envValue } from "./env.js";
 
 /** Upper bound for a tool result; larger payloads are trimmed so one call cannot flood the model's context. */
-export const MAX_RESULT_CHARS = Number(process.env.SEO_MCP_MAX_RESULT_CHARS ?? 120_000);
+export const MAX_RESULT_CHARS = Number(envValue("SEO_MCP_MAX_RESULT_CHARS") ?? 120_000);
 
 /** Trim oversized arrays inside a result (longest arrays first) until it fits, and say what was cut. */
 export function fitResult(data: unknown, max = MAX_RESULT_CHARS): { data: unknown; truncated?: string } {

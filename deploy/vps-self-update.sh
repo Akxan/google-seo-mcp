@@ -8,7 +8,13 @@ git fetch -q origin main && git reset -q --hard origin/main
 echo "== at $(git log -1 --format='%h %s' | cut -c1-80)"
 docker compose up -d --build --remove-orphans 2>&1 | tail -2
 for i in $(seq 1 20); do
-  if curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1; then echo "== healthy after ${i}x2s"; docker compose ps --format 'table {{.Name}}\t{{.Status}}'; exit 0; fi
+  if curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1; then
+    echo "== healthy after ${i}x2s"; docker compose ps --format 'table {{.Name}}\t{{.Status}}'
+    # Reclaim what rebuilds leave behind: dangling images older than a day and build cache beyond 4 GB (recent cache of other projects on the host stays).
+    docker image prune -f --filter "until=24h" >/dev/null 2>&1 || true
+    docker builder prune -f --reserved-space 4GB >/dev/null 2>&1 || true
+    exit 0
+  fi
   sleep 2
 done
 echo "!! container did not become healthy"; docker compose logs --tail 40; exit 1

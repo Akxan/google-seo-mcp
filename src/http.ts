@@ -1,13 +1,14 @@
 import http from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createServer } from "./server.js";
+import { createServer, SERVER_INFO } from "./server.js";
+import { envValue } from "./env.js";
 import { describeCredentialSource } from "./google.js";
 
-const PORT = Number(process.env.MCP_PORT ?? 8080);
-const HOST = process.env.MCP_HOST ?? "127.0.0.1";
-const PATH = process.env.MCP_PATH ?? "/mcp";
-const TOKEN = process.env.MCP_AUTH_TOKEN;
+const PORT = Number(envValue("MCP_PORT") ?? 8080);
+const HOST = envValue("MCP_HOST") ?? "127.0.0.1";
+const PATH = envValue("MCP_PATH") ?? "/mcp";
+const TOKEN = envValue("MCP_AUTH_TOKEN");
 
 function authorized(req: http.IncomingMessage): boolean {
   if (!TOKEN) return true;
@@ -32,7 +33,8 @@ export function startHttp() {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 
     if (url.pathname === "/healthz") {
-      json(res, 200, { ok: true, credentials: describeCredentialSource() });
+      // Liveness for proxies and deploy scripts; version and credential source only for callers that hold the token.
+      json(res, 200, authorized(req) ? { ok: true, version: SERVER_INFO.version, credentials: describeCredentialSource() } : { ok: true });
       return;
     }
     if (url.pathname !== PATH) {

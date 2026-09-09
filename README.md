@@ -37,7 +37,7 @@ Most SEO MCP servers wrap one API. Real SEO work crosses several: you find a str
 | **Page & site audits** (9) | `page_audit`, `site_crawl`, `pagespeed`, `sitemap_check`, `robots_check`, `hreflang_check`, `social_preview_check`, `compare_pages`, `keyword_suggest` |
 | **GEO** (12) | `ai_crawler_access`, `llms_txt_check`, `llms_txt_generate`, `structured_data_audit`, `schema_generate`, `schema_validate`, `geo_page_score`, `eeat_audit`, `knowledge_graph_check`, `indexnow_submit`, `ai_citation_check`, `brand_mentions` |
 | **Analysis** (5) | `migration_check` (pre-migration URL safety net), `cross_site_links`, `content_refresh_candidates`, `crux_history`, `reviews_snapshot` |
-| **WordPress** (21, optional) | posts, Yoast SEO fields (single & bulk), BeTheme / Muffin Builder content, media alt text, categories & tags, internal-link suggestions, Yoast Premium redirects, JSON-LD injection, raw WP-CLI |
+| **WordPress** (21, optional) | `wp_site_info`, `wp_list_posts`, `wp_get_post`, `wp_update_post`, `wp_seo_status`, `wp_update_seo`, `wp_bulk_update_seo` (Yoast fields), `wp_builder_check`, `wp_builder_list_items`, `wp_builder_update` (BeTheme / Muffin Builder content), `wp_list_media`, `wp_update_media` (alt text), `wp_list_terms`, `wp_update_term`, `wp_internal_link_suggestions`, `wp_list_redirects`, `wp_add_redirect`, `wp_delete_redirect` (Yoast Premium), `wp_get_schema`, `wp_set_schema` (JSON-LD injection), `wp_run` (raw WP-CLI) |
 | **GitHub** (5, optional) | `github_get_file`, `github_list_dir`, `github_search_code`, `github_list_commits`, `github_commit_files` (atomic multi-file commits, so a static site can be edited from any client) |
 
 Plus `google_auth_status` for diagnostics. Every tool carries MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`), the server publishes `instructions` for the model, and there is a read-only mode and toolset filtering.
@@ -190,8 +190,9 @@ All settings live in `.env` (see [`.env.example`](.env.example), which documents
 | `SEO_MCP_TOOLSETS` or `--toolsets=` | comma list of `gsc,ga4,web,geo,analysis,wordpress,github` (`google_auth_status` is always on) |
 | `SEO_MCP_MAX_RESULT_CHARS` | cap on a single tool result (default 120000); oversized arrays are trimmed with a note on how to narrow the query |
 | `MCP_TRANSPORT=http`, `MCP_HOST`, `MCP_PORT`, `MCP_PATH`, `MCP_AUTH_TOKEN` | HTTP mode |
+| `GOOGLE_OAUTH_CLIENT_SECRET_FILE` (or `--client-secret`), `GOOGLE_OAUTH_CLIENT_ID` + `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_PORT` | `npm run auth` only: the OAuth client for the user-account flow (callback port defaults to 53682) |
 
-Tools that need an optional key return an error explaining how to obtain it instead of silently disappearing.
+Tools that need an optional key return an error explaining how to obtain it instead of silently disappearing. Empty values count as unset, including a `KEY=` that Docker passes through from an env file.
 
 ### WordPress over SSH
 
@@ -208,7 +209,7 @@ MCP_TRANSPORT=http MCP_AUTH_TOKEN=$(openssl rand -hex 32) node dist/index.js --h
 curl http://127.0.0.1:8080/healthz
 ```
 
-Stateless Streamable HTTP: a fresh server instance per request, Bearer-token auth, loopback bind by default. `deploy/vps-self-update.sh` updates a Docker deployment in place, and `.github/workflows/deploy.yml` runs it on every push to `main` through a forced-command SSH deploy key stored in repository secrets (`VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`). [`deploy/`](deploy/) contains a systemd unit, an env-file example and Caddy/Nginx reverse-proxy samples (Nginx needs `proxy_buffering off`). `Dockerfile` and `docker-compose.yml` are provided. Connect remote clients with
+Stateless Streamable HTTP: a fresh server instance per request, Bearer-token auth, loopback bind by default. `/healthz` answers `{"ok":true}` without a token and adds the version and credential source when the request carries the Bearer token. `deploy/vps-self-update.sh` updates a Docker deployment in place, and `.github/workflows/deploy.yml` runs it on every push to `main` through a forced-command SSH deploy key stored in repository secrets (`VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`). [`deploy/`](deploy/) contains a systemd unit, an env-file example and Caddy/Nginx reverse-proxy samples (Nginx needs `proxy_buffering off`). `Dockerfile` and `docker-compose.yml` are provided. Connect remote clients with
 
 ```bash
 claude mcp add --transport http google-seo https://mcp.example.com/mcp --header "Authorization: Bearer <token>"
