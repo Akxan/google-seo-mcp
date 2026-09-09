@@ -607,7 +607,7 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
       title: "Publish JSON-LD on a WordPress post",
       description:
         "Store JSON-LD (object or array, e.g. FAQPage from schema_generate) on a post; a tiny mu-plugin (installed automatically on first use) prints it in <head> on that page. Pass null to remove. Validate with schema_validate first. Works alongside Yoast's own graph.",
-      inputSchema: { site: siteParam, id: postId, jsonld: z.union([z.record(z.unknown()), z.array(z.record(z.unknown())), z.null()]), dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."), },
+      inputSchema: { site: siteParam, id: postId, jsonld: z.union([z.record(z.string(), z.unknown()), z.array(z.record(z.string(), z.unknown())), z.null()]), dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."), },
     },
     tool(async (a) => {
       const s = pick(a.site);
