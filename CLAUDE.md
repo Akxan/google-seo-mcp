@@ -14,6 +14,8 @@ npm run dev            # tsx src/index.ts（stdio，免构建）
 npm start              # node dist/index.js（stdio）
 npm run start:http     # node dist/index.js --http（或设置 MCP_TRANSPORT=http）
 npm run inspector      # 用 MCP Inspector 调试 dist/
+npm run docs:sync      # 按工具清单快照同步两份 README 与 package.json 的工具计数（npm test 会校验）
+npm run check:secrets  # 扫描所有已跟踪文件里的密钥与个人信息（提交/推送钩子会自动跑）
 npm run auth -- --client-secret ./client_secret.json   # 一次性 OAuth 授权，写入 ~/.config/google-seo-mcp/credentials.json
 ```
 
@@ -56,7 +58,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 本项目公开在 GitHub `Akxan/google-seo-mcp`。
 
 - **每次改动完成后立即 `git commit` 并 `git push`**，不积攒。**提交信息一律用中文**，说明改了什么和为什么。
-- **推送到 main 即自动部署到线上**：`.github/workflows/deploy.yml` 通过仓库 secrets（`VPS_HOST`、`VPS_USER`、`VPS_SSH_KEY`、`VPS_KNOWN_HOSTS`）用受限的部署密钥触发服务器上的 `deploy/vps-self-update.sh`（拉取、重建容器、健康检查）。只改文档不触发。推送后用 `gh run watch` 或 `gh run list --limit 1` 确认部署成功；失败时先看工作流日志，再看服务器容器日志。
+- **推送到 main 即自动部署到线上**：`.github/workflows/deploy.yml` 通过仓库 secrets（`VPS_HOST`、`VPS_USER`、`VPS_SSH_KEY`、`VPS_KNOWN_HOSTS`）用受限的部署密钥触发服务器上的 `deploy/vps-self-update.sh`（拉取、重建容器、健康检查）。test 任务在所有推送和 PR 上跑；deploy 任务只在 main、且本次提交改动了非文档文件时执行（用 `git diff HEAD~1` 判断），`workflow_dispatch` 可强制部署。推送后用 `gh run watch` 或 `gh run list --limit 1` 确认部署成功；失败时先看工作流日志，再看服务器容器日志。
 - **每次提交前后都要检查不含个人与敏感信息**：`scripts/check-secrets.sh` 作为 pre-commit 与 pre-push 钩子自动运行（`npm install` 时的 `prepare` 会设置 `core.hooksPath`）；改动涉及文档或示例时再手动跑一次 `npm run check:secrets`。机器特有的标识（IP、用户名、域名、项目 ID）写在 `.secret-patterns.local`（gitignored）里供扫描器使用。工具描述、示例、测试里一律用 `example.com`、`octocat/my-site` 这类占位值。
 - 个人与站点相关的信息只放在 `.env`（含注释）和 `CLAUDE.local.md`，两者都不入库；本文件保持通用。
 - **README.md 用英文，每次新增或修改功能都要同步更新**（工具表、配置项、限制）；`README.zh-CN.md` 是中文版，功能变化时一并更新。
@@ -89,7 +91,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 
 - **`.env` 是唯一真源**（gitignored）：Google 凭据路径、各 API 密钥、`WP_SITES`、可选第三方密钥、HTTP 模式参数，外加注释形式的站点信息、资源 ID、客户端配置位置和依赖清单。`src/env.ts` 在 `index.ts` / `auth.ts` 启动时读取它（按包根目录定位，与工作目录无关；已存在的环境变量优先）。`.env.example` 是脱敏模板。
 - **服务器有自己的一份 `.env`**（位置见 `CLAUDE.local.md`），不会自动同步：新增或更换密钥要本机和服务器各改一次，服务器改完需要 `docker compose up -d` 重启容器才生效（`env_file` 只在启动时读取）。
-- 客户端（Claude Code、桌面 App、网页、手机）都连生产 HTTP 实例，本机不再有 stdio 注册；新工具部署后客户端在下一次新对话自动拿到，不需要重连。
+- 客户端（Claude Code、桌面 App、网页、手机）都连生产 HTTP 实例，认证一律是请求头 `Authorization: Bearer <MCP_AUTH_TOKEN>`（Claude Code 用 `claude mcp add --transport http --header`，claude.ai 连接器在「Request headers」里填）；本机不再有 stdio 注册。新工具部署后客户端在下一次新对话自动拿到，不需要重连。
 - 新增需要密钥的工具时：在 `.env` 和 `.env.example` 各加一行带用途注释的条目，工具在密钥缺失时抛出带申请路径的错误（不要在注册阶段隐藏工具）。
 
 ## 约定与注意事项
