@@ -1,10 +1,10 @@
 {
   "name": "google-seo-mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "SEO & GEO MCP server: Google Search Console, GA4, PageSpeed Insights, structured data, llms.txt, AI crawler checks, WordPress (Yoast, WP-CLI over SSH) and GitHub as 80 tools for AI agents",
   "main": "index.js",
   "scripts": {
-    "test": "node test/smoke.mjs",
+    "test": "node test/smoke.mjs && node scripts/sync-readme.mjs --check",
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
@@ -12,7 +12,8 @@
     "inspector": "npx @modelcontextprotocol/inspector node dist/index.js",
     "start:http": "node dist/index.js --http",
     "check:secrets": "scripts/check-secrets.sh --all",
-    "prepare": "git config core.hooksPath .githooks"
+    "prepare": "git config core.hooksPath .githooks",
+    "docs:sync": "node scripts/sync-readme.mjs"
   },
   "keywords": [
     "mcp",

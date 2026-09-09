@@ -11,7 +11,9 @@ import { registerAnalysisTools } from "./tools/analysis.js";
 import { registerGitHubTools } from "./tools/github.js";
 import { tool } from "./util.js";
 
-export const SERVER_INFO = { name: "google-seo-mcp", version: "0.3.0" };
+import { createRequire } from "node:module";
+const pkg = createRequire(import.meta.url)("../package.json") as { version: string };
+export const SERVER_INFO = { name: "google-seo-mcp", version: pkg.version };
 
 /** Toolset of a tool, derived from its name prefix. */
 export function toolsetOf(name: string): string {
@@ -20,8 +22,8 @@ export function toolsetOf(name: string): string {
   if (name.startsWith("wp_")) return "wordpress";
   if (name.startsWith("github_")) return "github";
   if (/^(page_audit|pagespeed|sitemap_check|robots_check|site_crawl|hreflang_check|compare_pages|social_preview_check|keyword_suggest)$/.test(name)) return "web";
-  if (/^(ai_crawler_access|llms_txt_|structured_data_audit|geo_page_score|eeat_audit|indexnow_submit|ai_citation_check|schema_)/.test(name)) return "geo";
-  if (/^(migration_check|cross_site_links|content_refresh_candidates|knowledge_graph_check|crux_history|brand_mentions|reviews_snapshot)$/.test(name)) return "analysis";
+  if (/^(ai_crawler_access|llms_txt_|structured_data_audit|geo_page_score|eeat_audit|indexnow_submit|ai_citation_check|schema_|knowledge_graph_check|brand_mentions)/.test(name)) return "geo";
+  if (/^(migration_check|cross_site_links|content_refresh_candidates|crux_history|reviews_snapshot)$/.test(name)) return "analysis";
   return "core";
 }
 

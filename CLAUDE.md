@@ -68,10 +68,21 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 1. 在对应的 `src/tools/*.ts` 模块里用 `server.registerTool` 注册；名字用 `前缀_动作` 形式，前缀决定工具集（见 `toolsetOf()`）；写入类工具名必须匹配 `WRITE_TOOLS`（删除类再匹配 `DESTRUCTIVE_TOOLS`）。每个参数都要 `.describe()`，可枚举的用 `z.enum`。
 2. 需要新密钥的：`.env` 与 `.env.example` 各加一行带用途注释的条目；密钥缺失时抛出带申请路径的错误。
 3. `npm run build`，用临时客户端脚本对真实数据验证（写入只用临时对象），删掉脚本。
-4. `UPDATE_SNAPSHOT=1 npm test` 刷新工具清单快照，再 `npm test` 确认通过。
-5. 更新 `README.md`（工具表、分组计数、顶部徽章里的工具数、配置表）和 `README.zh-CN.md`；必要时更新 `buildInstructions()`。
+4. `UPDATE_SNAPSHOT=1 npm test` 刷新工具清单快照，然后 `npm run docs:sync` 让两份 README 和 `package.json` 里的工具总数、分组计数自动对齐（`npm test` 会检查是否过期），再 `npm test` 确认通过。
+5. 手动更新 `README.md` 的工具表内容（新工具名和一句话说明）和配置表，`README.zh-CN.md` 同步；必要时更新 `buildInstructions()`。在 `CHANGELOG.md` 的 Unreleased 下加一条。
 6. 中文提交信息，`git push`；推送会自动部署，用 `gh run watch` 看到成功后，用线上地址调一次新工具确认（`/healthz` 先通）。
 7. 涉及服务器 `.env` 的变更（新密钥、`WP_SITES`）要在服务器上同步并重启容器。
+8. 一批功能完成后发版：`npm pkg set version=x.y.z`（服务器上报的版本号从 `package.json` 读取），把 CHANGELOG 的 Unreleased 改成版本段落并更新底部链接，提交后 `git tag -a vx.y.z -m '...'`、`git push origin vx.y.z`、`gh release create vx.y.z --title ... --notes-file <(从 CHANGELOG 摘出该段)`。
+
+## 对外形象的维护（README、徽章、仓库元数据）
+
+自动的：工具数徽章是 shields 动态徽章，直接读 `test/tools.snap.json`；发行版徽章读 GitHub Releases；部署徽章读 Actions；README、README.zh-CN、package.json 里的工具总数与分组计数由 `npm run docs:sync` 生成，`npm test` 会校验。这些不用手改。
+
+按需的，触发条件明确：
+- **新增了集成领域或依赖**（接入新的外部服务、换了库）：更新 README 的「Tech stack」表和架构图/说明、「Keywords」段；`package.json` 的 `description`/`keywords`；用 `gh repo edit --description ... --add-topic ...` 同步仓库描述和主题（主题上限 20 个，加新的要先删旧的）。
+- **新增或改动工具**：README 两份的工具表、示例提示（如果新工具值得展示）、配置表（新密钥）、CHANGELOG。
+- **发版**：版本号、CHANGELOG 段落、tag、GitHub Release（见上面第 8 步）。发行说明用英文、按领域分组，和 README 口径一致。
+- **不要做的**：不为纯文档或重构提交改版本号；不手改徽章数字；不在描述里写无法验证的形容词。
 
 ## 配置与密钥
 

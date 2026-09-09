@@ -9,7 +9,9 @@
 [![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen?logo=node.js&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-8A2BE2)](https://modelcontextprotocol.io)
-[![Tools](https://img.shields.io/badge/tools-80-blue)](#what-it-can-do)
+[![Tools](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FAkxan%2Fgoogle-seo-mcp%2Fmain%2Ftest%2Ftools.snap.json&query=%24.length&label=tools&color=blue)](#what-it-can-do)
+[![Release](https://img.shields.io/github/v/release/Akxan/google-seo-mcp?display_name=tag)](https://github.com/Akxan/google-seo-mcp/releases)
+[![Deploy](https://github.com/Akxan/google-seo-mcp/actions/workflows/deploy.yml/badge.svg)](https://github.com/Akxan/google-seo-mcp/actions/workflows/deploy.yml)
 [![Last commit](https://img.shields.io/github/last-commit/Akxan/google-seo-mcp)](https://github.com/Akxan/google-seo-mcp/commits/main)
 
 Google Search Console · Google Analytics 4 · PageSpeed & CrUX · on-page and GEO audits · WordPress over SSH · GitHub
@@ -185,7 +187,7 @@ All settings live in `.env` (see [`.env.example`](.env.example), which documents
 | `GITHUB_TOKEN` | GitHub tools (falls back to `gh auth token`) |
 | `WP_SITES` | JSON array of WordPress sites reachable over SSH; omit to disable `wp_*` tools |
 | `SEO_MCP_READ_ONLY=1` or `--read-only` | register no write tools |
-| `SEO_MCP_TOOLSETS` or `--toolsets=` | comma list of `gsc,ga4,web,geo,analysis,wordpress,github` |
+| `SEO_MCP_TOOLSETS` or `--toolsets=` | comma list of `gsc,ga4,web,geo,analysis,wordpress,github` (`google_auth_status` is always on) |
 | `MCP_TRANSPORT=http`, `MCP_HOST`, `MCP_PORT`, `MCP_PATH`, `MCP_AUTH_TOKEN` | HTTP mode |
 
 Tools that need an optional key return an error explaining how to obtain it instead of silently disappearing.
