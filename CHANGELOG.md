@@ -4,6 +4,9 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Removed
+- npm / MCP-registry publishing preparation (`server.json`, scoped package name); the package is marked `private` and is installed from the repository only.
+
 ## [0.5.0] - 2026-09-09
 
 ### Added
@@ -11,7 +14,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - Unit tests (`node:test`) for the robots.txt parser, URL/path normalisation, date helpers, dotenv parser, schema audit and tool classification; CI workflow runs build, tests and the secret scan on every push and pull request, and `main` deploys only after they pass.
 - Progress notifications on all long-running tools (index coverage, structured-data audit, E-E-A-T audit, llms.txt generation, hreflang, cross-site links, brand mentions, AI crawler access).
 - Result size guard: oversized arrays are trimmed to `SEO_MCP_MAX_RESULT_CHARS` with a note on how to narrow the request.
-- Dependabot for npm, GitHub Actions and Docker; `server.json` manifest and scoped package name `@akxan/google-seo-mcp` for npm / MCP registry publishing.
+- Dependabot for npm, GitHub Actions and Docker.
 
 ### Changed
 - Tool results are compact JSON instead of pretty-printed (fewer tokens per call); repeated parameter descriptions shortened.

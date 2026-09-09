@@ -74,10 +74,6 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 7. 涉及服务器 `.env` 的变更（新密钥、`WP_SITES`）要在服务器上同步并重启容器。
 8. 一批功能完成后发版：`npm pkg set version=x.y.z`（服务器上报的版本号从 `package.json` 读取），把 CHANGELOG 的 Unreleased 改成版本段落并更新底部链接，提交后 `git tag -a vx.y.z -m '...'`、`git push origin vx.y.z`、`gh release create vx.y.z --title ... --notes-file <(从 CHANGELOG 摘出该段)`。
 
-## 发布到 npm 与 MCP 注册中心
-
-包名是 `@akxan/google-seo-mcp`（无作用域的名字已被占用），`files` 只含 `dist`、`scripts`、README、CHANGELOG、LICENSE；`npm pack --dry-run` 确认不含 `.env`、密钥或 `CLAUDE.local.md` 后再 `npm publish --access public`。`server.json`（`mcpName` 与 `package.json` 一致）供 `mcp-publisher publish` 使用，版本号三处（package.json、server.json 两处）要同步。
-
 ## 对外形象的维护（README、徽章、仓库元数据）
 
 自动的：工具数徽章是 shields 动态徽章，直接读 `test/tools.snap.json`；发行版徽章读 GitHub Releases；部署徽章读 Actions；README、README.zh-CN、package.json 里的工具总数与分组计数由 `npm run docs:sync` 生成，`npm test` 会校验。这些不用手改。
@@ -87,6 +83,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 - **新增或改动工具**：README 两份的工具表、示例提示（如果新工具值得展示）、配置表（新密钥）、CHANGELOG。
 - **发版**：版本号、CHANGELOG 段落、tag、GitHub Release（见上面第 8 步）。发行说明用英文、按领域分组，和 README 口径一致。
 - **不要做的**：不为纯文档或重构提交改版本号；不手改徽章数字；不在描述里写无法验证的形容词。
+- **不发布到 npm 或 MCP 注册中心**（用户决定，2026-09-09）：`package.json` 标了 `private: true`，安装方式只有 clone 加构建。
 
 ## 配置与密钥
 
