@@ -4,6 +4,7 @@
  * geo_page_score, eeat_audit, indexnow_submit, ai_citation_check.
  */
 import { z } from "zod";
+import { envValue } from "../env.js";
 import * as cheerio from "cheerio";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { round, tool, heartbeat } from "../util.js";
@@ -458,11 +459,11 @@ export function registerGeoTools(server: McpServer) {
       inputSchema: { urls: z.array(z.string().url()).min(1).max(1000), key: z.string().optional().describe("Overrides INDEXNOW_KEY."), keyLocation: z.string().url().optional().describe("Overrides INDEXNOW_KEY_LOCATION.") },
     },
     tool(async (a) => {
-      const key = a.key ?? process.env.INDEXNOW_KEY;
+      const key = a.key ?? envValue("INDEXNOW_KEY");
       if (!key) throw new Error("No IndexNow key. Generate one (32 hex chars, e.g. `openssl rand -hex 16`), publish it as https://<host>/<key>.txt containing the key, and set INDEXNOW_KEY.");
       const host = new URL(a.urls[0]).host;
       if (a.urls.some((u) => new URL(u).host !== host)) throw new Error("All URLs must belong to the same host.");
-      const keyLocation = a.keyLocation ?? process.env.INDEXNOW_KEY_LOCATION ?? `https://${host}/${key}.txt`;
+      const keyLocation = a.keyLocation ?? envValue("INDEXNOW_KEY_LOCATION") ?? `https://${host}/${key}.txt`;
       const kf = await fetchWithTimeout(keyLocation, {}, 15_000);
       const kfText = kf.ok ? (await kf.text()).trim() : "";
       if (!kf.ok || kfText !== key) throw new Error(`Key file check failed: ${keyLocation} returned HTTP ${kf.status}${kf.ok ? " with non-matching content" : ""}. Publish a text file containing exactly the key.`);
@@ -486,7 +487,7 @@ export function registerGeoTools(server: McpServer) {
       },
     },
     tool(async (a) => {
-      const key = process.env.PERPLEXITY_API_KEY;
+      const key = envValue("PERPLEXITY_API_KEY");
       if (!key) throw new Error("PERPLEXITY_API_KEY is not set. Create a key at https://www.perplexity.ai/settings/api and add it to the MCP env.");
       const body: Record<string, unknown> = { model: a.model, messages: [{ role: "user", content: a.question }], return_citations: true };
       if (a.country) body.web_search_options = { user_location: { country: a.country } };

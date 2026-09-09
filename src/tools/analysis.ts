@@ -3,6 +3,7 @@
  * knowledge_graph_check, crux_history, brand_mentions, reviews_snapshot.
  */
 import { z } from "zod";
+import { envValue } from "../env.js";
 import * as cheerio from "cheerio";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { heartbeat, resolveDate, round, tool } from "../util.js";
@@ -179,7 +180,7 @@ export function registerAnalysisTools(server: McpServer) {
         const data = (await res.json()) as { search?: { id: string; label?: string; description?: string; url?: string }[] };
         return { language: lang, results: (data.search ?? []).map((s) => ({ id: s.id, label: s.label, description: s.description, url: `https://www.wikidata.org/wiki/${s.id}` })) };
       });
-      const key = process.env.GOOGLE_API_KEY ?? process.env.PAGESPEED_API_KEY;
+      const key = envValue("GOOGLE_API_KEY") ?? envValue("PAGESPEED_API_KEY");
       let kg: unknown = null;
       if (key) {
         const params = new URLSearchParams({ query: a.name, key, limit: String(a.limit) });
@@ -204,7 +205,7 @@ export function registerAnalysisTools(server: McpServer) {
       inputSchema: { target: z.string().url().describe("Page URL or origin (https://example.com)."), scope: z.enum(["origin", "url"]).default("origin"), formFactor: z.enum(["PHONE", "DESKTOP", "ALL"]).default("PHONE"), weeks: z.number().int().min(1).max(40).default(12) },
     },
     tool(async (a) => {
-      const key = process.env.CRUX_API_KEY ?? process.env.GOOGLE_API_KEY ?? process.env.PAGESPEED_API_KEY;
+      const key = envValue("CRUX_API_KEY") ?? envValue("GOOGLE_API_KEY") ?? envValue("PAGESPEED_API_KEY");
       if (!key) throw new Error("No API key. Set CRUX_API_KEY (or reuse PAGESPEED_API_KEY) and enable 'Chrome UX Report API' on the GCP project.");
       const body: Record<string, unknown> = a.scope === "origin" ? { origin: new URL(a.target).origin } : { url: a.target };
       if (a.formFactor !== "ALL") body.formFactor = a.formFactor;
@@ -241,7 +242,7 @@ export function registerAnalysisTools(server: McpServer) {
     tool(async (a, extra) => {
       const stop = heartbeat(extra, "checking mentioning pages");
       try {
-      const key = process.env.BRAVE_API_KEY;
+      const key = envValue("BRAVE_API_KEY");
       if (!key) throw new Error("BRAVE_API_KEY is not set. Get a free key at https://brave.com/search/api/ and add it to the MCP env.");
       const q = `"${a.brand}" -site:${a.domain}`;
       const res = await fetchWithTimeout(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(q)}&count=${a.count}&country=${a.country}&search_lang=${a.language}`, { headers: { "X-Subscription-Token": key, Accept: "application/json" } }, 20_000);
@@ -268,7 +269,7 @@ export function registerAnalysisTools(server: McpServer) {
       inputSchema: { query: z.string().optional().describe("Business name + city to search, e.g. 'Altai Turismo Sevilla'."), placeId: z.string().optional().describe("Google Place ID if known (skips the search)."), language: z.string().default("en") },
     },
     tool(async (a) => {
-      const key = process.env.GOOGLE_PLACES_API_KEY;
+      const key = envValue("GOOGLE_PLACES_API_KEY");
       if (!key) throw new Error("GOOGLE_PLACES_API_KEY is not set. Enable 'Places API (New)' on the GCP project (requires billing) and create a key restricted to it.");
       let placeId = a.placeId;
       let candidates: unknown[] = [];

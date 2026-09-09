@@ -9,7 +9,7 @@
  * and writes ~/.config/google-seo-mcp/credentials.json (authorized_user format)
  * which the MCP server picks up automatically.
  */
-import { loadDotEnv } from "./env.js";
+import { envValue, loadDotEnv } from "./env.js";
 loadDotEnv();
 import fs from "node:fs";
 import http from "node:http";
@@ -18,20 +18,20 @@ import { spawn } from "node:child_process";
 import { OAuth2Client } from "google-auth-library";
 import { DEFAULT_CREDENTIALS_PATH, SCOPES } from "./google.js";
 
-const PORT = Number(process.env.GOOGLE_OAUTH_PORT ?? 53682);
+const PORT = Number(envValue("GOOGLE_OAUTH_PORT") ?? 53682);
 const REDIRECT = `http://127.0.0.1:${PORT}/oauth2callback`;
 
 function loadClient(): { clientId: string; clientSecret: string } {
   const idx = process.argv.indexOf("--client-secret");
-  const file = idx >= 0 ? process.argv[idx + 1] : process.env.GOOGLE_OAUTH_CLIENT_SECRET_FILE;
+  const file = idx >= 0 ? process.argv[idx + 1] : envValue("GOOGLE_OAUTH_CLIENT_SECRET_FILE");
   if (file) {
     const json = JSON.parse(fs.readFileSync(file, "utf8"));
     const c = json.installed ?? json.web ?? json;
     if (!c.client_id || !c.client_secret) throw new Error(`No client_id/client_secret found in ${file}`);
     return { clientId: c.client_id, clientSecret: c.client_secret };
   }
-  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+  const clientId = envValue("GOOGLE_OAUTH_CLIENT_ID");
+  const clientSecret = envValue("GOOGLE_OAUTH_CLIENT_SECRET");
   if (!clientId || !clientSecret) {
     throw new Error(
       "Provide OAuth client credentials via --client-secret <file.json> or GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET env vars.",
@@ -78,7 +78,7 @@ async function main() {
   if (!tokens.refresh_token) {
     throw new Error("No refresh_token returned. Remove the app from https://myaccount.google.com/permissions and run again.");
   }
-  const out = process.env.GOOGLE_APPLICATION_CREDENTIALS ?? DEFAULT_CREDENTIALS_PATH;
+  const out = envValue("GOOGLE_APPLICATION_CREDENTIALS") ?? DEFAULT_CREDENTIALS_PATH;
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(
     out,

@@ -5,6 +5,7 @@
  * WP_SSH_HOST / WP_SSH_PORT / WP_SSH_USER / WP_PATH [/ WP_SSH_KEY].
  */
 import { spawn } from "node:child_process";
+import { envValue } from "../env.js";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -22,7 +23,7 @@ export interface WpSite {
 }
 
 export function loadWpSites(): WpSite[] {
-  const json = process.env.WP_SITES;
+  const json = envValue("WP_SITES");
   if (json) {
     const sites = JSON.parse(json) as WpSite[];
     if (!Array.isArray(sites) || sites.some((s) => !s.name || !s.host || !s.user || !s.path)) {

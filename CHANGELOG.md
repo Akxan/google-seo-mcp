@@ -4,11 +4,23 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-09
+
+### Added
+- `envValue()`: environment variables that are empty or whitespace-only count as unset everywhere. Docker's `env_file` passes `KEY=` through as an empty string, which previously satisfied `??` fallbacks; optional integrations now fall back correctly and an empty `MCP_PORT` / `MCP_AUTH_TOKEN` can no longer pick a random port or disable authentication.
+
+### Changed
+- `/healthz` returns only `{"ok":true}` to unauthenticated callers; version and credential source are included when the request carries the Bearer token.
+- Deploy workflow decides "docs-only" against the previously pushed commit instead of `HEAD~1`, so multi-commit pushes deploy correctly; `deploy/vps-self-update.sh` prunes dangling images and build cache beyond 4 GB after a healthy deploy; the Nginx sample gains HSTS, a per-IP rate limit and an unauthenticated `/healthz` location.
+- README lists the 21 WordPress tools by name; `.env.example` and both READMEs document `GOOGLE_CREDENTIALS_JSON`, `SEO_MCP_MAX_RESULT_CHARS` and the OAuth variables used by `npm run auth`.
+- Dependencies: zod 4 (record schemas now declare their key type; tool schemas otherwise unchanged), Docker image on Node 26 (same runtime as development; LTS from 2026-10-28), GitHub Actions `checkout`/`setup-node` v7; CI tests on Node 26.
+
 ### Removed
 - npm / MCP-registry publishing preparation (`server.json`, scoped package name); the package is marked `private` and is installed from the repository only.
 
-### Changed
-- Dependencies: zod 4 (record schemas now declare their key type; tool schemas otherwise unchanged), Docker image on Node 26 (same runtime as development; LTS from 2026-10-28), GitHub Actions `checkout`/`setup-node` v7; CI tests on Node 26.
+### Fixed
+- `npm test` now runs the unit tests (present since 0.5.0 but never wired into the script, so CI did not execute them).
+- `package.json` `main` pointed to a non-existent `index.js`; it is `dist/index.js`.
 
 ### Security
 - `social_preview_check`: the ICNS, JXL and HEIF parsers of `image-size` are disabled (GHSA-w3rx-r6r6-pgpr, GHSA-5p2g-fcmc-qvqq: unbounded loops on crafted files, no fixed release yet) because `og:image` bytes come from third-party hosts.
@@ -45,7 +57,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - Tool annotations, server instructions, `--read-only` mode, `--toolsets` filtering, `.env` auto-loading, smoke test with tool snapshot, secret-scan git hooks.
 - stdio and stateless Streamable HTTP transports with Bearer auth.
 
-[Unreleased]: https://github.com/Akxan/google-seo-mcp/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Akxan/google-seo-mcp/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/Akxan/google-seo-mcp/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Akxan/google-seo-mcp/releases/tag/v0.3.0

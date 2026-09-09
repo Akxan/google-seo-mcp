@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { envValue } from "./env.js";
 import { z } from "zod";
 import { describeCredentialSource, getAuth, SCOPES } from "./google.js";
 import { registerSearchConsoleTools } from "./tools/gsc.js";
@@ -41,8 +42,8 @@ export interface ServerOptions { readOnly?: boolean; toolsets?: string[] }
 
 function readOptions(): ServerOptions {
   const argv = process.argv.slice(2);
-  const readOnly = argv.includes("--read-only") || /^(1|true|yes)$/i.test(process.env.SEO_MCP_READ_ONLY ?? "");
-  const tsArg = argv.find((x) => x.startsWith("--toolsets="))?.slice("--toolsets=".length) ?? process.env.SEO_MCP_TOOLSETS;
+  const readOnly = argv.includes("--read-only") || /^(1|true|yes)$/i.test(envValue("SEO_MCP_READ_ONLY") ?? "");
+  const tsArg = argv.find((x) => x.startsWith("--toolsets="))?.slice("--toolsets=".length) ?? envValue("SEO_MCP_TOOLSETS");
   const toolsets = tsArg ? tsArg.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean) : undefined;
   return { readOnly, toolsets };
 }

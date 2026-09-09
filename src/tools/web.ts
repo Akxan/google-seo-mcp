@@ -3,6 +3,7 @@
  * page_audit, pagespeed, sitemap_check, robots_check.
  */
 import { gunzipSync } from "node:zlib";
+import { envValue } from "../env.js";
 import { z } from "zod";
 import * as cheerio from "cheerio";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -286,7 +287,8 @@ export function registerWebTools(server: McpServer) {
       const run = async (strategy: "mobile" | "desktop") => {
         const params = new URLSearchParams({ url: a.url, strategy });
         for (const c of a.categories) params.append("category", c);
-        if (process.env.PAGESPEED_API_KEY) params.set("key", process.env.PAGESPEED_API_KEY);
+        const psiKey = envValue("PAGESPEED_API_KEY");
+          if (psiKey) params.set("key", psiKey);
         const fetchOnce = async () => {
           const res = await fetchWithTimeout(`https://www.googleapis.com/pagespeedonline/v5/runPagespeed?${params}`, {}, 150_000);
           const data = (await res.json()) as PsiResponse;

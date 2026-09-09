@@ -36,7 +36,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 ## 架构
 
 - `src/server.ts`：`createServer()` 创建 `McpServer` 并注册全部工具。两种传输都调用它；HTTP 传输是**每个请求新建一个服务实例**（无状态，`sessionIdGenerator: undefined`）。它包了一层 `registerTool`：按工具名推断注解（`WRITE_TOOLS`、`DESTRUCTIVE_TOOLS` 正则）、只读模式下跳过写入工具、按 `toolsetOf()` 应用工具集筛选。**新增写入类工具时必须让名字匹配这两个正则**，否则会被当成只读。服务器 instructions 在 `buildInstructions()` 里。
-- `src/index.ts`：入口，根据 `--http` 参数或 `MCP_TRANSPORT=http` 选择 stdio 或 HTTP。`src/http.ts` 是纯 `node:http` 服务，带 Bearer Token 鉴权（`MCP_AUTH_TOKEN`）、`/healthz`，默认只绑回环地址。
+- `src/index.ts`：入口，根据 `--http` 参数或 `MCP_TRANSPORT=http` 选择 stdio 或 HTTP。`src/http.ts` 是纯 `node:http` 服务，带 Bearer Token 鉴权（`MCP_AUTH_TOKEN`）、`/healthz`（无令牌只返回 `{ok:true}`，带令牌附版本号与凭据来源），默认只绑回环地址。
 - `src/google.ts`：单例 `GoogleAuth`，以及 `googleapis` 客户端工厂（`searchconsole v1`、`analyticsdata v1beta`、`analyticsadmin v1beta`）。凭据查找顺序：`GOOGLE_CREDENTIALS_JSON` → `GOOGLE_APPLICATION_CREDENTIALS` → `~/.config/google-seo-mcp/credentials.json` → ADC。GA4 用的是 `googleapis` 的 REST 客户端而不是 `@google-analytics/data`，避免引入 gRPC。
 - `src/util.ts`：`tool(fn)` 包装所有处理函数，返回值经 `fitResult()` 做体积保护（超过 `SEO_MCP_MAX_RESULT_CHARS` 时对最长的数组减半直到放下，并加 `_truncated` 说明）后以**紧凑 JSON**（不缩进）写进文本内容；抛出的异常经 `formatError` 变成 `isError` 结果（缺凭据和 403 会附加提示）。`heartbeat(extra, msg)` 给长任务发进度通知，超过约 10 秒的工具都要用。`resolveDate()` 把 `today`、`yesterday`、`NdaysAgo` 转成 `YYYY-MM-DD`，因为 Search Console 只接受绝对日期。
 - `src/tools/gsc.ts`、`src/tools/ga.ts`：Google 工具。输入 schema 是传给 `registerTool` 的 zod raw shape，`.describe()` 文本要写清楚，那是 LLM 唯一能看到的说明。GA 的行数据由 `tabulate()` 拍平成 `{维度: 值, 指标: 数字}` 对象。
@@ -51,16 +51,16 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
   - Yoast 字段就是原始 post meta（`_yoast_wpseo_title`、`_yoast_wpseo_metadesc` 等）。写完 meta 后 `rebuildYoastIndexable()` 用 `wp eval` 调 Yoast 的 `Indexable_Builder`，否则前台标题不会变。`purgeCache()` 清该文章在 WP Rocket、Super Cache、W3TC、LiteSpeed 中的缓存。
   - `scripts/wp-helper.php` 承载所有批量或需要 PHP 逻辑的操作（SEO 状态、批量 Yoast、媒体、分类、内链建议、Yoast Premium 重定向），输入输出都是 STDIN/STDOUT 的 JSON，由 `runHelper()` 调用。`wpPostIndexForHost()` 缓存全站 URL 到文章 ID 的映射，供 `gsc_opportunities` 使用。
   - `scripts/mfn-builder.php` 处理 BeTheme（Muffin Builder）的文章，这类文章正文以 base64 加 PHP 序列化的形式存在 `mfn-page-items` meta 里，`post_content` 是空的。`ensureHelper()` 在 sha256 不一致时把脚本上传到主机的 `~/.google-seo-mcp/`，再用 `wp eval-file` 执行。`eval-file` 的代码跑在函数作用域内，PHP 里不能依赖 `global` 变量。`set` 动作会重新生成 `mfn-page-items-seo` 并调用 `wp_update_post`，让 Yoast 和缓存插件感知到变化。
-- 部署：`Dockerfile`（镜像内含 openssh-client、`scripts/`，以 `node` 用户运行，带 HEALTHCHECK）与 `docker-compose.yml`（`env_file: .env`，挂载 `secrets/service-account.json` 与 `secrets/ssh/`，宿主 `127.0.0.1:8787`）是生产方式；`deploy/vps-self-update.sh` 在服务器上拉取、重建、健康检查，`deploy/deploy-vps.sh` 从本机远程触发它；`deploy/` 里另有 systemd、Caddy、Nginx 样例（Nginx 必须 `proxy_buffering off`，否则 SSE 不通）。`src/env.ts` 按包根目录定位 `.env`，容器内由 compose 提供环境变量。
+- 部署：`Dockerfile`（镜像内含 openssh-client、`scripts/`，以 `node` 用户运行，带 HEALTHCHECK）与 `docker-compose.yml`（`env_file: .env`，挂载 `secrets/service-account.json` 与 `secrets/ssh/`，宿主 `127.0.0.1:8787`）是生产方式；`deploy/vps-self-update.sh` 在服务器上拉取、重建、健康检查，通过后清理一天以上的悬空镜像和 4 GB 以外的构建缓存（服务器与其他项目共用 Docker），`deploy/deploy-vps.sh` 从本机远程触发它；`deploy/` 里另有 systemd、Caddy、Nginx 样例（Nginx 必须 `proxy_buffering off`，否则 SSE 不通）。`src/env.ts` 按包根目录定位 `.env`，容器内由 compose 提供环境变量。
 
 ## 公共仓库规则（必须遵守）
 
 本项目公开在 GitHub `Akxan/google-seo-mcp`。
 
 - **每次改动完成后立即 `git commit` 并 `git push`**，不积攒。**提交信息一律用中文**，说明改了什么和为什么。
-- **推送到 main 即自动部署到线上**：`.github/workflows/deploy.yml` 通过仓库 secrets（`VPS_HOST`、`VPS_USER`、`VPS_SSH_KEY`、`VPS_KNOWN_HOSTS`）用受限的部署密钥触发服务器上的 `deploy/vps-self-update.sh`（拉取、重建容器、健康检查）。test 任务在所有推送和 PR 上跑；deploy 任务只在 main、且本次提交改动了非文档文件时执行（用 `git diff HEAD~1` 判断），`workflow_dispatch` 可强制部署。推送后用 `gh run watch` 或 `gh run list --limit 1` 确认部署成功；失败时先看工作流日志，再看服务器容器日志。
+- **推送到 main 即自动部署到线上**：`.github/workflows/deploy.yml` 通过仓库 secrets（`VPS_HOST`、`VPS_USER`、`VPS_SSH_KEY`、`VPS_KNOWN_HOSTS`）用受限的部署密钥触发服务器上的 `deploy/vps-self-update.sh`（拉取、重建容器、健康检查）。test 任务在所有推送和 PR 上跑；deploy 任务只在 main、且本次推送改动了非文档文件时执行（与推送前的提交对比，不只是最后一个提交），`workflow_dispatch` 可强制部署。推送后用 `gh run watch` 或 `gh run list --limit 1` 确认部署成功；失败时先看工作流日志，再看服务器容器日志。
 - **每次提交前后都要检查不含个人与敏感信息**：`scripts/check-secrets.sh` 作为 pre-commit 与 pre-push 钩子自动运行（`npm install` 时的 `prepare` 会设置 `core.hooksPath`）；改动涉及文档或示例时再手动跑一次 `npm run check:secrets`。机器特有的标识（IP、用户名、域名、项目 ID）写在 `.secret-patterns.local`（gitignored）里供扫描器使用。工具描述、示例、测试里一律用 `example.com`、`octocat/my-site` 这类占位值。
-- **Dependabot 的 PR**：用 `gh pr merge N --squash --delete-branch --subject "<中文标题>"` 合并，标题保持中文。一次只合并一个，`gh run watch` 等上一个部署成功再合并下一个（工作流的 concurrency 组只保留一个排队中的运行，连续合并会把中间的取消）。两个 PR 改同一文件时先合并一个，再在另一个上评论 `@dependabot rebase`。主版本升级（zod、Node、SDK）先在本地按 PR 分支构建、`npm test`，并用临时客户端脚本对比升级前后 `tools/list` 的 schema，再把修正推回 PR 分支。`npm audit` 报的漏洞若无修复版本，在代码里规避（如 `image-size` 的 `disableTypes`）并写进 CHANGELOG 的 Security 段。
+- **Dependabot 的 PR**：用 `gh pr merge N --squash --delete-branch --subject "<中文标题>"` 合并，标题保持中文。一次只合并一个，`gh run watch` 等上一个部署成功再合并下一个（工作流的 concurrency 组只保留一个排队中的运行，连续合并会把中间的取消）。两个 PR 改同一文件时先合并一个，再在另一个上评论 `@dependabot rebase`。主版本升级（zod、Node、SDK）先在本地按 PR 分支构建、`npm test`，并用临时客户端脚本对比升级前后 `tools/list` 的 schema，再把修正推回 PR 分支。`npm audit` 报的漏洞若无修复版本，在代码里规避（如 `image-size` 的 `disableTypes`）并写进 CHANGELOG 的 Security 段。仓库已开启 Dependabot 告警与安全更新（2026-09-09），有漏洞会出现在 GitHub 的 Security 页并自动开修复 PR。
 - 个人与站点相关的信息只放在 `.env`（含注释）和 `CLAUDE.local.md`，两者都不入库；本文件保持通用。
 - **README.md 用英文，每次新增或修改功能都要同步更新**（工具表、配置项、限制）；`README.zh-CN.md` 是中文版，功能变化时一并更新。
 - 提交身份用仓库本地设置的 GitHub noreply 邮箱，不用个人邮箱。
@@ -94,6 +94,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 - **服务器有自己的一份 `.env`**（位置见 `CLAUDE.local.md`），不会自动同步：新增或更换密钥要本机和服务器各改一次，服务器改完需要 `docker compose up -d` 重启容器才生效（`env_file` 只在启动时读取）。
 - 客户端（Claude Code、桌面 App、网页、手机）都连生产 HTTP 实例，认证一律是请求头 `Authorization: Bearer <MCP_AUTH_TOKEN>`（Claude Code 用 `claude mcp add --transport http --header`，claude.ai 连接器在「Request headers」里填）；本机不再有 stdio 注册。新工具部署后客户端在下一次新对话自动拿到，不需要重连。
 - 新增需要密钥的工具时：在 `.env` 和 `.env.example` 各加一行带用途注释的条目，工具在密钥缺失时抛出带申请路径的错误（不要在注册阶段隐藏工具）。
+- **读环境变量一律用 `src/env.ts` 的 `envValue()`**，空值和纯空白视为未设置：Docker 的 `env_file` 会把 `KEY=` 原样传成空字符串，直接写 `process.env.X ?? 默认值` 会把空串当成有效值（曾导致 IndexNow 的 keyLocation 兜底失效）。`test/unit/util.test.mjs` 有对应用例。
 
 ## 约定与注意事项
 

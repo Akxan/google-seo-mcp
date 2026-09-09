@@ -3,6 +3,7 @@
  * Token: GITHUB_TOKEN env, else `gh auth token` (GitHub CLI) if available.
  */
 import { execFile } from "node:child_process";
+import { envValue } from "../env.js";
 import { promisify } from "node:util";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -14,7 +15,8 @@ let cachedToken: string | undefined;
 
 export async function githubToken(): Promise<string | undefined> {
   if (cachedToken) return cachedToken;
-  if (process.env.GITHUB_TOKEN) return (cachedToken = process.env.GITHUB_TOKEN);
+  const fromEnv = envValue("GITHUB_TOKEN");
+  if (fromEnv) return (cachedToken = fromEnv);
   try { const { stdout } = await execFileP("gh", ["auth", "token"], { timeout: 10_000 }); if (stdout.trim()) return (cachedToken = stdout.trim()); } catch { /* gh not available */ }
   return undefined;
 }

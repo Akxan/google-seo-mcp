@@ -160,6 +160,7 @@ curl http://127.0.0.1:8080/healthz
 
 服务默认只监听 `127.0.0.1:8080`。对外访问请用 Caddy 或 Nginx 反向代理并开启 HTTPS，
 示例见 `deploy/Caddyfile.example` 和 `deploy/nginx.conf.example`（Nginx 必须关闭 `proxy_buffering`）。
+`/healthz` 不带令牌时只返回 `{"ok":true}`，带 Bearer 令牌时附带版本号和凭据来源。
 
 ### Docker
 
@@ -235,6 +236,7 @@ Claude Desktop / claude.ai 的「自定义连接器」同样填 URL 和 Bearer T
 | `MCP_AUTH_TOKEN` | 无 | Bearer Token；非回环地址监听时务必设置 |
 | `GOOGLE_APPLICATION_CREDENTIALS` | 无 | 服务账号或 authorized_user JSON 路径 |
 | `GOOGLE_CREDENTIALS_JSON` | 无 | 直接内联凭据 JSON（适合容器平台的 secret） |
+| `GOOGLE_OAUTH_CLIENT_SECRET_FILE`（或 `--client-secret`）、`GOOGLE_OAUTH_CLIENT_ID` + `GOOGLE_OAUTH_CLIENT_SECRET`、`GOOGLE_OAUTH_PORT` | 端口 `53682` | 只有 `npm run auth` 用：自己账号 OAuth 授权的客户端信息与本机回调端口 |
 | `WP_SITES` | 无 | WordPress 站点 SSH 配置 JSON 数组，见 WordPress 工具一节 |
 | `PAGESPEED_API_KEY` | 无 | PageSpeed Insights API 密钥；不设则用公共匿名配额，经常已耗尽 |
 | `INDEXNOW_KEY` / `INDEXNOW_KEY_LOCATION` | 无 | IndexNow 密钥及密钥文件 URL |
@@ -244,6 +246,9 @@ Claude Desktop / claude.ai 的「自定义连接器」同样填 URL 和 Bearer T
 | `GOOGLE_PLACES_API_KEY` | 无 | Places API (New)，仅 `reviews_snapshot` |
 | `GITHUB_TOKEN` | 无 | GitHub 工具；未设时尝试 `gh auth token` |
 | `SEO_MCP_READ_ONLY` / `SEO_MCP_TOOLSETS` | 无 | 见运行模式 |
+| `SEO_MCP_MAX_RESULT_CHARS` | `120000` | 单次工具结果的字符上限，超出时截断最长的数组并提示如何缩小范围 |
+
+空值一律视为未设置，包括 Docker 从 env 文件原样传入的 `KEY=`。
 
 ## 6. 常见问题
 

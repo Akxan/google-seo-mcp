@@ -29,3 +29,14 @@ export function loadDotEnv(): string | null {
   for (const [k, v] of Object.entries(parseDotEnv(fs.readFileSync(file, "utf8")))) if (process.env[k] === undefined) process.env[k] = v;
   return file;
 }
+
+/**
+ * Read an environment variable, treating empty or whitespace-only values as unset.
+ * Docker's env_file passes `KEY=` through as "", which `??` would otherwise accept as a real value.
+ */
+export function envValue(name: string): string | undefined {
+  const value = process.env[name];
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
