@@ -249,6 +249,100 @@ curl -s https://mcp.example.com/mcp -H "Authorization: Bearer <MCP_AUTH_TOKEN>" 
 
 两点注意：`pagespeed`、`site_crawl`、`gsc_index_coverage` 这类工具会跑几分钟（期间有进度通知），客户端的单工具超时若默认 60 秒要调大；ChatGPT 的自定义连接器目前只接受 OAuth，填不了固定令牌，暂时接不上。
 
+## 接入任何 agent、SDK 和第三方模型
+
+MCP 是开放标准，这个服务不绑 Claude。会说 MCP 的直接连；不会说 MCP 但模型支持 function calling 的，中间垫一层薄桥接也能连。唯一的硬限制是模型不支持 function calling：那它根本做不了"调工具"这个动作，跟厂家无关。
+
+| 你手上有的 | 怎么接 | 说明 |
+|---|---|---|
+| MCP 客户端：Claude 全家、Codex、Cursor、VS Code、Gemini CLI、Cline、Cherry Studio、n8n、Dify…… | URL 加 `Authorization: Bearer <token>`（见上文「连接客户端」） | `pagespeed`、`site_crawl` 要调大单工具超时 |
+| 自己写的 agent：Claude Agent SDK、OpenAI Agents SDK、LangChain、Google ADK、Vercel AI SDK | SDK 自带的 MCP 客户端，同样的 URL 和请求头 | 示例见下 |
+| 第三方或本地模型：DeepSeek、Qwen、GLM、Kimi、Ollama | 能选模型的 MCP 客户端（Cherry Studio、Cline），或把 SDK 的 `base_url` 指向厂商的 OpenAI 兼容接口 | 模型要支持 function calling；建议给它单独开只读精简实例（见下） |
+| 只能填 URL、不能加请求头的低代码平台 | 只读实例挂在反向代理的一个路径后面，由代理注入请求头 | 主实例的令牌不进任何 URL |
+
+### 从 agent SDK 接
+
+Claude Agent SDK（TypeScript，Python 写法相同）：
+
+```ts
+import { query } from "@anthropic-ai/claude-agent-sdk";
+
+for await (const m of query({
+  prompt: "给我 example.com 最近 28 天的概况，列出排名 8 到 20 名曝光最高的词",
+  options: {
+    mcpServers: {
+      "google-seo": {
+        type: "http",
+        url: "https://mcp.example.com/mcp",
+        headers: { Authorization: `Bearer ${process.env.GOOGLE_SEO_MCP_TOKEN}` },
+      },
+    },
+    allowedTools: ["mcp__google-seo__*"], // 不加这行它看得到工具但不会调用
+  },
+})) {
+  if (m.type === "result" && m.subtype === "success") console.log(m.result);
+}
+```
+
+OpenAI Agents SDK（Python）。同一段代码可以驱动任何 OpenAI 兼容接口，这里以 DeepSeek 为例；用 OpenAI 自己的模型就去掉 `model=` 那行：
+
+```python
+import os
+from agents import Agent, Runner, AsyncOpenAI, OpenAIChatCompletionsModel, set_tracing_disabled
+from agents.mcp import MCPServerStreamableHttp
+
+async def main():
+    async with MCPServerStreamableHttp(
+        name="google-seo",
+        params={"url": "https://mcp.example.com/mcp",
+                "headers": {"Authorization": f"Bearer {os.environ['GOOGLE_SEO_MCP_TOKEN']}"}},
+    ) as seo:
+        set_tracing_disabled(disabled=True)
+        deepseek = AsyncOpenAI(base_url="https://api.deepseek.com", api_key=os.environ["DEEPSEEK_API_KEY"])
+        agent = Agent(
+            name="seo",
+            instructions="先用工具查数据再回答，数字要带时间范围和来源。",
+            model=OpenAIChatCompletionsModel(model="deepseek-v4-flash", openai_client=deepseek),
+            mcp_servers=[seo],
+        )
+        result = await Runner.run(agent, "检查 https://example.com/ 首页 GPTBot 和 PerplexityBot 能不能抓")
+        print(result.final_output)
+```
+
+LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel AI SDK（`experimental_createMCPClient`）都是同样的 URL 和请求头。
+
+### 第三方模型和本地模型
+
+- 桌面端：Cherry Studio、Cline 可以选 DeepSeek、Qwen、GLM、Kimi 或本地 Ollama 模型，把本服务作为 Streamable HTTP 类型的 MCP 服务器加进去，请求头填 Authorization 即可。
+- 工具定义约 2.1 万 token，每一轮对话都要发；80 个工具对小模型来说太多了。给它们单独开一个只读、精简工具集、单独令牌的实例，模型再糊涂也写不了东西，也看不到用不着的工具：
+
+```yaml
+# docker-compose.yml：在主服务旁边再加一个
+  google-seo-mcp-lite:
+    build: .
+    restart: unless-stopped
+    ports: ["127.0.0.1:8788:8080"]
+    env_file: .env
+    environment:
+      MCP_TRANSPORT: http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8080
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN_LITE}     # 单独一把令牌，写在 .env 里
+      SEO_MCP_READ_ONLY: "1"
+      SEO_MCP_TOOLSETS: gsc,ga4,web,analysis
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/service-account.json
+    volumes:
+      - ./secrets/service-account.json:/secrets/service-account.json:ro
+```
+
+- 不管接的是谁，工具返回的内容（Search Console 数据、GA4 数据、WordPress 正文）都会发到那家模型的服务器，自己掂量。
+
+### 已知限制
+
+- ChatGPT 的自定义连接器只接受 OAuth，固定令牌填不进去，暂时接不上；在服务前面加一层 OAuth 就能解决。
+- 只实现了旧版 HTTP+SSE 传输的客户端：本服务只开了 Streamable HTTP（无状态，每次调用一个 `POST`）。需要 SSE 的话开个 issue。
+- Codex 的自定义模型提供方必须实现 Responses API，所以 Codex 带不动 DeepSeek 这类只有 Chat Completions 接口的厂商；这类模型走 SDK 或 Cherry Studio。
+
 ## WordPress 工具（可选）
 
 通过 SSH 在主机上执行 WP-CLI，让 Claude 直接读改 WordPress 内容和 Yoast SEO 字段。
