@@ -2,7 +2,7 @@
 
 # google-seo-mcp
 
-**SEO & GEO MCP server for Claude and other AI agents — Google Search Console, Google Analytics 4, PageSpeed Insights, structured data, llms.txt, WordPress and GitHub as 80 tools, so an assistant can diagnose and fix technical SEO, content and generative-engine-optimization issues in one conversation.**
+**SEO & GEO MCP server for Claude, Codex, Cursor and any MCP client — Google Search Console, Google Analytics 4, PageSpeed Insights, structured data, llms.txt, WordPress and GitHub as 80 tools, so an assistant can diagnose and fix technical SEO, content and generative-engine-optimization issues in one conversation.**
 
 [![GitHub stars](https://img.shields.io/github/stars/Akxan/google-seo-mcp?style=flat&logo=github)](https://github.com/Akxan/google-seo-mcp/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -152,26 +152,88 @@ Lookup order: `GOOGLE_CREDENTIALS_JSON` (inline) → `GOOGLE_APPLICATION_CREDENT
 
 ### Connect a client
 
-Claude Code:
+The server speaks standard MCP over **stdio** (a local process the client starts) and **Streamable HTTP** (a remote server, see [Running as a 24/7 HTTP server](#running-as-a-247-http-server)), so any MCP client works, not only Claude. For a remote server the recipe is the same everywhere: the URL `https://mcp.example.com/mcp` plus the header `Authorization: Bearer <token>`. For a local server the client needs nothing but the command, because the server reads `.env` from its own directory at startup (environment variables passed by the client take precedence).
+
+**Claude Code**
 
 ```bash
-claude mcp add google-seo -- node /absolute/path/google-seo-mcp/dist/index.js
+claude mcp add google-seo -- node /absolute/path/google-seo-mcp/dist/index.js                                     # local
+claude mcp add --transport http google-seo https://mcp.example.com/mcp --header "Authorization: Bearer <token>"   # remote
 ```
 
-Claude Desktop (`claude_desktop_config.json`):
+**Claude Desktop, claude.ai and the mobile apps**: Settings → Connectors → *Add custom connector*, URL `https://mcp.example.com/mcp`, authentication *None*, and `Authorization: Bearer <token>` under *Request headers*. Local alternative for Claude Desktop (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "google-seo": { "command": "node", "args": ["/absolute/path/google-seo-mcp/dist/index.js"] }
+  }
+}
+```
+
+**OpenAI Codex** (`~/.codex/config.toml`; the token is read from an environment variable, so `export GOOGLE_SEO_MCP_TOKEN=…` in your shell profile):
+
+```toml
+[mcp_servers.google-seo]
+url = "https://mcp.example.com/mcp"
+bearer_token_env_var = "GOOGLE_SEO_MCP_TOKEN"
+tool_timeout_sec = 600          # pagespeed and site_crawl outlive Codex's 60 s default
+
+# local alternative
+# [mcp_servers.google-seo]
+# command = "node"
+# args = ["/absolute/path/google-seo-mcp/dist/index.js"]
+```
+
+**Cursor** (`~/.cursor/mcp.json`, or `.cursor/mcp.json` inside a project):
 
 ```json
 {
   "mcpServers": {
     "google-seo": {
-      "command": "node",
-      "args": ["/absolute/path/google-seo-mcp/dist/index.js"]
+      "url": "https://mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
     }
   }
 }
 ```
 
-The server reads `.env` from its own directory at startup, so client configs need nothing but the command. Environment variables passed by the client take precedence.
+**VS Code** (Copilot agent mode; `.vscode/mcp.json` or the user-level file from *MCP: Open User Configuration*):
+
+```json
+{
+  "servers": {
+    "google-seo": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  }
+}
+```
+
+**Gemini CLI** (`~/.gemini/settings.json`; `httpUrl` selects Streamable HTTP, `timeout` is in milliseconds):
+
+```json
+{
+  "mcpServers": {
+    "google-seo": {
+      "httpUrl": "https://mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer <token>" },
+      "timeout": 600000
+    }
+  }
+}
+```
+
+**Any other MCP client**: point it at `https://mcp.example.com/mcp` with that header (Streamable HTTP, stateless: every call is a `POST`, there is no session to keep), or launch `node dist/index.js` over stdio. A quick check from a shell:
+
+```bash
+curl -s https://mcp.example.com/mcp -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+Two things to know: `pagespeed`, `site_crawl` and `gsc_index_coverage` stream progress notifications but can run for minutes, so raise the client's per-tool timeout if it defaults to 60 s; and ChatGPT's custom connectors accept only OAuth, so they cannot use a static token yet.
 
 ## Configuration
 
@@ -211,9 +273,7 @@ curl http://127.0.0.1:8080/healthz
 
 Stateless Streamable HTTP: a fresh server instance per request, Bearer-token auth, loopback bind by default. `/healthz` answers `{"ok":true}` without a token and adds the version and credential source when the request carries the Bearer token. `deploy/vps-self-update.sh` updates a Docker deployment in place, and `.github/workflows/deploy.yml` runs it on every push to `main` through a forced-command SSH deploy key stored in repository secrets (`VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`). [`deploy/`](deploy/) contains a systemd unit, an env-file example and Caddy/Nginx reverse-proxy samples (Nginx needs `proxy_buffering off`). `Dockerfile` and `docker-compose.yml` are provided. Connect remote clients with
 
-```bash
-claude mcp add --transport http google-seo https://mcp.example.com/mcp --header "Authorization: Bearer <token>"
-```
+Client-side setup for the remote server (Claude apps, Codex, Cursor, VS Code, Gemini CLI, anything else that speaks MCP) is under [Connect a client](#connect-a-client).
 
 ## Development
 
@@ -252,7 +312,7 @@ Issues and pull requests are welcome. CI runs build, tests and the secret scan o
 
 ## Keywords
 
-MCP server · Model Context Protocol · SEO MCP · GEO · generative engine optimization · AI SEO agent · Claude MCP · Claude Code · Google Search Console API · Google Analytics 4 API · GA4 Data API · PageSpeed Insights API · Core Web Vitals · CrUX · technical SEO audit · site crawler · structured data · schema.org · JSON-LD · FAQPage · llms.txt · AI crawlers · GPTBot · ClaudeBot · PerplexityBot · robots.txt · sitemap · hreflang · keyword cannibalization · striking distance keywords · content decay · E-E-A-T · Knowledge Graph · IndexNow · WordPress SEO automation · Yoast SEO · WP-CLI · TypeScript
+MCP server · Model Context Protocol · SEO MCP · GEO · generative engine optimization · AI SEO agent · Claude MCP · Claude Code · OpenAI Codex MCP · Cursor MCP · Gemini CLI MCP · Google Search Console API · Google Analytics 4 API · GA4 Data API · PageSpeed Insights API · Core Web Vitals · CrUX · technical SEO audit · site crawler · structured data · schema.org · JSON-LD · FAQPage · llms.txt · AI crawlers · GPTBot · ClaudeBot · PerplexityBot · robots.txt · sitemap · hreflang · keyword cannibalization · striking distance keywords · content decay · E-E-A-T · Knowledge Graph · IndexNow · WordPress SEO automation · Yoast SEO · WP-CLI · TypeScript
 
 ## Star history
 
