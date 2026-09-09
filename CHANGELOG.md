@@ -7,6 +7,12 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Removed
 - npm / MCP-registry publishing preparation (`server.json`, scoped package name); the package is marked `private` and is installed from the repository only.
 
+### Changed
+- Dependencies: zod 4 (record schemas now declare their key type; tool schemas otherwise unchanged), Docker image on Node 26 (same runtime as development; LTS from 2026-10-28), GitHub Actions `checkout`/`setup-node` v7; CI tests on Node 26.
+
+### Security
+- `social_preview_check`: the ICNS, JXL and HEIF parsers of `image-size` are disabled (GHSA-w3rx-r6r6-pgpr, GHSA-5p2g-fcmc-qvqq: unbounded loops on crafted files, no fixed release yet) because `og:image` bytes come from third-party hosts.
+
 ## [0.5.0] - 2026-09-09
 
 ### Added
