@@ -2,14 +2,14 @@
 
 # google-seo-mcp
 
-**SEO & GEO MCP server for Claude and other AI agents — Google Search Console, Google Analytics 4, PageSpeed Insights, structured data, llms.txt, WordPress and GitHub as 72 tools, so an assistant can diagnose and fix technical SEO, content and generative-engine-optimization issues in one conversation.**
+**SEO & GEO MCP server for Claude and other AI agents — Google Search Console, Google Analytics 4, PageSpeed Insights, structured data, llms.txt, WordPress and GitHub as 80 tools, so an assistant can diagnose and fix technical SEO, content and generative-engine-optimization issues in one conversation.**
 
 [![GitHub stars](https://img.shields.io/github/stars/Akxan/google-seo-mcp?style=flat&logo=github)](https://github.com/Akxan/google-seo-mcp/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen?logo=node.js&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-8A2BE2)](https://modelcontextprotocol.io)
-[![Tools](https://img.shields.io/badge/tools-72-blue)](#what-it-can-do)
+[![Tools](https://img.shields.io/badge/tools-80-blue)](#what-it-can-do)
 [![Last commit](https://img.shields.io/github/last-commit/Akxan/google-seo-mcp)](https://github.com/Akxan/google-seo-mcp/commits/main)
 
 Google Search Console · Google Analytics 4 · PageSpeed & CrUX · on-page and GEO audits · WordPress over SSH · GitHub
@@ -30,8 +30,8 @@ Most SEO MCP servers wrap one API. Real SEO work crosses several: you find a str
 
 | Area | Tools |
 |---|---|
-| **Search Console** (13) | `gsc_list_sites`, `gsc_search_analytics`, `gsc_site_snapshot`, `gsc_compare_periods`, `gsc_opportunities` (position 8–20 quick wins), `gsc_ctr_opportunities`, `gsc_cannibalization`, `gsc_question_queries`, `gsc_rich_results_report`, `gsc_inspect_url`, `gsc_index_coverage`, `gsc_list_sitemaps` / `gsc_submit_sitemap` |
-| **Google Analytics 4** (6) | `ga_list_properties`, `ga_run_report`, `ga_run_realtime_report`, `ga_get_metadata`, `ga_compare_periods`, `ga_landing_page_seo` (organic landing pages merged with Search Console) |
+| **Search Console** (16) | `gsc_list_sites`, `gsc_search_analytics`, `gsc_site_snapshot`, `gsc_compare_periods`, `gsc_opportunities` (position 8–20 quick wins), `gsc_ctr_opportunities`, `gsc_cannibalization`, `gsc_question_queries`, `gsc_rich_results_report`, `gsc_inspect_url`, `gsc_index_coverage`, `gsc_list_sitemaps` / `gsc_submit_sitemap` / `gsc_delete_sitemap`, `gsc_add_site` / `gsc_delete_site` |
+| **Google Analytics 4** (11) | `ga_list_properties`, `ga_property_config` (streams, custom dimensions/metrics, key events, audiences, Ads links, retention — read-only), `ga_run_report`, `ga_batch_run_reports`, `ga_run_pivot_report`, `ga_run_funnel_report`, `ga_run_realtime_report`, `ga_get_metadata`, `ga_check_compatibility`, `ga_compare_periods`, `ga_landing_page_seo` (organic landing pages merged with Search Console) |
 | **Page & site audits** (9) | `page_audit`, `site_crawl`, `pagespeed`, `sitemap_check`, `robots_check`, `hreflang_check`, `social_preview_check`, `compare_pages`, `keyword_suggest` |
 | **GEO** (12) | `ai_crawler_access`, `llms_txt_check`, `llms_txt_generate`, `structured_data_audit`, `schema_generate`, `schema_validate`, `geo_page_score`, `eeat_audit`, `knowledge_graph_check`, `indexnow_submit`, `ai_citation_check`, `brand_mentions` |
 | **Analysis** (5) | `migration_check` (pre-migration URL safety net), `cross_site_links`, `content_refresh_candidates`, `crux_history`, `reviews_snapshot` |
@@ -120,7 +120,7 @@ flowchart LR
 
 **WordPress path.** Every call is `ssh host 'cd <wp> && wp …'` with POSIX-quoted arguments; large payloads go over stdin. Two PHP helpers are uploaded to `~/.google-seo-mcp/` on the host when their hash changes. Yoast meta writes trigger an indexable rebuild and a cache purge so changes are live immediately.
 
-**Safety.** Write tools are recognised by name and receive `readOnlyHint:false` (`destructiveHint:true` for deletes, raw WP-CLI and commits). `--read-only` drops them at registration; `--toolsets=gsc,web` trims the tool list (72 definitions ≈ 20k tokens). Server instructions tell the model that fetched page text and CMS content are untrusted data.
+**Safety.** Write tools are recognised by name and receive `readOnlyHint:false` (`destructiveHint:true` for deletes, raw WP-CLI and commits). `--read-only` drops them at registration; `--toolsets=gsc,web` trims the tool list (80 definitions ≈ 22k tokens). Server instructions tell the model that fetched page text and CMS content are untrusted data.
 
 ## Quick start
 

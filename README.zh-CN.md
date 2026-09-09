@@ -28,6 +28,12 @@
 | `ga_get_metadata` | 查询某媒体资源可用的维度和指标（含自定义维度） |
 | `ga_compare_periods` | GA4 两个时间段对比，按维度拆分，含总量和百分比变化 |
 | `ga_landing_page_seo` | 自然搜索落地页：GA4 行为数据与 Search Console 点击数据合并成一张表 |
+| `ga_run_pivot_report` | 透视表：一个维度做行、一个做列，例如落地页 × 设备 |
+| `ga_batch_run_reports` | 一次调用跑最多 5 个报表 |
+| `ga_run_funnel_report` | 漏斗：按事件定义步骤，看每步人数与流失，可按维度拆分 |
+| `ga_check_compatibility` | 检查维度指标组合能否一起查询 |
+| `ga_property_config` | 只读配置：时区货币、数据保留、数据流与增强型衡量、自定义维度指标、关键事件、Google Ads 关联、受众 |
+| `gsc_delete_sitemap` / `gsc_add_site` / `gsc_delete_site` | 站点地图删除、资源添加与移除 |
 | `gsc_opportunities` | 展示高但排名在 8 到 20 位的关键词与页面，自动映射到 WordPress 文章 ID |
 | `gsc_cannibalization` | 同一关键词被多个页面分摊的情况 |
 | `gsc_index_coverage` | 批量 URL 检查，汇总索引状态 |
@@ -210,7 +216,7 @@ Claude Desktop / claude.ai 的「自定义连接器」同样填 URL 和 Bearer T
 ## 运行模式
 
 - **只读模式**：`--read-only` 或 `SEO_MCP_READ_ONLY=1`，所有写入类工具不注册。
-- **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`。72 个工具的定义约 2 万 token，只用部分功能时可以裁剪。
+- **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`。80 个工具的定义约 2.2 万 token，只用部分功能时可以裁剪。
 - 每个工具都带 `readOnlyHint` / `destructiveHint` 注解，服务器在初始化时返回 instructions 说明用法与安全约定。
 - `npm test` 运行冒烟测试并比对工具清单快照（`UPDATE_SNAPSHOT=1 npm test` 刷新）。
 

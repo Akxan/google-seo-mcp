@@ -1,7 +1,8 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { analyticsdata_v1beta } from "googleapis";
-import { analyticsAdmin, analyticsData } from "../google.js";
+import { analyticsAdmin, analyticsData, getAuth } from "../google.js";
+import { google } from "googleapis";
 import { resolveDate, round, toNumber, tool } from "../util.js";
 import { normalizePath, query as gscQuery } from "./gsc.js";
 
@@ -348,6 +349,182 @@ export function registerAnalyticsTools(server: McpServer) {
         totals: { sessions: rows.reduce((a, r) => a + r.sessions, 0), clicks: rows.reduce((a, r) => a + r.clicks, 0), impressions: rows.reduce((a, r) => a + r.impressions, 0) },
         rows: rows.slice(0, args.limit),
       };
+    }),
+  );
+
+  server.registerTool(
+    "ga_run_pivot_report",
+    {
+      title: "GA4 pivot report",
+      description:
+        "Cross-tab one dimension against another, e.g. landing pages (rows) by device category (columns) with sessions. Simpler than the raw API: give rowDimension, columnDimension and metrics; the tool builds the two pivots and returns a matrix plus row totals.",
+      inputSchema: {
+        propertyId,
+        rowDimension: z.string().default("landingPage"),
+        columnDimension: z.string().default("deviceCategory"),
+        metrics: z.array(z.string()).min(1).default(["sessions"]),
+        startDate: z.string().default("28daysAgo"),
+        endDate: z.string().default("yesterday"),
+        dimensionFilters: z.array(simpleDimensionFilter).optional(),
+        rowLimit: z.number().int().min(1).max(500).default(50),
+        columnLimit: z.number().int().min(1).max(50).default(10),
+      },
+    },
+    tool(async (args) => {
+      const res = await analyticsData().properties.runPivotReport({
+        property: propertyName(args.propertyId),
+        requestBody: {
+          dateRanges: [{ startDate: args.startDate, endDate: args.endDate }],
+          dimensions: [{ name: args.rowDimension }, { name: args.columnDimension }],
+          metrics: args.metrics.map((name) => ({ name })),
+          dimensionFilter: buildDimensionFilter(args.dimensionFilters),
+          pivots: [
+            { fieldNames: [args.rowDimension], limit: String(args.rowLimit), orderBys: [{ metric: { metricName: args.metrics[0] }, desc: true }] },
+            { fieldNames: [args.columnDimension], limit: String(args.columnLimit), orderBys: [{ metric: { metricName: args.metrics[0] }, desc: true }] },
+          ],
+        },
+      });
+      const d = res.data;
+      const dimNames = (d.dimensionHeaders ?? []).map((h) => h.name ?? "");
+      const metNames = (d.metricHeaders ?? []).map((h) => h.name ?? "");
+      const rowIdx = dimNames.indexOf(args.rowDimension), colIdx = dimNames.indexOf(args.columnDimension);
+      const matrix = new Map<string, Record<string, unknown>>();
+      const columns = new Set<string>();
+      for (const r of d.rows ?? []) {
+        const rowKey = r.dimensionValues?.[rowIdx]?.value ?? "";
+        const colKey = r.dimensionValues?.[colIdx]?.value ?? "";
+        columns.add(colKey);
+        const entry = matrix.get(rowKey) ?? { [args.rowDimension]: rowKey };
+        for (const [i, m] of metNames.entries()) entry[`${colKey}.${m}`] = toNumber(r.metricValues?.[i]?.value);
+        matrix.set(rowKey, entry);
+      }
+      const rows = [...matrix.values()].map((e) => { for (const m of metNames) e[`total.${m}`] = [...columns].reduce((s, c) => s + (typeof e[`${c}.${m}`] === "number" ? (e[`${c}.${m}`] as number) : 0), 0); return e; });
+      rows.sort((a, b) => ((b[`total.${metNames[0]}`] as number) ?? 0) - ((a[`total.${metNames[0]}`] as number) ?? 0));
+      return { property: propertyName(args.propertyId), period: { start: args.startDate, end: args.endDate }, rowDimension: args.rowDimension, columnDimension: args.columnDimension, columns: [...columns], metrics: metNames, rows };
+    }),
+  );
+
+  server.registerTool(
+    "ga_batch_run_reports",
+    {
+      title: "GA4 batch reports",
+      description: "Run up to 5 standard reports in one API call (same property). Each item takes the same fields as ga_run_report's core: dimensions, metrics, startDate, endDate, dimensionFilters, limit. Returns one tabulated result per report, in order.",
+      inputSchema: {
+        propertyId,
+        reports: z.array(z.object({
+          name: z.string().optional().describe("Label echoed back in the result."),
+          dimensions: z.array(z.string()).default([]),
+          metrics: z.array(z.string()).min(1),
+          startDate: z.string().default("28daysAgo"),
+          endDate: z.string().default("yesterday"),
+          dimensionFilters: z.array(simpleDimensionFilter).optional(),
+          limit: z.number().int().min(1).max(10000).default(50),
+        })).min(1).max(5),
+      },
+    },
+    tool(async (args) => {
+      const res = await analyticsData().properties.batchRunReports({
+        property: propertyName(args.propertyId),
+        requestBody: { requests: args.reports.map((r) => ({ dateRanges: [{ startDate: r.startDate, endDate: r.endDate }], dimensions: r.dimensions.map((name) => ({ name })), metrics: r.metrics.map((name) => ({ name })), dimensionFilter: buildDimensionFilter(r.dimensionFilters), limit: String(r.limit), orderBys: [{ metric: { metricName: r.metrics[0] }, desc: true }] })) },
+      });
+      return { property: propertyName(args.propertyId), reports: (res.data.reports ?? []).map((rep, i) => ({ name: args.reports[i].name ?? `report ${i + 1}`, period: { start: args.reports[i].startDate, end: args.reports[i].endDate }, ...tabulate(rep) })) };
+    }),
+  );
+
+  server.registerTool(
+    "ga_run_funnel_report",
+    {
+      title: "GA4 funnel report",
+      description:
+        "Step-by-step funnel (v1alpha API): how many users reached each step and the drop-off between steps. Each step is an event name with optional filters, e.g. [{name:'Landing', event:'page_view', pagePathContains:'/tours/'}, {name:'Booking click', event:'click_book'}]. Open funnel by default (users can enter at any step); set closed=true to require entering at step 1. Optional breakdown dimension (e.g. deviceCategory).",
+      inputSchema: {
+        propertyId,
+        steps: z.array(z.object({ name: z.string(), event: z.string().describe("Event name, e.g. page_view, view_item, purchase."), pagePathContains: z.string().optional().describe("Only count the event on pages whose path contains this.") })).min(2).max(10),
+        startDate: z.string().default("28daysAgo"),
+        endDate: z.string().default("yesterday"),
+        closed: z.boolean().default(false),
+        breakdown: z.string().optional().describe("Dimension to break the funnel down by, e.g. 'deviceCategory' or 'sessionDefaultChannelGroup'."),
+      },
+    },
+    tool(async (args) => {
+      const auth = getAuth();
+      const client = await auth.getClient();
+      const stepFilter = (s: { event: string; pagePathContains?: string }) => {
+        const eventFilter = { funnelFieldFilter: { fieldName: "eventName", stringFilter: { matchType: "EXACT", value: s.event } } };
+        if (!s.pagePathContains) return { funnelFilterExpression: eventFilter };
+        return { funnelFilterExpression: { andGroup: { expressions: [eventFilter, { funnelFieldFilter: { fieldName: "unifiedPagePathScreen", stringFilter: { matchType: "CONTAINS", value: s.pagePathContains, caseSensitive: false } } }] } } };
+      };
+      const body: Record<string, unknown> = {
+        dateRanges: [{ startDate: args.startDate, endDate: args.endDate }],
+        funnel: { isOpenFunnel: !args.closed, steps: args.steps.map((s) => ({ name: s.name, filterExpression: stepFilter(s).funnelFilterExpression })) },
+      };
+      if (args.breakdown) body.funnelBreakdown = { breakdownDimension: { name: args.breakdown }, limit: "5" };
+      const res = await client.request<{ funnelTable?: { dimensionHeaders?: { name: string }[]; metricHeaders?: { name: string }[]; rows?: { dimensionValues?: { value: string }[]; metricValues?: { value: string }[] }[] } }>({ url: `https://analyticsdata.googleapis.com/v1alpha/${propertyName(args.propertyId)}:runFunnelReport`, method: "POST", data: body });
+      const t = res.data.funnelTable ?? {};
+      const dims = (t.dimensionHeaders ?? []).map((h) => h.name);
+      // The alpha API repeats the metric headers; keep the first occurrence of each name.
+      const mets = [...new Set((t.metricHeaders ?? []).map((h) => h.name))];
+      const rows = (t.rows ?? []).map((r) => { const o: Record<string, unknown> = {}; dims.forEach((n, i) => (o[n] = r.dimensionValues?.[i]?.value)); mets.forEach((n, i) => { if (i < (r.metricValues?.length ?? 0)) o[n] = toNumber(r.metricValues?.[i]?.value); }); return o; });
+      return { property: propertyName(args.propertyId), period: { start: args.startDate, end: args.endDate }, openFunnel: !args.closed, steps: args.steps.map((x) => x.name), dimensions: dims, metrics: mets, rows, note: "activeUsers per step; completion rate and abandonments are relative to the previous step." };
+    }),
+  );
+
+  server.registerTool(
+    "ga_check_compatibility",
+    {
+      title: "Check dimension/metric compatibility",
+      description: "Ask GA4 whether a set of dimensions and metrics can be queried together (some combinations are incompatible) and which additional fields are still compatible. Use before building an unusual ga_run_report.",
+      inputSchema: { propertyId, dimensions: z.array(z.string()).default([]), metrics: z.array(z.string()).default([]), onlyIncompatible: z.boolean().default(true).describe("Return only fields flagged incompatible (default) instead of the full compatible lists.") },
+    },
+    tool(async (args) => {
+      let d: analyticsdata_v1beta.Schema$CheckCompatibilityResponse;
+      try {
+        d = (await analyticsData().properties.checkCompatibility({ property: propertyName(args.propertyId), requestBody: { dimensions: args.dimensions.map((name) => ({ name })), metrics: args.metrics.map((name) => ({ name })), compatibilityFilter: args.onlyIncompatible ? "INCOMPATIBLE" : "COMPATIBILITY_UNSPECIFIED" } })).data;
+      } catch (e) {
+        const msg = (e as Error).message ?? "";
+        if (/incompatible/i.test(msg)) return { property: propertyName(args.propertyId), requested: { dimensions: args.dimensions, metrics: args.metrics }, compatible: false, reason: "GA4 rejects this exact combination: " + msg.slice(0, 200), hint: "Remove one field at a time and re-check; source/medium dimensions cannot be combined with organicGoogleSearch* metrics, item* dimensions need item-scoped metrics." };
+        throw e;
+      }
+      const pick = (list: { dimensionMetadata?: { apiName?: string | null } | null; metricMetadata?: { apiName?: string | null } | null; compatibility?: string | null }[] | undefined) => (list ?? []).map((x) => ({ name: x.dimensionMetadata?.apiName ?? x.metricMetadata?.apiName, compatibility: x.compatibility }));
+      const all = [...pick(d.dimensionCompatibilities), ...pick(d.metricCompatibilities)];
+      const requested = new Set([...args.dimensions, ...args.metrics]);
+      const requestedIncompatible = all.filter((x) => x.compatibility === "INCOMPATIBLE" && requested.has(String(x.name))).map((x) => x.name);
+      const othersIncompatible = all.filter((x) => x.compatibility === "INCOMPATIBLE" && !requested.has(String(x.name))).map((x) => x.name);
+      return { property: propertyName(args.propertyId), requested: { dimensions: args.dimensions, metrics: args.metrics }, compatible: requestedIncompatible.length === 0, requestedIncompatible, otherFieldsNowIncompatible: othersIncompatible.length, otherFieldsNowIncompatibleSample: othersIncompatible.slice(0, 15), dimensions: args.onlyIncompatible ? undefined : pick(d.dimensionCompatibilities), metrics: args.onlyIncompatible ? undefined : pick(d.metricCompatibilities) };
+    }),
+  );
+
+  server.registerTool(
+    "ga_property_config",
+    {
+      title: "GA4 property configuration (read-only)",
+      description: "Read a property's setup: details (time zone, currency, industry, created), data retention, data streams (with measurement IDs and enhanced-measurement settings for web streams), custom dimensions and metrics, key events (conversions), Google Ads links and audiences. Choose sections to keep the output small.",
+      inputSchema: { propertyId, sections: z.array(z.enum(["details", "streams", "customDimensions", "customMetrics", "keyEvents", "adsLinks", "audiences", "retention"])).default(["details", "streams", "customDimensions", "customMetrics", "keyEvents", "adsLinks", "audiences", "retention"]) },
+    },
+    tool(async (args) => {
+      const name = propertyName(args.propertyId);
+      const admin = analyticsAdmin();
+      const alpha = google.analyticsadmin({ version: "v1alpha", auth: getAuth() });
+      const want = new Set(args.sections);
+      const out: Record<string, unknown> = { property: name };
+      const tasks: Promise<void>[] = [];
+      if (want.has("details")) tasks.push(admin.properties.get({ name }).then((r) => { out.details = { displayName: r.data.displayName, timeZone: r.data.timeZone, currencyCode: r.data.currencyCode, industryCategory: r.data.industryCategory, serviceLevel: r.data.serviceLevel, createTime: r.data.createTime, parent: r.data.parent }; }));
+      if (want.has("retention")) tasks.push(admin.properties.getDataRetentionSettings({ name: `${name}/dataRetentionSettings` }).then((r) => { out.dataRetention = { eventDataRetention: r.data.eventDataRetention, resetUserDataOnNewActivity: r.data.resetUserDataOnNewActivity }; }));
+      if (want.has("streams")) tasks.push(admin.properties.dataStreams.list({ parent: name }).then(async (r) => {
+        const streams = await Promise.all((r.data.dataStreams ?? []).map(async (s) => {
+          const base = { name: s.name, displayName: s.displayName, type: s.type, createTime: s.createTime, web: s.webStreamData ? { measurementId: s.webStreamData.measurementId, defaultUri: s.webStreamData.defaultUri } : undefined };
+          if (s.type === "WEB_DATA_STREAM" && s.name) { try { const em = await alpha.properties.dataStreams.getEnhancedMeasurementSettings({ name: `${s.name}/enhancedMeasurementSettings` }); return { ...base, enhancedMeasurement: { enabled: em.data.streamEnabled, scrolls: em.data.scrollsEnabled, outboundClicks: em.data.outboundClicksEnabled, siteSearch: em.data.siteSearchEnabled, videoEngagement: em.data.videoEngagementEnabled, fileDownloads: em.data.fileDownloadsEnabled, pageChanges: em.data.pageChangesEnabled, formInteractions: em.data.formInteractionsEnabled } }; } catch { return base; } }
+          return base;
+        }));
+        out.dataStreams = streams;
+      }));
+      if (want.has("customDimensions")) tasks.push(admin.properties.customDimensions.list({ parent: name, pageSize: 200 }).then((r) => { out.customDimensions = (r.data.customDimensions ?? []).map((d) => ({ parameterName: d.parameterName, displayName: d.displayName, scope: d.scope, description: d.description })); }));
+      if (want.has("customMetrics")) tasks.push(admin.properties.customMetrics.list({ parent: name, pageSize: 200 }).then((r) => { out.customMetrics = (r.data.customMetrics ?? []).map((m) => ({ parameterName: m.parameterName, displayName: m.displayName, scope: m.scope, unit: m.measurementUnit })); }));
+      if (want.has("keyEvents")) tasks.push(admin.properties.keyEvents.list({ parent: name, pageSize: 200 }).then((r) => { out.keyEvents = (r.data.keyEvents ?? []).map((k) => ({ eventName: k.eventName, countingMethod: k.countingMethod, custom: k.custom, createTime: k.createTime })); }));
+      if (want.has("adsLinks")) tasks.push(admin.properties.googleAdsLinks.list({ parent: name }).then((r) => { out.googleAdsLinks = (r.data.googleAdsLinks ?? []).map((l) => ({ customerId: l.customerId, canManageClients: l.canManageClients, adsPersonalizationEnabled: l.adsPersonalizationEnabled, createTime: l.createTime })); }));
+      if (want.has("audiences")) tasks.push(alpha.properties.audiences.list({ parent: name, pageSize: 200 }).then((r) => { out.audiences = (r.data.audiences ?? []).map((a) => ({ displayName: a.displayName, description: a.description, membershipDurationDays: a.membershipDurationDays, adsPersonalizationEnabled: a.adsPersonalizationEnabled })); }).catch((e) => { out.audiences = { error: (e as Error).message.slice(0, 200) }; }));
+      await Promise.all(tasks);
+      return out;
     }),
   );
 

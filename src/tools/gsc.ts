@@ -528,4 +528,44 @@ export function registerSearchConsoleTools(server: McpServer) {
     }),
   );
 
+  server.registerTool(
+    "gsc_delete_sitemap",
+    {
+      title: "Delete a sitemap",
+      description: "Remove a sitemap from a Search Console property (Google stops reading it; the file itself is untouched). Use gsc_list_sitemaps first to get the exact feedpath.",
+      inputSchema: { siteUrl, feedpath: z.string().url() },
+    },
+    tool(async (args) => {
+      await searchConsole().sitemaps.delete({ siteUrl: args.siteUrl, feedpath: args.feedpath });
+      return { deleted: args.feedpath, siteUrl: args.siteUrl };
+    }),
+  );
+
+  server.registerTool(
+    "gsc_add_site",
+    {
+      title: "Add a property to Search Console",
+      description: "Add a URL-prefix property (e.g. 'https://example.com/') to the authorized account's Search Console. Ownership still has to be verified in the Search Console UI (DNS record, HTML file or tag) before data appears. Domain properties ('sc-domain:') cannot be added through the API.",
+      inputSchema: { siteUrl: z.string().url().describe("URL-prefix property to add, with trailing slash.") },
+    },
+    tool(async (args) => {
+      await searchConsole().sites.add({ siteUrl: args.siteUrl });
+      const res = await searchConsole().sites.get({ siteUrl: args.siteUrl });
+      return { added: args.siteUrl, permissionLevel: res.data.permissionLevel, note: "Verify ownership in Search Console if permissionLevel is siteUnverifiedUser." };
+    }),
+  );
+
+  server.registerTool(
+    "gsc_delete_site",
+    {
+      title: "Remove a property from Search Console",
+      description: "Remove a property from the authorized account (the account loses access; other owners keep theirs). Irreversible for this account until re-added and re-verified.",
+      inputSchema: { siteUrl, confirm: z.literal(true).describe("Must be true to proceed.") },
+    },
+    tool(async (args) => {
+      await searchConsole().sites.delete({ siteUrl: args.siteUrl });
+      return { removed: args.siteUrl };
+    }),
+  );
+
 }
