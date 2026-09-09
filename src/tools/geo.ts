@@ -505,7 +505,7 @@ export function registerGeoTools(server: McpServer) {
     {
       title: "Validate JSON-LD",
       description: "Validate one or more JSON-LD objects before publishing: required/recommended properties per type (same rules as structured_data_audit), FAQ/Breadcrumb structure, ISO dates, @context presence. Returns the normalized, compact JSON ready to inject.",
-      inputSchema: { jsonld: z.union([z.string(), z.record(z.unknown()), z.array(z.record(z.unknown()))]).describe("JSON-LD as an object, array of objects, or JSON string.") },
+      inputSchema: { jsonld: z.union([z.string(), z.record(z.string(), z.unknown()), z.array(z.record(z.string(), z.unknown()))]).describe("JSON-LD as an object, array of objects, or JSON string.") },
     },
     tool(async (a) => {
       const parsed = typeof a.jsonld === "string" ? JSON.parse(a.jsonld) : a.jsonld;
