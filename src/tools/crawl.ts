@@ -3,7 +3,11 @@
  */
 import { z } from "zod";
 import * as cheerio from "cheerio";
-import { imageSize } from "image-size";
+import { imageSize, disableTypes } from "image-size";
+
+// GHSA-w3rx-r6r6-pgpr / GHSA-5p2g-fcmc-qvqq: the ICNS, JXL and HEIF parsers can loop forever on crafted input.
+// og:image bytes come from third-party hosts, so those parsers stay off until a fixed release exists.
+disableTypes(["icns", "jxl", "jxl-stream", "heif"]);
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { heartbeat, round, tool } from "../util.js";
 import { auditPage, collectSitemapUrls, fetchWithTimeout, parseRobots, robotsAllows } from "./web.js";
