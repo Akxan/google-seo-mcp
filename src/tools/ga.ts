@@ -8,7 +8,7 @@ import { normalizePath, query as gscQuery } from "./gsc.js";
 
 const propertyId = z
   .string()
-  .describe("GA4 property ID, e.g. '123456789' or 'properties/123456789'. Use ga_list_properties to discover it.");
+  .describe("GA4 property ID, e.g. '123456789' (see ga_list_properties).");
 
 function propertyName(id: string) {
   return id.startsWith("properties/") ? id : `properties/${id}`;
@@ -17,7 +17,7 @@ function propertyName(id: string) {
 const MATCH_TYPES = ["EXACT", "BEGINS_WITH", "ENDS_WITH", "CONTAINS", "FULL_REGEXP", "PARTIAL_REGEXP"] as const;
 
 const simpleDimensionFilter = z.object({
-  field: z.string().describe("Dimension API name, e.g. 'pagePath', 'sessionDefaultChannelGroup', 'country'."),
+  field: z.string().describe("Dimension API name, e.g. pagePath, country."),
   value: z.string(),
   matchType: z.enum(MATCH_TYPES).default("EXACT"),
   caseSensitive: z.boolean().default(false),
@@ -100,19 +100,19 @@ export function registerAnalyticsTools(server: McpServer) {
     {
       title: "GA4 report",
       description:
-        "Run a Google Analytics 4 Data API report. Common dimensions: date, pagePath, landingPage, sessionDefaultChannelGroup, sessionSource, sessionMedium, country, deviceCategory, eventName. Common metrics: sessions, activeUsers, totalUsers, newUsers, screenPageViews, engagementRate, averageSessionDuration, bounceRate, conversions, eventCount, keyEvents. Use ga_get_metadata to discover more. Optionally add a comparison date range.",
+        "GA4 Data API report. Common dimensions: date, pagePath, landingPage, sessionDefaultChannelGroup, sessionSource, country, deviceCategory, eventName. Common metrics: sessions, activeUsers, newUsers, screenPageViews, engagementRate, bounceRate, keyEvents, eventCount (more via ga_get_metadata). Optional comparison range.",
       inputSchema: {
         propertyId,
-        startDate: z.string().default("28daysAgo").describe("YYYY-MM-DD, 'today', 'yesterday' or 'NdaysAgo'."),
+        startDate: z.string().default("28daysAgo").describe("YYYY-MM-DD, today, yesterday or NdaysAgo."),
         endDate: z.string().default("yesterday"),
-        compareStartDate: z.string().optional().describe("Optional second date range start; adds a 'dateRange' dimension to rows."),
+        compareStartDate: z.string().optional().describe("Second range start; adds a dateRange dimension."),
         compareEndDate: z.string().optional(),
         dimensions: z.array(z.string()).default([]),
         metrics: z.array(z.string()).min(1).default(["sessions", "activeUsers", "screenPageViews"]),
-        dimensionFilters: z.array(simpleDimensionFilter).optional().describe("Simple AND-ed dimension filters."),
-        metricFilters: z.array(simpleMetricFilter).optional().describe("Simple AND-ed metric filters (applied after aggregation)."),
-        dimensionFilter: z.any().optional().describe("Raw GA4 FilterExpression JSON. Overrides dimensionFilters when given."),
-        metricFilter: z.any().optional().describe("Raw GA4 FilterExpression JSON. Overrides metricFilters when given."),
+        dimensionFilters: z.array(simpleDimensionFilter).optional().describe("AND-ed dimension filters."),
+        metricFilters: z.array(simpleMetricFilter).optional().describe("AND-ed metric filters (post-aggregation)."),
+        dimensionFilter: z.any().optional().describe("Raw FilterExpression; overrides dimensionFilters."),
+        metricFilter: z.any().optional().describe("Raw FilterExpression; overrides metricFilters."),
         orderBy: z
           .array(z.object({ metric: z.string().optional(), dimension: z.string().optional(), desc: z.boolean().default(true) }))
           .optional()
@@ -436,7 +436,7 @@ export function registerAnalyticsTools(server: McpServer) {
     {
       title: "GA4 funnel report",
       description:
-        "Step-by-step funnel (v1alpha API): how many users reached each step and the drop-off between steps. Each step is an event name with optional filters, e.g. [{name:'Landing', event:'page_view', pagePathContains:'/tours/'}, {name:'Booking click', event:'click_book'}]. Open funnel by default (users can enter at any step); set closed=true to require entering at step 1. Optional breakdown dimension (e.g. deviceCategory).",
+        "Funnel (v1alpha): users reaching each step and drop-off between steps. Steps are event names with an optional page-path filter, e.g. [{name:'Tour page', event:'page_view', pagePathContains:'/tours/'}, {name:'Book', event:'click_book'}]. Open by default; closed=true requires entering at step 1. Optional breakdown dimension.",
       inputSchema: {
         propertyId,
         steps: z.array(z.object({ name: z.string(), event: z.string().describe("Event name, e.g. page_view, view_item, purchase."), pagePathContains: z.string().optional().describe("Only count the event on pages whose path contains this.") })).min(2).max(10),

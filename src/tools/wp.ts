@@ -38,7 +38,7 @@ export function loadWpSites(): WpSite[] {
 }
 
 /** POSIX single-quote shell escaping. */
-function shq(s: string): string {
+export function shq(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
@@ -299,10 +299,17 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
         excerpt: z.string().optional(),
         content: z.string().optional().describe("Full replacement post_content (HTML or block markup). Fetch the current content with wp_get_post first and edit it; partial updates are not supported."),
         status: z.enum(["publish", "draft", "pending", "private"]).optional(),
+        dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."),
       },
     },
     tool(async (a) => {
       const s = pick(a.site);
+      if (a.dryRun) {
+        const cur = await wpJson<Record<string, unknown>>(s, ["post", "get", String(a.id), "--fields=post_title,post_name,post_excerpt,post_status"]);
+        const changes = [["title", "post_title", a.title], ["slug", "post_name", a.slug], ["excerpt", "post_excerpt", a.excerpt], ["status", "post_status", a.status]].filter(([, , v]) => v !== undefined).map(([field, key, to]) => ({ field, from: cur[key as string], to }));
+        if (a.content !== undefined) changes.push({ field: "content", from: `(current content, use wp_get_post to view)`, to: `${a.content.length} chars` });
+        return { site: s.name, id: a.id, dryRun: true, changes };
+      }
       const args = ["post", "update", String(a.id)];
       if (a.content !== undefined) args.push("-");
       if (a.title !== undefined) args.push(`--post_title=${a.title}`);
@@ -331,10 +338,16 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
         focusKeyword: z.string().optional(),
         canonical: z.string().optional().describe("Absolute URL, or empty string to clear."),
         noindex: z.boolean().nullable().optional().describe("true = noindex, false = force index, null = Yoast default."),
+        dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."),
       },
     },
     tool(async (a) => {
       const s = pick(a.site);
+      if (a.dryRun) {
+        const cur = await getYoastMeta(s, a.id);
+        const changes = (["seoTitle", "metaDescription", "focusKeyword", "canonical", "noindex"] as const).filter((k) => a[k] !== undefined).map((k) => ({ field: k, from: cur[k], to: a[k] }));
+        return { site: s.name, id: a.id, dryRun: true, changes };
+      }
       const updates: [string, string][] = [];
       if (a.seoTitle !== undefined) updates.push([YOAST_KEYS.seoTitle, a.seoTitle]);
       if (a.metaDescription !== undefined) updates.push([YOAST_KEYS.metaDescription, a.metaDescription]);
@@ -374,10 +387,16 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
         site: siteParam,
         id: postId,
         edits: z.array(z.object({ uid: z.string(), field: z.string(), value: z.string() })).min(1),
+        dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."),
       },
     },
     tool(async (a) => {
       const s = pick(a.site);
+      if (a.dryRun) {
+        const list = await builder<{ items: { uid: string; type: string; fields: Record<string, string> }[] }>(s, "list", a.id);
+        const changes = a.edits.map((e) => { const it = list.items.find((x) => x.uid === e.uid); return { uid: e.uid, type: it?.type ?? "(not found)", field: e.field, from: it?.fields?.[e.field] ?? null, to: e.value }; });
+        return { site: s.name, id: a.id, dryRun: true, changes, missing: changes.filter((c) => c.type === "(not found)").map((c) => c.uid) };
+      }
       const result = await builder<object>(s, "set", a.id, [], JSON.stringify(a.edits));
       const [yoastIndex, cachePurged] = await Promise.all([rebuildYoastIndexable(s, a.id), purgeCache(s, a.id)]);
       return { site: s.name, ...result, yoastIndex, cachePurged };
@@ -423,9 +442,10 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
           canonical: z.string().optional(),
           noindex: z.boolean().nullable().optional(),
         })).min(1).max(100),
+        dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."),
       },
     },
-    tool(async (a) => ({ site: pick(a.site).name, ...(await runHelper<object>(pick(a.site), "wp", "bulk_seo", [], JSON.stringify({ items: a.items }))) })),
+    tool(async (a) => ({ site: pick(a.site).name, ...(await runHelper<object>(pick(a.site), "wp", "bulk_seo", [], JSON.stringify({ items: a.items, dryRun: a.dryRun }))) })),
   );
 
   server.registerTool(
@@ -453,9 +473,18 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
       inputSchema: {
         site: siteParam,
         items: z.array(z.object({ id: z.number().int().positive(), alt: z.string().optional(), title: z.string().optional(), caption: z.string().optional(), description: z.string().optional() })).min(1).max(100),
+        dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."),
       },
     },
-    tool(async (a) => ({ site: pick(a.site).name, ...(await runHelper<object>(pick(a.site), "wp", "media_update", [], JSON.stringify({ items: a.items }))) })),
+    tool(async (a) => {
+      const s = pick(a.site);
+      if (a.dryRun) {
+        const rows = await wpJson<{ ID: number; post_title: string; post_excerpt: string; post_content: string }[]>(s, ["post", "list", "--post_type=attachment", "--post_status=inherit", `--post__in=${a.items.map((i) => i.id).join(",")}`, "--fields=ID,post_title,post_excerpt,post_content"]);
+        const alts = await Promise.all(a.items.map((i) => wp(s, ["post", "meta", "get", String(i.id), "_wp_attachment_image_alt"]).then((v) => v.trim()).catch(() => "")));
+        return { site: s.name, dryRun: true, changes: a.items.map((i, idx) => { const cur = rows.find((r) => r.ID === i.id); return { id: i.id, found: Boolean(cur), alt: i.alt !== undefined ? { from: alts[idx], to: i.alt } : undefined, title: i.title !== undefined ? { from: cur?.post_title, to: i.title } : undefined, caption: i.caption !== undefined ? { from: cur?.post_excerpt, to: i.caption } : undefined, description: i.description !== undefined ? { from: cur?.post_content, to: i.description } : undefined }; }) };
+      }
+      return { site: s.name, ...(await runHelper<object>(s, "wp", "media_update", [], JSON.stringify({ items: a.items }))) };
+    }),
   );
 
   server.registerTool(
@@ -483,9 +512,21 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
         seoTitle: z.string().optional(),
         metaDescription: z.string().optional(),
         noindex: z.boolean().nullable().optional(),
+        dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."),
       },
     },
-    tool(async (a) => ({ site: pick(a.site).name, ...(await runHelper<object>(pick(a.site), "wp", "term_update", [], JSON.stringify(a))) })),
+    tool(async (a) => {
+      const s = pick(a.site);
+      if (a.dryRun) {
+        const list = await runHelper<{ terms: Record<string, unknown>[] }>(s, "wp", "terms_list", [], JSON.stringify({ taxonomy: a.taxonomy }));
+        const cur = list.terms.find((t) => t.id === a.id);
+        if (!cur) throw new Error(`term ${a.id} not found in ${a.taxonomy}`);
+        const changes = (["name", "slug", "description", "seoTitle", "metaDescription", "noindex"] as const).filter((k) => a[k] !== undefined).map((k) => ({ field: k, from: cur[k], to: a[k] }));
+        return { site: s.name, taxonomy: a.taxonomy, id: a.id, dryRun: true, changes };
+      }
+      const { dryRun, ...rest } = a;
+      return { site: s.name, ...(await runHelper<object>(s, "wp", "term_update", [], JSON.stringify(rest))) };
+    }),
   );
 
   server.registerTool(
@@ -526,9 +567,19 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
         target: z.string().default("").describe("Empty is allowed only for 410/451."),
         type: z.enum(["301", "302", "307", "410", "451"]).default("301"),
         format: z.enum(["plain", "regex"]).default("plain"),
+        dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."),
       },
     },
-    tool(async (a) => ({ site: pick(a.site).name, ...(await runHelper<object>(pick(a.site), "wp", "redirect_add", [], JSON.stringify({ ...a, type: Number(a.type) }))) })),
+    tool(async (a) => {
+      const s = pick(a.site);
+      if (a.dryRun) {
+        const cur = await runHelper<{ redirects: { origin: string; target: string; type: number; format: string }[] }>(s, "wp", "redirects_list", [], JSON.stringify({ search: a.origin.replace(/^\/|\/$/g, "") }));
+        const clash = cur.redirects.find((r) => r.origin.replace(/^\/|\/$/g, "") === a.origin.replace(/^\/|\/$/g, ""));
+        return { site: s.name, dryRun: true, wouldCreate: { origin: a.origin, target: a.target, type: Number(a.type), format: a.format }, conflict: clash ?? null };
+      }
+      const { dryRun, ...rest } = a;
+      return { site: s.name, ...(await runHelper<object>(s, "wp", "redirect_add", [], JSON.stringify({ ...rest, type: Number(a.type) }))) };
+    }),
   );
 
   server.registerTool(
@@ -536,9 +587,18 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
     {
       title: "Delete a Yoast redirect",
       description: "Remove a Yoast SEO Premium redirect by its origin.",
-      inputSchema: { site: siteParam, origin: z.string(), format: z.enum(["plain", "regex"]).default("plain") },
+      inputSchema: { site: siteParam, origin: z.string(), format: z.enum(["plain", "regex"]).default("plain"), dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."), },
     },
-    tool(async (a) => ({ site: pick(a.site).name, ...(await runHelper<object>(pick(a.site), "wp", "redirect_delete", [], JSON.stringify(a))) })),
+    tool(async (a) => {
+      const s = pick(a.site);
+      if (a.dryRun) {
+        const cur = await runHelper<{ redirects: { origin: string; target: string; type: number; format: string }[] }>(s, "wp", "redirects_list", [], JSON.stringify({ search: a.origin.replace(/^\/|\/$/g, "") }));
+        const hit = cur.redirects.find((r) => r.origin.replace(/^\/|\/$/g, "") === a.origin.replace(/^\/|\/$/g, "") && r.format === a.format);
+        return { site: s.name, dryRun: true, wouldDelete: hit ?? null, found: Boolean(hit) };
+      }
+      const { dryRun, ...rest } = a;
+      return { site: s.name, ...(await runHelper<object>(s, "wp", "redirect_delete", [], JSON.stringify(rest))) };
+    }),
   );
 
   server.registerTool(
@@ -547,9 +607,13 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
       title: "Publish JSON-LD on a WordPress post",
       description:
         "Store JSON-LD (object or array, e.g. FAQPage from schema_generate) on a post; a tiny mu-plugin (installed automatically on first use) prints it in <head> on that page. Pass null to remove. Validate with schema_validate first. Works alongside Yoast's own graph.",
-      inputSchema: { site: siteParam, id: postId, jsonld: z.union([z.record(z.unknown()), z.array(z.record(z.unknown())), z.null()]) },
+      inputSchema: { site: siteParam, id: postId, jsonld: z.union([z.record(z.unknown()), z.array(z.record(z.unknown())), z.null()]), dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."), },
     },
-    tool(async (a) => ({ site: pick(a.site).name, ...(await runHelper<object>(pick(a.site), "wp", "schema_set", [], JSON.stringify({ id: a.id, jsonld: a.jsonld }))) })),
+    tool(async (a) => {
+      const s = pick(a.site);
+      if (a.dryRun) { const cur = await runHelper<{ schema: unknown; muPluginInstalled: boolean }>(s, "wp", "schema_get", [], JSON.stringify({ id: a.id })); return { site: s.name, id: a.id, dryRun: true, from: cur.schema, to: a.jsonld, muPluginInstalled: cur.muPluginInstalled }; }
+      return { site: s.name, ...(await runHelper<object>(s, "wp", "schema_set", [], JSON.stringify({ id: a.id, jsonld: a.jsonld }))) };
+    }),
   );
 
   server.registerTool(

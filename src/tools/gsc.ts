@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { searchconsole_v1 } from "googleapis";
 import { searchConsole } from "../google.js";
-import { resolveDate, round, tool } from "../util.js";
+import { resolveDate, round, tool, heartbeat } from "../util.js";
 import { wpPostIndexForHost } from "./wp.js";
 import { collectSitemapUrls, fetchWithTimeout } from "./web.js";
 import * as cheerio from "cheerio";
@@ -13,15 +13,15 @@ const OPERATORS = ["equals", "notEquals", "contains", "notContains", "includingR
 
 const siteUrl = z
   .string()
-  .describe("Property URL exactly as shown in Search Console, e.g. 'https://example.com/' or 'sc-domain:example.com'. Use gsc_list_sites to discover it.");
+  .describe("Search Console property, e.g. 'sc-domain:example.com' or 'https://example.com/' (see gsc_list_sites).");
 
 const dateField = (what: string) =>
-  z.string().describe(`${what} date: YYYY-MM-DD, 'today', 'yesterday' or 'NdaysAgo' (e.g. '28daysAgo'). Search Console data lags ~2-3 days.`);
+  z.string().describe(`${what}: YYYY-MM-DD, today, yesterday or NdaysAgo (data lags 2-3 days).`);
 
 const filterSchema = z.object({
   dimension: z.enum(DIMENSIONS),
   operator: z.enum(OPERATORS).default("equals"),
-  expression: z.string().describe("Value to match. For device use DESKTOP/MOBILE/TABLET; for country use 3-letter ISO code like 'usa', 'chn'."),
+  expression: z.string().describe("Value; device: DESKTOP/MOBILE/TABLET, country: 3-letter code like 'usa'."),
 });
 
 export type Row = { keys: Record<string, string>; clicks: number; impressions: number; ctr: number | null; position: number | null };
@@ -104,17 +104,17 @@ export function registerSearchConsoleTools(server: McpServer) {
     {
       title: "Search Console performance report",
       description:
-        "Query Google Search performance data (clicks, impressions, CTR, average position) grouped by query, page, country, device, date or searchAppearance. Supports filtering (e.g. only rows where page contains '/blog/') and pagination.",
+        "Search performance (clicks, impressions, CTR, position) grouped by query, page, country, device, date or searchAppearance, with filters and pagination.",
       inputSchema: {
         siteUrl,
         startDate: dateField("Start"),
         endDate: dateField("End"),
-        dimensions: z.array(z.enum(DIMENSIONS)).default(["query"]).describe("Group-by dimensions. Omit for site totals; use ['date'] for a daily trend."),
+        dimensions: z.array(z.enum(DIMENSIONS)).default(["query"]).describe("Group-by; [] for totals, ['date'] for a trend."),
         searchType: z.enum(SEARCH_TYPES).default("web"),
         rowLimit: z.number().int().min(1).max(25000).default(100),
         startRow: z.number().int().min(0).default(0).describe("Pagination offset."),
         filters: z.array(filterSchema).optional().describe("All filters are AND-ed."),
-        dataState: z.enum(["final", "all"]).default("final").describe("'all' includes fresh (not yet finalized) data of the last days."),
+        dataState: z.enum(["final", "all"]).default("final").describe("'all' includes fresh, not yet final, data."),
         aggregationType: z.enum(["auto", "byPage", "byProperty"]).optional(),
       },
     },
@@ -140,7 +140,7 @@ export function registerSearchConsoleTools(server: McpServer) {
     {
       title: "Compare two periods in Search Console",
       description:
-        "Compare search performance between a current and a previous period for a single dimension (query or page). Returns rows with deltas, sorted by biggest click change, so you can spot winners and losers.",
+        "Compare a current and a previous period by query/page/country/device; rows carry deltas, sorted by click change (winners and losers).",
       inputSchema: {
         siteUrl,
         dimension: z.enum(["query", "page", "country", "device"]).default("page"),
@@ -247,7 +247,7 @@ export function registerSearchConsoleTools(server: McpServer) {
     {
       title: "Find quick-win keywords (striking distance)",
       description:
-        "Find queries with high impressions but average position in a range (default 8-20): pages already ranking on page 1-2 that can be pushed into the top results with title/content/internal-link work. Groups results by page and, when a WordPress site is configured for this domain, maps each page to its post ID so you can edit it directly.",
+        "Striking-distance keywords: high impressions at position 8-20 (configurable), grouped by page and mapped to WordPress post IDs when a site is configured.",
       inputSchema: {
         siteUrl,
         startDate: dateField("Start").default("28daysAgo"),
@@ -332,7 +332,7 @@ export function registerSearchConsoleTools(server: McpServer) {
     {
       title: "Batch index coverage check",
       description:
-        "Run the URL Inspection API over a list of URLs (or the first N URLs of the site's sitemap) and summarize index status: indexed / not indexed, coverage state, robots state, last crawl, canonical mismatch. Costs one inspection call per URL against the ~2000/day quota, so keep batches small.",
+        "URL Inspection over a list of URLs or the first N sitemap URLs: verdict, coverage state, robots, last crawl, canonical mismatch. One quota call (~2000/day) per URL, keep batches small.",
       inputSchema: {
         siteUrl,
         urls: z.array(z.string().url()).max(100).optional().describe("Explicit URLs to inspect."),
@@ -342,7 +342,9 @@ export function registerSearchConsoleTools(server: McpServer) {
         languageCode: z.string().default("en-US"),
       },
     },
-    tool(async (args) => {
+    tool(async (args, extra) => {
+      const stop = heartbeat(extra, "inspecting URLs");
+      try {
       let urls = args.urls ?? [];
       if (!urls.length && args.sitemapUrl) urls = (await collectSitemapUrls(args.sitemapUrl, { maxUrls: args.limit })).urls.map((u) => u.loc);
       if (!urls.length) throw new Error("Provide urls[] or sitemapUrl.");
@@ -384,6 +386,7 @@ export function registerSearchConsoleTools(server: McpServer) {
       for (const r of results) { const k = String(r.coverageState ?? r.error ?? "unknown"); summary[k] = (summary[k] ?? 0) + 1; }
       const ordered = urls.map((u) => results.find((r) => r.url === u)!);
       return { siteUrl: args.siteUrl, inspected: results.length, summary, results: args.onlyProblems ? ordered.filter((r) => r.problem) : ordered };
+      } finally { stop(); }
     }),
   );
 
@@ -392,7 +395,7 @@ export function registerSearchConsoleTools(server: McpServer) {
     {
       title: "Question queries (AI Overview / featured snippet targets)",
       description:
-        "Find question-style queries (how, what, why, best, is it, cómo, qué, cuánto, dónde...) the site already gets impressions for, grouped by page. Optionally fetches each page to check whether a heading matches the question and whether FAQPage schema exists, so you know where to add FAQ answers. These queries are the ones AI Overviews and answer engines pick up.",
+        "Question-style queries (how/what/why/best, cómo/qué/cuánto...) the site gets impressions for, grouped by page; optionally checks whether each page has a matching heading and FAQPage schema. Targets for FAQ sections and AI Overviews.",
       inputSchema: {
         siteUrl,
         startDate: dateField("Start").default("90daysAgo"),

@@ -17,7 +17,7 @@ npm run inspector      # 用 MCP Inspector 调试 dist/
 npm run auth -- --client-secret ./client_secret.json   # 一次性 OAuth 授权，写入 ~/.config/google-seo-mcp/credentials.json
 ```
 
-`npm test` 跑 `test/smoke.mjs`：启动服务、检查每个工具的描述与注解、比对 `test/tools.snap.json` 的工具清单（增删工具后用 `UPDATE_SNAPSHOT=1 npm test` 刷新），不访问网络。真实调用的验证用临时的 MCP 客户端脚本：
+`npm test` 依次跑：`test/unit/*.test.mjs`（`node:test`，针对 `dist/` 里导出的纯函数：robots 解析、URL/路径归一化、日期、dotenv、schema 审计、工具分类）、`test/smoke.mjs`（启动服务、检查描述与注解、比对 `test/tools.snap.json`，增删工具后用 `UPDATE_SNAPSHOT=1 npm test` 刷新）、`scripts/sync-readme.mjs --check`。全部不访问网络。CI（`.github/workflows/deploy.yml` 的 test 任务）在每次推送和 PR 上跑同样的东西加密钥扫描，main 只有在它通过后才部署。真实调用的验证用临时的 MCP 客户端脚本：
 
 ```js
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -36,7 +36,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 - `src/server.ts`：`createServer()` 创建 `McpServer` 并注册全部工具。两种传输都调用它；HTTP 传输是**每个请求新建一个服务实例**（无状态，`sessionIdGenerator: undefined`）。它包了一层 `registerTool`：按工具名推断注解（`WRITE_TOOLS`、`DESTRUCTIVE_TOOLS` 正则）、只读模式下跳过写入工具、按 `toolsetOf()` 应用工具集筛选。**新增写入类工具时必须让名字匹配这两个正则**，否则会被当成只读。服务器 instructions 在 `buildInstructions()` 里。
 - `src/index.ts`：入口，根据 `--http` 参数或 `MCP_TRANSPORT=http` 选择 stdio 或 HTTP。`src/http.ts` 是纯 `node:http` 服务，带 Bearer Token 鉴权（`MCP_AUTH_TOKEN`）、`/healthz`，默认只绑回环地址。
 - `src/google.ts`：单例 `GoogleAuth`，以及 `googleapis` 客户端工厂（`searchconsole v1`、`analyticsdata v1beta`、`analyticsadmin v1beta`）。凭据查找顺序：`GOOGLE_CREDENTIALS_JSON` → `GOOGLE_APPLICATION_CREDENTIALS` → `~/.config/google-seo-mcp/credentials.json` → ADC。GA4 用的是 `googleapis` 的 REST 客户端而不是 `@google-analytics/data`，避免引入 gRPC。
-- `src/util.ts`：`tool(fn)` 包装所有处理函数，返回值 JSON 序列化进文本内容，抛出的异常经 `formatError` 变成 `isError` 结果（缺凭据和 403 会附加提示）。`resolveDate()` 把 `today`、`yesterday`、`NdaysAgo` 转成 `YYYY-MM-DD`，因为 Search Console 只接受绝对日期。
+- `src/util.ts`：`tool(fn)` 包装所有处理函数，返回值经 `fitResult()` 做体积保护（超过 `SEO_MCP_MAX_RESULT_CHARS` 时对最长的数组减半直到放下，并加 `_truncated` 说明）后以**紧凑 JSON**（不缩进）写进文本内容；抛出的异常经 `formatError` 变成 `isError` 结果（缺凭据和 403 会附加提示）。`heartbeat(extra, msg)` 给长任务发进度通知，超过约 10 秒的工具都要用。`resolveDate()` 把 `today`、`yesterday`、`NdaysAgo` 转成 `YYYY-MM-DD`，因为 Search Console 只接受绝对日期。
 - `src/tools/gsc.ts`、`src/tools/ga.ts`：Google 工具。输入 schema 是传给 `registerTool` 的 zod raw shape，`.describe()` 文本要写清楚，那是 LLM 唯一能看到的说明。GA 的行数据由 `tabulate()` 拍平成 `{维度: 值, 指标: 数字}` 对象。
   - `gsc.ts` 导出 `query()`、`normalizePath()` 供其他模块复用；`gsc_delete_*`、`gsc_add_site` 是写入工具，名字必须保持这些前缀。
   - `ga.ts`：漏斗报告走 v1alpha，`googleapis` 没封装，用 `getAuth().getClient().request()` 直接 POST；漏斗步骤里页面条件要用 `unifiedPagePathScreen`（`pagePath` 不被接受），返回的 `metricHeaders` 会重复一遍，按名字去重后再对应 `metricValues`。`ga_property_config` 混用 admin v1beta 和 v1alpha（受众、增强型衡量只在 alpha）。`ga_check_compatibility` 在组合本身不兼容时 API 返回 400 而不是列表，已捕获成 `compatible:false`。
@@ -65,7 +65,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 
 ## 新增或修改工具的完整流程
 
-1. 在对应的 `src/tools/*.ts` 模块里用 `server.registerTool` 注册；名字用 `前缀_动作` 形式，前缀决定工具集（见 `toolsetOf()`）；写入类工具名必须匹配 `WRITE_TOOLS`（删除类再匹配 `DESTRUCTIVE_TOOLS`）。每个参数都要 `.describe()`，可枚举的用 `z.enum`。
+1. 在对应的 `src/tools/*.ts` 模块里用 `server.registerTool` 注册；名字用 `前缀_动作` 形式，前缀决定工具集（见 `toolsetOf()`）；写入类工具名必须匹配 `WRITE_TOOLS`（删除类再匹配 `DESTRUCTIVE_TOOLS`）。每个参数都要 `.describe()`，可枚举的用 `z.enum`，描述精炼（80 个工具的定义已约 2.1 万 token）。**写入类工具必须提供 `dryRun` 参数**，返回当前值与将要做的改动而不落地。纯函数尽量导出并在 `test/unit/` 加用例。
 2. 需要新密钥的：`.env` 与 `.env.example` 各加一行带用途注释的条目；密钥缺失时抛出带申请路径的错误。
 3. `npm run build`，用临时客户端脚本对真实数据验证（写入只用临时对象），删掉脚本。
 4. `UPDATE_SNAPSHOT=1 npm test` 刷新工具清单快照，然后 `npm run docs:sync` 让两份 README 和 `package.json` 里的工具总数、分组计数自动对齐（`npm test` 会检查是否过期），再 `npm test` 确认通过。
@@ -73,6 +73,10 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 6. 中文提交信息，`git push`；推送会自动部署，用 `gh run watch` 看到成功后，用线上地址调一次新工具确认（`/healthz` 先通）。
 7. 涉及服务器 `.env` 的变更（新密钥、`WP_SITES`）要在服务器上同步并重启容器。
 8. 一批功能完成后发版：`npm pkg set version=x.y.z`（服务器上报的版本号从 `package.json` 读取），把 CHANGELOG 的 Unreleased 改成版本段落并更新底部链接，提交后 `git tag -a vx.y.z -m '...'`、`git push origin vx.y.z`、`gh release create vx.y.z --title ... --notes-file <(从 CHANGELOG 摘出该段)`。
+
+## 发布到 npm 与 MCP 注册中心
+
+包名是 `@akxan/google-seo-mcp`（无作用域的名字已被占用），`files` 只含 `dist`、`scripts`、README、CHANGELOG、LICENSE；`npm pack --dry-run` 确认不含 `.env`、密钥或 `CLAUDE.local.md` 后再 `npm publish --access public`。`server.json`（`mcpName` 与 `package.json` 一致）供 `mcp-publisher publish` 使用，版本号三处（package.json、server.json 两处）要同步。
 
 ## 对外形象的维护（README、徽章、仓库元数据）
 

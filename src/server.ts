@@ -32,7 +32,7 @@ const DESTRUCTIVE_TOOLS = /^(wp_delete_|wp_run|wp_update_post|wp_builder_update|
 
 export function isWriteTool(name: string) { return WRITE_TOOLS.test(name); }
 
-function inferAnnotations(name: string) {
+export function inferAnnotations(name: string) {
   const write = isWriteTool(name);
   return { readOnlyHint: !write, destructiveHint: write && DESTRUCTIVE_TOOLS.test(name), idempotentHint: !write || /^(wp_update_seo|wp_bulk_update_seo|wp_set_schema|wp_update_media|wp_update_term|gsc_submit_sitemap|indexnow_submit)/.test(name), openWorldHint: true };
 }

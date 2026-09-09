@@ -16,13 +16,13 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, index: nu
 }
 
 /** Dedupe key: no hash, no trailing slash. Never fetch this form; fetch the URL as found. */
-function normalizeUrl(u: string): string {
+export function normalizeUrl(u: string): string {
   const x = new URL(u);
   x.hash = "";
   if (x.pathname.length > 1) x.pathname = x.pathname.replace(/\/+$/, "");
   return x.toString();
 }
-function cleanUrl(u: string): string { const x = new URL(u); x.hash = ""; return x.toString(); }
+export function cleanUrl(u: string): string { const x = new URL(u); x.hash = ""; return x.toString(); }
 
 export function registerCrawlTools(server: McpServer) {
   server.registerTool(
@@ -30,7 +30,7 @@ export function registerCrawlTools(server: McpServer) {
     {
       title: "Crawl the site and audit every page",
       description:
-        "Breadth-first crawl from a start URL (same host only, respects robots.txt for Googlebot), auditing each HTML page like page_audit. Returns a site-level summary: status code counts, broken internal links with their referrers, redirect chains, duplicate titles and descriptions, pages missing title/description/H1, noindex pages, thin pages, images without alt, orphan pages (in sitemap but never linked), click depth from the start page and inbound-link counts per page. Use maxPages to bound the run; a 200-page crawl takes 1-3 minutes.",
+        "Breadth-first crawl of one host (respects robots.txt), auditing each page: status counts, broken links with referrers, redirect chains, duplicate titles/descriptions, missing title/description/H1, noindex, thin pages, images without alt, orphan pages, click depth and inbound links. 200 pages take 1-3 minutes.",
       inputSchema: {
         startUrl: z.string().url(),
         maxPages: z.number().int().min(1).max(500).default(150),
@@ -146,7 +146,9 @@ export function registerCrawlTools(server: McpServer) {
         sampleSize: z.number().int().min(1).max(30).default(10),
       },
     },
-    tool(async (a) => {
+    tool(async (a, extra) => {
+      const stop = heartbeat(extra, "checking hreflang alternates");
+      try {
       let urls = a.urls ?? [];
       if (!urls.length && a.sitemapUrl) { const all = (await collectSitemapUrls(a.sitemapUrl, { maxUrls: 5000 })).urls.map((u) => u.loc); const step = Math.max(1, Math.floor(all.length / a.sampleSize)); urls = all.filter((_, i) => i % step === 0).slice(0, a.sampleSize); }
       if (!urls.length) throw new Error("Provide urls[] or sitemapUrl.");
@@ -191,6 +193,7 @@ export function registerCrawlTools(server: McpServer) {
         return { url, htmlLang: src.htmlLang, canonical: src.canonical, alternates: alternates.length, problems, alternateDetails: alternates.filter((x) => x.issues.length) };
       });
       return { checked: results.length, pagesWithProblems: results.filter((r) => r.problems.length || (r.alternateDetails?.length ?? 0) > 0).length, results };
+      } finally { stop(); }
     }),
   );
 

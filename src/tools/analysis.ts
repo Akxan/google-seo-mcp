@@ -24,7 +24,7 @@ export function registerAnalysisTools(server: McpServer) {
     {
       title: "Pre-migration URL safety net",
       description:
-        "Before pointing a domain at a new (static) site, verify that every URL that matters on the old site still works on the new one. Collects old URLs from Search Console (pages with impressions in the period) and the old sitemap, rewrites each to the new host (e.g. a pages.dev preview), follows redirects, and classifies: OK (200 same path), REDIRECTED (301/302 to a 200 page), REDIRECT_TO_HOME (traffic likely lost), CHAIN (2+ hops), NOT_FOUND (404/410), ERROR. Results are sorted by old-site clicks so the costliest gaps come first.",
+        "Pre-migration check: take old URLs from Search Console (pages with impressions) and the old sitemap, test each on the new host, classify OK / REDIRECTED / REDIRECT_TO_HOME / CHAIN / NOT_FOUND / ERROR, sorted by old-site clicks.",
       inputSchema: {
         siteUrl,
         oldSitemapUrl: z.string().url().optional().describe("Old site's sitemap (index supported). Defaults to none: only Search Console pages are used."),
@@ -94,7 +94,9 @@ export function registerAnalysisTools(server: McpServer) {
         top: z.number().int().min(1).max(200).default(40),
       },
     },
-    tool(async (a) => {
+    tool(async (a, extra) => {
+      const stop = heartbeat(extra, "comparing the two properties");
+      try {
       const [ra, rb] = await Promise.all([
         gscQuery({ siteUrl: a.siteA, startDate: a.startDate, endDate: a.endDate, dimensions: ["query", "page"], rowLimit: 25000 }),
         gscQuery({ siteUrl: a.siteB, startDate: a.startDate, endDate: a.endDate, dimensions: ["query", "page"], rowLimit: 25000 }),
@@ -120,6 +122,7 @@ export function registerAnalysisTools(server: McpServer) {
       await mapLimit(toCheck, 4, outHosts);
       const withLinks = top.map((p) => ({ ...p, aLinksToB: linkCache.has(p.pageA) ? linkCache.get(p.pageA)!.has(hostB) : null, bLinksToA: linkCache.has(p.pageB) ? linkCache.get(p.pageB)!.has(hostA) : null }));
       return { siteA: a.siteA, siteB: a.siteB, period: { start: resolveDate(a.startDate), end: resolveDate(a.endDate) }, pagesA: A.length, pagesB: B.length, candidatePairs: pairs.length, suggestions: withLinks, note: "Add a contextual link from the page with more authority to the other where the shared query is discussed; avoid sitewide footer links." };
+      } finally { stop(); }
     }),
   );
 
@@ -235,7 +238,9 @@ export function registerAnalysisTools(server: McpServer) {
         "Search the web for pages mentioning a brand name that are not on your own domain, and check whether each mentioning page links to you. Unlinked mentions are outreach targets for links; the list also shows what context AI engines associate with the brand. Requires BRAVE_API_KEY (free tier available at brave.com/search/api).",
       inputSchema: { brand: z.string(), domain: z.string().describe("Your domain, excluded from results and used to detect links."), count: z.number().int().min(1).max(20).default(20), country: z.string().default("es"), language: z.string().default("en"), checkLinks: z.boolean().default(true) },
     },
-    tool(async (a) => {
+    tool(async (a, extra) => {
+      const stop = heartbeat(extra, "checking mentioning pages");
+      try {
       const key = process.env.BRAVE_API_KEY;
       if (!key) throw new Error("BRAVE_API_KEY is not set. Get a free key at https://brave.com/search/api/ and add it to the MCP env.");
       const q = `"${a.brand}" -site:${a.domain}`;
@@ -250,6 +255,7 @@ export function registerAnalysisTools(server: McpServer) {
         return { title: r.title, url: r.url, host: new URL(r.url).hostname, snippet: r.description, age: r.age, linksToYou };
       });
       return { brand: a.brand, query: q, results: rows.length, unlinkedMentions: rows.filter((r) => r.linksToYou === false), linkedMentions: rows.filter((r) => r.linksToYou === true).length, all: rows };
+      } finally { stop(); }
     }),
   );
 

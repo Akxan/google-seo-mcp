@@ -1,6 +1,6 @@
 {
-  "name": "google-seo-mcp",
-  "version": "0.4.0",
+  "name": "@akxan/google-seo-mcp",
+  "version": "0.5.0",
   "description": "SEO & GEO MCP server: Google Search Console, GA4, PageSpeed Insights, structured data, llms.txt, AI crawler checks, WordPress (Yoast, WP-CLI over SSH) and GitHub as 80 tools for AI agents",
   "main": "index.js",
   "scripts": {
@@ -54,7 +54,9 @@
   "files": [
     "dist",
     "scripts",
-    "test"
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=18"
@@ -68,5 +70,9 @@
   "homepage": "https://github.com/Akxan/google-seo-mcp#readme",
   "bugs": {
     "url": "https://github.com/Akxan/google-seo-mcp/issues"
+  },
+  "mcpName": "io.github.Akxan/google-seo-mcp",
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -1,7 +1,37 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
+/** Upper bound for a tool result; larger payloads are trimmed so one call cannot flood the model's context. */
+export const MAX_RESULT_CHARS = Number(process.env.SEO_MCP_MAX_RESULT_CHARS ?? 120_000);
+
+/** Trim oversized arrays inside a result (longest arrays first) until it fits, and say what was cut. */
+export function fitResult(data: unknown, max = MAX_RESULT_CHARS): { data: unknown; truncated?: string } {
+  let text = JSON.stringify(data);
+  if (text.length <= max || !data || typeof data !== "object") return { data };
+  const clone = JSON.parse(text) as Record<string, unknown>;
+  const notes: string[] = [];
+  const arrays = Object.entries(clone).filter(([, v]) => Array.isArray(v) && (v as unknown[]).length > 5).sort((a, b) => JSON.stringify(b[1]).length - JSON.stringify(a[1]).length);
+  for (const [key, value] of arrays) {
+    const arr = value as unknown[];
+    let keep = arr.length;
+    while (keep > 5 && text.length > max) {
+      keep = Math.max(5, Math.floor(keep / 2));
+      clone[key] = arr.slice(0, keep);
+      text = JSON.stringify(clone);
+    }
+    if (keep < arr.length) notes.push(`${key}: ${keep} of ${arr.length} items`);
+    if (text.length <= max) break;
+  }
+  if (text.length > max) { // still too big: fall back to a hard cut of long strings
+    for (const [key, value] of Object.entries(clone)) if (typeof value === "string" && value.length > 2000) { clone[key] = value.slice(0, 2000) + "…"; notes.push(`${key}: string cut to 2000 chars`); }
+    text = JSON.stringify(clone);
+  }
+  return { data: clone, truncated: notes.length ? `Result truncated to fit ${max} chars (${notes.join("; ")}). Narrow the request (smaller limit/top, fewer dimensions, a filter, or pagination) to see more.` : undefined };
+}
+
 export function ok(data: unknown): CallToolResult {
-  return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+  const fitted = fitResult(data);
+  const payload = fitted.truncated && fitted.data && typeof fitted.data === "object" ? { ...(fitted.data as object), _truncated: fitted.truncated } : fitted.data;
+  return { content: [{ type: "text", text: JSON.stringify(payload) }] };
 }
 
 export function fail(err: unknown): CallToolResult {

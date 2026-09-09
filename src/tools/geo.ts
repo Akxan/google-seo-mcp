@@ -6,7 +6,7 @@
 import { z } from "zod";
 import * as cheerio from "cheerio";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { round, tool } from "../util.js";
+import { round, tool, heartbeat } from "../util.js";
 import { collectSitemapUrls, fetchWithTimeout, parseRobots, robotsAllows } from "./web.js";
 
 /* ---------- shared helpers ---------- */
@@ -24,7 +24,7 @@ async function loadPage(url: string) {
   return { res, html, $: cheerio.load(html) };
 }
 
-function extractJsonLd($: cheerio.CheerioAPI): { blocks: unknown[]; invalid: number } {
+export function extractJsonLd($: cheerio.CheerioAPI): { blocks: unknown[]; invalid: number } {
   const blocks: unknown[] = [];
   let invalid = 0;
   $('script[type="application/ld+json"]').each((_, el) => {
@@ -34,7 +34,7 @@ function extractJsonLd($: cheerio.CheerioAPI): { blocks: unknown[]; invalid: num
 }
 
 /** Flatten JSON-LD (incl. @graph and arrays) into a list of typed nodes. */
-function flattenNodes(blocks: unknown[]): Record<string, unknown>[] {
+export function flattenNodes(blocks: unknown[]): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = [];
   const walk = (n: unknown) => {
     if (Array.isArray(n)) { n.forEach(walk); return; }
@@ -54,7 +54,7 @@ function typesOf(node: Record<string, unknown>): string[] {
 
 const QUESTION_WORDS = /^(how|what|why|when|where|which|who|is|are|can|does|do|should|best|top|cómo|como|qué|que|por qué|cuándo|cuando|dónde|donde|cuál|cual|quién|quien|cuánto|cuanto|mejor|mejores|es|son|puedo|se puede|wie|was|warum|wann|wo|welche|comment|quoi|pourquoi|quand|où)\b/i;
 
-function isQuestion(s: string) { return /\?\s*$/.test(s) || QUESTION_WORDS.test(s.trim()); }
+export function isQuestion(s: string) { return /\?\s*$/.test(s) || QUESTION_WORDS.test(s.trim()); }
 
 const STOP = new Set("the a an of in on to for and or is are with from by at as vs de la el los las en y o del al un una para con por que es se su lo mi".split(" "));
 function contentWords(s: string) { return s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter((w) => w.length > 2 && !STOP.has(w)); }
@@ -110,7 +110,7 @@ const SCHEMA_RULES: Record<string, { required: string[]; recommended: string[] }
   HowTo: { required: ["name", "step"], recommended: ["totalTime", "image", "supply", "tool"] },
 };
 
-function auditNode(node: Record<string, unknown>) {
+export function auditNode(node: Record<string, unknown>) {
   const types = typesOf(node);
   const missing: string[] = [];
   const recommendedMissing: string[] = [];
@@ -190,7 +190,9 @@ export function registerGeoTools(server: McpServer) {
         liveFetch: z.boolean().default(true).describe("Also request the page with each bot UA (one request per bot)."),
       },
     },
-    tool(async (a) => {
+    tool(async (a, extra) => {
+      const stop = heartbeat(extra, "probing crawler access");
+      try {
       const origin = new URL(a.url).origin;
       const robotsRes = await fetchWithTimeout(`${origin}/robots.txt`);
       const robotsText = robotsRes.ok ? await robotsRes.text() : "";
@@ -211,6 +213,7 @@ export function registerGeoTools(server: McpServer) {
       const citationBots = ["OAI-SearchBot", "ChatGPT-User", "Claude-SearchBot", "Claude-User", "PerplexityBot", "Perplexity-User", "Googlebot", "Bingbot"];
       const citationBlocked = citationBots.filter((b) => blockedBy.robots.includes(b) || blockedBy.live.includes(b));
       return { url: a.url, robotsTxtFound: robotsRes.ok, robotsGroups: parsed.groups.map((g) => g.agents.join(",")), results: rows, blockedBy, citationBlocked, verdict: citationBlocked.length ? `Blocked for citation-relevant bots: ${citationBlocked.join(", ")}` : "All citation-relevant bots can access the page" };
+      } finally { stop(); }
     }),
   );
 
@@ -274,7 +277,9 @@ export function registerGeoTools(server: McpServer) {
         excludePatterns: z.array(z.string()).default(["/tag/", "/category/", "/author/", "/page/", "/wp-", "/feed", "?"]).describe("Skip URLs containing any of these substrings."),
       },
     },
-    tool(async (a) => {
+    tool(async (a, extra) => {
+      const stop = heartbeat(extra, "reading pages for llms.txt");
+      try {
       const origin = new URL(a.siteUrl).origin;
       let sitemapUrl = `${origin}/sitemap.xml`;
       try { const r = await fetchWithTimeout(`${origin}/robots.txt`); if (r.ok) sitemapUrl = parseRobots(await r.text()).sitemaps[0] ?? sitemapUrl; } catch { /* ignore */ }
@@ -305,6 +310,7 @@ export function registerGeoTools(server: McpServer) {
         lines.push("");
       }
       return { site: origin, pagesIncluded: pages.filter(Boolean).length, sections: groups.size, llmsTxt: lines.join("\n") };
+      } finally { stop(); }
     }),
   );
 
@@ -320,7 +326,9 @@ export function registerGeoTools(server: McpServer) {
         sampleSize: z.number().int().min(1).max(40).default(15),
       },
     },
-    tool(async (a) => {
+    tool(async (a, extra) => {
+      const stop = heartbeat(extra, "fetching pages for structured data audit");
+      try {
       let urls = a.urls ?? [];
       if (!urls.length && a.sitemapUrl) {
         const all = (await collectSitemapUrls(a.sitemapUrl, { maxUrls: 5000 })).urls.map((u) => u.loc);
@@ -349,6 +357,7 @@ export function registerGeoTools(server: McpServer) {
       const typeCounts: Record<string, number> = {};
       for (const p of pages) for (const t of (p as { types?: string[] }).types ?? []) typeCounts[t] = (typeCounts[t] ?? 0) + 1;
       return { pagesAudited: pages.length, typeCounts, pagesWithoutSchema: pages.filter((p) => (p as { jsonLdBlocks?: number }).jsonLdBlocks === 0).map((p) => p.url), pagesWithIssues: pages.filter((p) => ((p as { issues?: unknown[] }).issues?.length ?? 0) > 0).length, entityConsistency: { ...consistency, inconsistentFields: inconsistent }, pages };
+      } finally { stop(); }
     }),
   );
 
@@ -390,7 +399,9 @@ export function registerGeoTools(server: McpServer) {
         "Site-level trust signals that search and AI engines weigh: About and Contact pages, privacy/terms, visible address and phone, Organization/LocalBusiness schema on the homepage, review/rating schema, social profiles (sameAs), author pages, HTTPS, plus a sample of articles checked for bylines and dates. Returns a pass/fail checklist with what to add.",
       inputSchema: { siteUrl: z.string().url(), sampleArticles: z.number().int().min(0).max(20).default(5) },
     },
-    tool(async (a) => {
+    tool(async (a, extra) => {
+      const stop = heartbeat(extra, "running E-E-A-T checks");
+      try {
       const origin = new URL(a.siteUrl).origin;
       const home = await loadPage(`${origin}/`);
       const $ = home.$;
@@ -434,6 +445,7 @@ export function registerGeoTools(server: McpServer) {
         { item: "Articles carry author + dates", pass: articles.length > 0 && articles.every((x) => "author" in x && x.author && x.datePublished), detail: `${articles.filter((x) => "author" in x && x.author).length}/${articles.length} sampled articles have an author, ${articles.filter((x) => "datePublished" in x && x.datePublished).length}/${articles.length} have datePublished` },
       ];
       return { site: origin, score: Math.round((checklist.filter((c) => c.pass).length / checklist.length) * 100), checklist, sampledArticles: articles, socialLinks: [...new Set(socialLinks)].slice(0, 15) };
+      } finally { stop(); }
     }),
   );
 

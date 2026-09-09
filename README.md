@@ -188,6 +188,7 @@ All settings live in `.env` (see [`.env.example`](.env.example), which documents
 | `WP_SITES` | JSON array of WordPress sites reachable over SSH; omit to disable `wp_*` tools |
 | `SEO_MCP_READ_ONLY=1` or `--read-only` | register no write tools |
 | `SEO_MCP_TOOLSETS` or `--toolsets=` | comma list of `gsc,ga4,web,geo,analysis,wordpress,github` (`google_auth_status` is always on) |
+| `SEO_MCP_MAX_RESULT_CHARS` | cap on a single tool result (default 120000); oversized arrays are trimmed with a note on how to narrow the query |
 | `MCP_TRANSPORT=http`, `MCP_HOST`, `MCP_PORT`, `MCP_PATH`, `MCP_AUTH_TOKEN` | HTTP mode |
 
 Tools that need an optional key return an error explaining how to obtain it instead of silently disappearing.
@@ -198,7 +199,7 @@ Tools that need an optional key return an error explaining how to obtain it inst
 WP_SITES=[{"name":"mysite","host":"1.2.3.4","port":22,"user":"ssh_user","path":"domains/example.com/public_html"}]
 ```
 
-Needs WP-CLI on the host and passwordless SSH from the machine running the server. Posts built with BeTheme's Muffin Builder (empty `post_content`) are handled by the `wp_builder_*` tools. `wp_set_schema` installs a 5-line mu-plugin that prints stored JSON-LD in `<head>`.
+Needs WP-CLI on the host and passwordless SSH from the machine running the server. Posts built with BeTheme's Muffin Builder (empty `post_content`) are handled by the `wp_builder_*` tools. `wp_set_schema` installs a 5-line mu-plugin that prints stored JSON-LD in `<head>`. Every write tool (and `github_commit_files`) accepts `dryRun: true` to return the current values and the intended changes without touching anything.
 
 ## Running as a 24/7 HTTP server
 
@@ -218,7 +219,7 @@ claude mcp add --transport http google-seo https://mcp.example.com/mcp --header 
 ```bash
 npm run dev            # tsx src/index.ts (stdio, no build)
 npm run build          # tsc -> dist/
-npm test               # smoke test: descriptions, annotations, instructions, tool-list snapshot
+npm test               # unit tests (node:test), smoke test (annotations, instructions, tool-list snapshot), README count check
 npm run inspector      # MCP Inspector against dist/
 npm run check:secrets  # scan tracked files for keys / personal data (also pre-commit and pre-push hooks)
 ```
@@ -234,7 +235,7 @@ src/
 └── tools/          gsc · ga · web · crawl · geo · analysis · wp · github
 scripts/            wp-helper.php · mfn-builder.php (uploaded to the WordPress host) · check-secrets.sh
 deploy/             systemd · Caddy · Nginx samples
-test/               smoke test + tool snapshot
+test/               unit tests · smoke test · tool snapshot
 ```
 
 ## Notes and limits
@@ -246,7 +247,7 @@ test/               smoke test + tool snapshot
 
 ## Contributing
 
-Issues and pull requests are welcome. Run `npm test` and `npm run check:secrets` before pushing; add new tools to the matching `src/tools/*.ts` module, give every parameter a `.describe()`, and update this README.
+Issues and pull requests are welcome. CI runs build, tests and the secret scan on every push and pull request; `main` deploys only after they pass. Add new tools to the matching `src/tools/*.ts` module, give every parameter a `.describe()`, run `npm run docs:sync`, and add a line to `CHANGELOG.md`.
 
 ## Keywords
 

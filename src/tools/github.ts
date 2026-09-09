@@ -99,17 +99,32 @@ export function registerGitHubTools(server: McpServer) {
     {
       title: "Commit file changes to GitHub",
       description:
-        "Create one commit on a branch that adds/updates/deletes several files atomically (Git Data API), then the branch is updated so the site's CI/CD (e.g. Cloudflare Pages) deploys it. Send the full new content of each file; read the current content first with github_get_file and apply your edit locally. Set createBranch to work on a new branch off the default branch instead of committing directly.",
+        "One atomic commit that adds/updates/deletes several files on a branch (Git Data API); the site's CI/CD then deploys. Send full file contents (read them first with github_get_file). createBranch starts a new branch off the default one.",
       inputSchema: {
         repo: repoParam,
         branch: z.string().describe("Branch to commit to, e.g. 'main'."),
-        message: z.string().describe("Commit message. Follow the repository's conventions (language, style)."),
+        message: z.string().describe("Commit message in the repository's conventions."),
         files: z.array(z.object({ path: z.string(), content: z.string().optional().describe("Full new file content (UTF-8). Omit when delete=true."), delete: z.boolean().default(false) })).min(1).max(50),
         createBranch: z.boolean().default(false).describe("If true, create `branch` from the repo's default branch when it does not exist yet."),
+        dryRun: z.boolean().default(false).describe("Preview only: compare each file with the branch's current content (size and changed-line counts) without committing."),
       },
     },
     tool(async (a) => {
       const repo = await gh<{ default_branch: string }>(`/repos/${a.repo}`);
+      if (a.dryRun) {
+        const ref = a.branch;
+        const files = await Promise.all(a.files.map(async (f) => {
+          const path = f.path.replace(/^\//, "");
+          let current: string | null = null;
+          try { const d = await gh<{ type: string; encoding?: string; content?: string }>(`/repos/${a.repo}/contents/${path}?ref=${encodeURIComponent(ref)}`); if (d.type === "file" && d.encoding === "base64" && d.content) current = Buffer.from(d.content, "base64").toString("utf8"); } catch { current = null; }
+          if (f.delete) return { path, action: current === null ? "delete (file not found)" : "delete", currentBytes: current?.length ?? 0 };
+          const next = f.content ?? "";
+          const a1 = (current ?? "").split("\n"), b1 = next.split("\n");
+          const same = new Set(a1); const added = b1.filter((l) => !same.has(l)).length; const sameB = new Set(b1); const removed = a1.filter((l) => !sameB.has(l)).length;
+          return { path, action: current === null ? "create" : next === current ? "unchanged" : "update", currentBytes: current?.length ?? 0, newBytes: next.length, linesAdded: added, linesRemoved: current === null ? 0 : removed };
+        }));
+        return { repo: a.repo, branch: ref, dryRun: true, files, note: "No commit was made." };
+      }
       let ref: { object: { sha: string } };
       try { ref = await gh(`/repos/${a.repo}/git/ref/heads/${a.branch}`); } catch (e) {
         if (!a.createBranch) throw new Error(`Branch '${a.branch}' not found (${(e as Error).message}). Pass createBranch=true to create it.`);

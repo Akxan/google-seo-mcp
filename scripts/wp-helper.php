@@ -72,9 +72,17 @@ switch ($action) {
   case 'bulk_seo': {
     $keys = ['seoTitle' => '_yoast_wpseo_title', 'metaDescription' => '_yoast_wpseo_metadesc', 'focusKeyword' => '_yoast_wpseo_focuskw', 'canonical' => '_yoast_wpseo_canonical'];
     $results = [];
+    $dry = !empty($in['dryRun']);
     foreach ($in['items'] ?? [] as $it) {
       $id = (int) ($it['id'] ?? 0);
       if (!$id || !get_post($id)) { $results[] = ['id' => $id, 'error' => 'post not found']; continue; }
+      if ($dry) {
+        $changes = [];
+        foreach ($keys as $field => $meta) if (array_key_exists($field, $it)) $changes[] = ['field' => $field, 'from' => get_post_meta($id, $meta, true), 'to' => $it[$field]];
+        if (array_key_exists('noindex', $it)) $changes[] = ['field' => 'noindex', 'from' => get_post_meta($id, '_yoast_wpseo_meta-robots-noindex', true), 'to' => $it['noindex']];
+        $results[] = ['id' => $id, 'title' => get_the_title($id), 'dryRun' => true, 'changes' => $changes];
+        continue;
+      }
       $updated = [];
       foreach ($keys as $field => $meta) {
         if (!array_key_exists($field, $it)) continue;

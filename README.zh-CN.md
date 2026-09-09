@@ -218,7 +218,9 @@ Claude Desktop / claude.ai 的「自定义连接器」同样填 URL 和 Bearer T
 - **只读模式**：`--read-only` 或 `SEO_MCP_READ_ONLY=1`，所有写入类工具不注册。
 - **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`。80 个工具的定义约 2.2 万 token，只用部分功能时可以裁剪。
 - 每个工具都带 `readOnlyHint` / `destructiveHint` 注解，服务器在初始化时返回 instructions 说明用法与安全约定。
-- `npm test` 运行冒烟测试并比对工具清单快照（`UPDATE_SNAPSHOT=1 npm test` 刷新）。
+- `npm test` 运行单元测试、冒烟测试（含工具清单快照，`UPDATE_SNAPSHOT=1 npm test` 刷新）和 README 计数校验。
+- 所有写入类工具和 `github_commit_files` 支持 `dryRun: true`，只返回当前值与将要做的改动，不落地。
+- 单次返回超过 `SEO_MCP_MAX_RESULT_CHARS`（默认 12 万字符）时自动截断数组并提示如何缩小范围。
 
 ## 5. 环境变量
 

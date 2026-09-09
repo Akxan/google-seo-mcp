@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-09
+
+### Added
+- `dryRun` on every WordPress write tool and on `github_commit_files`: returns current values and the intended changes without writing.
+- Unit tests (`node:test`) for the robots.txt parser, URL/path normalisation, date helpers, dotenv parser, schema audit and tool classification; CI workflow runs build, tests and the secret scan on every push and pull request, and `main` deploys only after they pass.
+- Progress notifications on all long-running tools (index coverage, structured-data audit, E-E-A-T audit, llms.txt generation, hreflang, cross-site links, brand mentions, AI crawler access).
+- Result size guard: oversized arrays are trimmed to `SEO_MCP_MAX_RESULT_CHARS` with a note on how to narrow the request.
+- Dependabot for npm, GitHub Actions and Docker; `server.json` manifest and scoped package name `@akxan/google-seo-mcp` for npm / MCP registry publishing.
+
+### Changed
+- Tool results are compact JSON instead of pretty-printed (fewer tokens per call); repeated parameter descriptions shortened.
+- `knowledge_graph_check` and `brand_mentions` belong to the `geo` toolset.
+
 ## [0.4.0] - 2026-09-09
 
 ### Added
@@ -23,6 +36,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - Tool annotations, server instructions, `--read-only` mode, `--toolsets` filtering, `.env` auto-loading, smoke test with tool snapshot, secret-scan git hooks.
 - stdio and stateless Streamable HTTP transports with Bearer auth.
 
-[Unreleased]: https://github.com/Akxan/google-seo-mcp/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Akxan/google-seo-mcp/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Akxan/google-seo-mcp/releases/tag/v0.3.0
