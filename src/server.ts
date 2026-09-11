@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { envValue } from "./env.js";
 import { z } from "zod";
-import { describeCredentialSource, getAuth, SCOPES } from "./google.js";
+import { currentScopes, describeCredentialSource, getAuth } from "./google.js";
 import { registerSearchConsoleTools } from "./tools/gsc.js";
 import { registerAnalyticsTools } from "./tools/ga.js";
 import { loadWpSites, registerWordPressTools } from "./tools/wp.js";
@@ -119,7 +119,7 @@ export function createServer(overrides: ServerOptions = {}): McpServer {
       const auth = getAuth();
       const client = await auth.getClient();
       const token = await client.getAccessToken();
-      return { source: describeCredentialSource(), scopes: SCOPES, tokenObtained: Boolean(token.token), readOnly: Boolean(opts.readOnly), toolsets: opts.toolsets ?? "all", wordpressSites: wpSites.map((s) => s.name) };
+      return { source: describeCredentialSource(), scopes: currentScopes(), tokenObtained: Boolean(token.token), readOnly: Boolean(opts.readOnly), toolsets: opts.toolsets ?? "all", wordpressSites: wpSites.map((s) => s.name) };
     }),
   );
 

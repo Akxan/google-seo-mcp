@@ -50,7 +50,7 @@ let cachedAuth: GoogleAuth | undefined;
  * `runWithAuth()` and every Google call inside it transparently uses that user's OAuth grant
  * instead of the operator's own credentials. Outside such a scope `getAuth()` behaves as before.
  */
-export interface RequestAuth { auth: GoogleAuth; label: string }
+export interface RequestAuth { auth: GoogleAuth; label: string; scopes?: string[] }
 const requestAuth = new AsyncLocalStorage<RequestAuth>();
 
 export function runWithAuth<T>(ctx: RequestAuth, fn: () => T): T {
@@ -62,6 +62,11 @@ export function userOAuth(clientId: string, clientSecret: string, refreshToken: 
   const client = new OAuth2Client({ clientId, clientSecret });
   client.setCredentials({ refresh_token: refreshToken });
   return new GoogleAuth({ authClient: client });
+}
+
+/** Scopes in effect: the user's grant inside a hosted request, otherwise the operator's SCOPES. */
+export function currentScopes(): string[] {
+  return requestAuth.getStore()?.scopes ?? SCOPES;
 }
 
 export function getAuth(): GoogleAuth {
