@@ -19,3 +19,4 @@ CLAUDE.local.md
 !/tsconfig.json
 secrets/
 data/
+*.pem
