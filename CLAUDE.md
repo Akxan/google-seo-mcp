@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目是什么
 
-一个 MCP 服务（TypeScript，`@modelcontextprotocol/sdk`），把 Google Search Console、Google Analytics 4（Data API 与只读 Admin API）、网页与 GEO 审计（PageSpeed、CrUX、结构化数据、AI 爬虫、llms.txt 等）、跨数据源分析，以及可选的 WordPress（通过 SSH 执行 WP-CLI）和 GitHub 读写封装成约 80 个工具，用于 SEO/GEO 运维。生产环境是部署在服务器上的 Streamable HTTP 实例，所有客户端都连它；本机 stdio 只用于开发验证。面向用户的说明在 `README.md`（英文）和 `README.zh-CN.md`（中文）。
+一个 MCP 服务（TypeScript，`@modelcontextprotocol/sdk`），把 Google Search Console、Google Analytics 4（Data API 与只读 Admin API）、网页与 GEO 审计（PageSpeed、CrUX、结构化数据、AI 爬虫、llms.txt 等）、跨数据源分析，以及可选的 WordPress（通过 SSH 执行 WP-CLI）、GitHub 读写（整文件、局部修改、服务器端转图提交）和 Gmail 附件（只读）封装成 80 多个工具，用于 SEO/GEO 运维。生产环境是部署在服务器上的 Streamable HTTP 实例，所有客户端都连它；本机 stdio 只用于开发验证。面向用户的说明在 `README.md`（英文）和 `README.zh-CN.md`（中文）。
 
 ## 常用命令
 
@@ -53,7 +53,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
   - Yoast 字段就是原始 post meta（`_yoast_wpseo_title`、`_yoast_wpseo_metadesc` 等）。写完 meta 后 `rebuildYoastIndexable()` 用 `wp eval` 调 Yoast 的 `Indexable_Builder`，否则前台标题不会变。`purgeCache()` 清该文章在 WP Rocket、Super Cache、W3TC、LiteSpeed 中的缓存。
   - `scripts/wp-helper.php` 承载所有批量或需要 PHP 逻辑的操作（SEO 状态、批量 Yoast、媒体、分类、内链建议、Yoast Premium 重定向），输入输出都是 STDIN/STDOUT 的 JSON，由 `runHelper()` 调用。`wpPostIndexForHost()` 缓存全站 URL 到文章 ID 的映射，供 `gsc_opportunities` 使用。
   - `scripts/mfn-builder.php` 处理 BeTheme（Muffin Builder）的文章，这类文章正文以 base64 加 PHP 序列化的形式存在 `mfn-page-items` meta 里，`post_content` 是空的。`ensureHelper()` 在 sha256 不一致时把脚本上传到主机的 `~/.google-seo-mcp/`，再用 `wp eval-file` 执行。`eval-file` 的代码跑在函数作用域内，PHP 里不能依赖 `global` 变量。`set` 动作会重新生成 `mfn-page-items-seo` 并调用 `wp_update_post`，让 Yoast 和缓存插件感知到变化。
-- 部署：`Dockerfile`（镜像内含 openssh-client、`scripts/`，以 `node` 用户运行，带 HEALTHCHECK）与 `docker-compose.yml`（`env_file: .env`，挂载 `secrets/service-account.json` 与 `secrets/ssh/`，宿主 `127.0.0.1:8787`）是生产方式；`deploy/vps-self-update.sh` 在服务器上拉取、重建、健康检查，通过后清理一天以上的悬空镜像和 4 GB 以外的构建缓存（服务器与其他项目共用 Docker），`deploy/deploy-vps.sh` 从本机远程触发它；`deploy/` 里另有 systemd、Caddy、Nginx 样例（Nginx 必须 `proxy_buffering off`，否则 SSE 不通）。`src/env.ts` 按包根目录定位 `.env`，容器内由 compose 提供环境变量。
+- 部署：`Dockerfile`（镜像内含 openssh-client、`scripts/`，以 `node` 用户运行，带 HEALTHCHECK）与 `docker-compose.yml`（`env_file: .env`，挂载 `secrets/service-account.json` 与 `secrets/ssh/`，宿主 `127.0.0.1:8787`）是生产方式；`deploy/vps-self-update.sh` 在服务器上拉取、重建、健康检查，通过后清理一天以上的悬空镜像和 4 GB 以外的构建缓存（服务器与其他项目共用 Docker），`deploy/deploy-vps.sh` 从本机远程触发它；`deploy/` 里另有 systemd、Caddy、Nginx 样例（Nginx 必须 `proxy_buffering off`，否则 SSE 不通）。`src/env.ts` 按包根目录定位 `.env`，容器内由 compose 提供环境变量。`sharp` 靠平台预编译包：在 Mac 上 `npm install` 时 lockfile 会一并写入 `@img/sharp-linuxmusl-x64`，Docker（Alpine）里 `npm ci` 才装得上；升级 sharp 后确认 lockfile 里仍有 linuxmusl 条目。
 
 ## 公共仓库规则（必须遵守）
 
@@ -70,14 +70,14 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 
 ## 新增或修改工具的完整流程
 
-1. 在对应的 `src/tools/*.ts` 模块里用 `server.registerTool` 注册；名字用 `前缀_动作` 形式，前缀决定工具集（见 `toolsetOf()`）；写入类工具名必须匹配 `WRITE_TOOLS`（删除类再匹配 `DESTRUCTIVE_TOOLS`）。每个参数都要 `.describe()`，可枚举的用 `z.enum`，描述精炼（80 个工具的定义已约 2.1 万 token）。**写入类工具必须提供 `dryRun` 参数**，返回当前值与将要做的改动而不落地。纯函数尽量导出并在 `test/unit/` 加用例。
+1. 在对应的 `src/tools/*.ts` 模块里用 `server.registerTool` 注册；名字用 `前缀_动作` 形式，前缀决定工具集（见 `toolsetOf()`）；写入类工具名必须匹配 `WRITE_TOOLS`（删除类再匹配 `DESTRUCTIVE_TOOLS`）。每个参数都要 `.describe()`，可枚举的用 `z.enum`，描述精炼（80 多个工具的定义已约 2.2 万 token）。**写入类工具必须提供 `dryRun` 参数**，返回当前值与将要做的改动而不落地。纯函数尽量导出并在 `test/unit/` 加用例。
 2. 需要新密钥的：`.env` 与 `.env.example` 各加一行带用途注释的条目；密钥缺失时抛出带申请路径的错误。
 3. `npm run build`，用临时客户端脚本对真实数据验证（写入只用临时对象），删掉脚本。
-4. `UPDATE_SNAPSHOT=1 npm test` 刷新工具清单快照，然后 `npm run docs:sync` 让两份 README 和 `package.json` 里的工具总数、分组计数自动对齐（`npm test` 会检查是否过期），再 `npm test` 确认通过。
+4. `UPDATE_SNAPSHOT=1 npm test` 刷新工具清单快照，然后 `npm run docs:sync` 让两份 README 和 `package.json` 里的工具总数、分组计数自动对齐，并检查每个工具名都出现在两份 README 里，缺一个就失败（`npm test` 会跑同样的检查），再 `npm test` 确认通过。
 5. 手动更新 `README.md` 的工具表内容（新工具名和一句话说明）和配置表，`README.zh-CN.md` 同步；必要时更新 `buildInstructions()`。在 `CHANGELOG.md` 的 Unreleased 下加一条。
 6. 中文提交信息，`git push`；推送会自动部署，用 `gh run watch` 看到成功后，用线上地址调一次新工具确认（`/healthz` 先通）。
 7. 涉及服务器 `.env` 的变更（新密钥、`WP_SITES`）要在服务器上同步并重启容器。
-8. 一批功能完成后发版：`npm pkg set version=x.y.z`（服务器上报的版本号从 `package.json` 读取），把 CHANGELOG 的 Unreleased 改成版本段落并更新底部链接，提交后 `git tag -a vx.y.z -m '...'`、`git push origin vx.y.z`、`gh release create vx.y.z --title ... --notes-file <(从 CHANGELOG 摘出该段)`。
+8. 一批功能完成后发版：`npm pkg set version=x.y.z`（服务器上报的版本号从 `package.json` 读取），把 CHANGELOG 的 Unreleased 改成版本段落并更新底部链接，提交后 `git tag -a vx.y.z -m '...'`、`git push origin vx.y.z`、`gh release create vx.y.z --title ... --notes-file <(从 CHANGELOG 摘出该段)`。版本号规则：新增工具或集成升次版本号（0.x.0），只修 bug 升补丁号（0.x.y），纯文档不发版。**发版前对照下面「对外形象的维护」逐条核对**，2026-09-11 的 0.7.0 就漏了架构图、关键词和仓库描述，事后才补。
 
 ## 对外形象的维护（README、徽章、仓库元数据）
 
@@ -88,6 +88,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 - **新增或改动工具**：README 两份的工具表、示例提示（如果新工具值得展示）、配置表（新密钥）、CHANGELOG；仓库描述里写死的工具总数要同步（`gh repo edit --description`，README 的计数是脚本自动同步的，描述不是）。
 - **发版**：版本号、CHANGELOG 段落、tag、GitHub Release（见上面第 8 步）。发行说明用英文、按领域分组，和 README 口径一致。
 - **不要做的**：不为纯文档或重构提交改版本号；不手改徽章数字；不在描述里写无法验证的形容词。
+- **发版后看一眼 GitHub 的 Security 页**：新依赖可能立刻带来 Dependabot 告警（sharp 0.34 在 0.7.0 发布几分钟后就报了两个高危，随即升级到 0.35）。
 - **不发布到 npm 或 MCP 注册中心**（用户决定，2026-09-09）：`package.json` 标了 `private: true`，安装方式只有 clone 加构建。
 
 ## 配置与密钥
@@ -96,13 +97,15 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 - **服务器有自己的一份 `.env`**（位置见 `CLAUDE.local.md`），不会自动同步；`secrets/` 目录整体只读挂载到容器 `/secrets`（服务账号 JSON，可选的 `gmail.json`）：新增或更换密钥要本机和服务器各改一次，服务器改完需要 `docker compose up -d` 重启容器才生效（`env_file` 只在启动时读取）。
 - 客户端（Claude Code、桌面 App、网页、手机）都连生产 HTTP 实例，认证一律是请求头 `Authorization: Bearer <MCP_AUTH_TOKEN>`（Claude Code 用 `claude mcp add --transport http --header`，claude.ai 连接器在「Request headers」里填）；本机不再有 stdio 注册。新工具部署后客户端在下一次新对话自动拿到，不需要重连。
 - 新增需要密钥的工具时：在 `.env` 和 `.env.example` 各加一行带用途注释的条目，工具在密钥缺失时抛出带申请路径的错误（不要在注册阶段隐藏工具）。
+- **Gmail 附件工具的授权**：Gmail API 要在 GCP 项目里启用，OAuth 客户端类型是「桌面应用」，同意屏幕处于测试状态时把自己的邮箱加为测试用户；本机 `npm run auth -- --gmail --client-secret ./client_secret.json` 生成 `~/.config/google-seo-mcp/gmail.json`（只读 scope），复制到服务器 `secrets/gmail.json`（600）后 `docker compose up -d`，compose 已把 `GMAIL_CREDENTIALS` 指到 `/secrets/gmail.json`。
 - **读环境变量一律用 `src/env.ts` 的 `envValue()`**，空值和纯空白视为未设置：Docker 的 `env_file` 会把 `KEY=` 原样传成空字符串，直接写 `process.env.X ?? 默认值` 会把空串当成有效值（曾导致 IndexNow 的 keyLocation 兜底失效）。`test/unit/util.test.mjs` 有对应用例。
 
 ## 约定与注意事项
 
 - stdio 模式下除 MCP 协议外不能往 stdout 写任何东西，日志一律用 `console.error`。
+- 线上实例同时被 App、手机、Claude Code 多个会话使用。本会话改站点内容前先看容器里的审计日志和目标对象的最近修改时间，不要和另一个会话改同一篇文章或同一个文件；某个会话声称「没改过」时，以审计日志为准。
 - `.env`、`service-account.json`、`credentials.json`、`client_secret*.json` 已在 `.gitignore`，秘密不进仓库，也不要出现在工具描述里。
-- 80 个工具的定义约 2.2 万 token，每次对话都会加载：描述写得准确但不要啰嗦，新工具优先合并进现有模块而不是再拆文件；`SEO_MCP_TOOLSETS` 可按需裁剪。
+- 80 多个工具的定义约 2.2 万 token，每次对话都会加载：描述写得准确但不要啰嗦，新工具优先合并进现有模块而不是再拆文件；`SEO_MCP_TOOLSETS` 可按需裁剪。
 - `buildInstructions()` 里点名了推荐先用的工具（snapshot、opportunities 等），新增重要的分析类工具时把它加进去。
 - 密钥扫描器误报时，在 `scripts/check-secrets.sh` 的 `BENIGN`（合法占位值）或 `ALLOW`（合法文件）里加豁免，不要绕过钩子提交。
 - Search Console 数据延迟 2 到 3 天；URL 检查每个资源每天约 2000 次配额，不要对整站循环调用。
