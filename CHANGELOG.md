@@ -4,6 +4,9 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+- `page_audit` (and therefore `site_crawl` / `compare_pages`) reported "No JSON-LD structured data" on every page: script tags were stripped for the word count before the JSON-LD blocks were read. Extraction now runs first via the exported `extractJsonLdTypes()` (unit-tested).
+
 ### Changed
 - README (both languages): client setup for the Claude apps, OpenAI Codex, Cursor, VS Code, Gemini CLI and any other MCP client, with timeout notes and the ChatGPT OAuth limitation; tagline, keywords and repository description mention Codex/Cursor and the current tool count.
 - README (both languages): "Works with any agent" section: compatibility table, Claude Agent SDK and OpenAI Agents SDK examples (DeepSeek through an OpenAI-compatible endpoint), third-party and local models with a read-only trimmed second instance, and the known limits (ChatGPT OAuth-only connectors, legacy SSE clients, Codex providers needing the Responses API).

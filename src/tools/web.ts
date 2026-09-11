@@ -154,6 +154,25 @@ export function robotsAllows(parsed: ReturnType<typeof parseRobots>, url: string
   return { allowed: !best || best.type === "allow", matchedRule: best, group: group.agents };
 }
 
+/** All @type values declared in a page's JSON-LD blocks (including @graph nodes); "(invalid JSON-LD)" marks unparsable blocks. */
+export function extractJsonLdTypes($: cheerio.CheerioAPI): string[] {
+  const types: string[] = [];
+  $('script[type="application/ld+json"]').each((_, el) => {
+    try {
+      const walk = (n: unknown) => {
+        if (Array.isArray(n)) n.forEach(walk);
+        else if (n && typeof n === "object") {
+          const t = (n as { "@type"?: unknown })["@type"];
+          if (t) types.push(...(Array.isArray(t) ? t : [t]).map(String));
+          if ((n as { "@graph"?: unknown })["@graph"]) walk((n as { "@graph"?: unknown })["@graph"]);
+        }
+      };
+      walk(JSON.parse($(el).text()));
+    } catch { types.push("(invalid JSON-LD)"); }
+  });
+  return types;
+}
+
 export interface AuditOptions { maxHeadings?: number; maxImagesMissingAlt?: number }
 export type AuditResult = Awaited<ReturnType<typeof auditPage>>;
 
@@ -193,17 +212,11 @@ export async function auditPage(url: string, opts: AuditOptions = {}) {
     if (u.hostname === base.hostname) { internal++; internalUrls.add(u.pathname); } else external++;
     if (/\bnofollow\b/i.test($(el).attr("rel") ?? "")) nofollow++;
   });
+  // Read JSON-LD before scripts are stripped for the word count (stripping first hid every schema block).
+  const jsonLdTypes = extractJsonLdTypes($);
   $("script, style, noscript, template").remove();
   const bodyText = $("body").text().replace(/\s+/g, " ").trim();
   const wordCount = bodyText ? bodyText.split(" ").length : 0;
-  const jsonLdTypes: string[] = [];
-  $('script[type="application/ld+json"]').each((_, el) => {
-    try {
-      const data = JSON.parse($(el).text());
-      const walk = (n: unknown) => { if (Array.isArray(n)) n.forEach(walk); else if (n && typeof n === "object") { const t = (n as { "@type"?: unknown })["@type"]; if (t) jsonLdTypes.push(...(Array.isArray(t) ? t : [t]).map(String)); if ((n as { "@graph"?: unknown })["@graph"]) walk((n as { "@graph"?: unknown })["@graph"]); } };
-      walk(data);
-    } catch { jsonLdTypes.push("(invalid JSON-LD)"); }
-  });
 
   const issues: { severity: "error" | "warning" | "info"; message: string }[] = [];
   const add = (severity: "error" | "warning" | "info", message: string) => issues.push({ severity, message });
