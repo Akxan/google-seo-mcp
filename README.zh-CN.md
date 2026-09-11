@@ -398,6 +398,8 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 2. 四个变量一起设置（`.env`）：`SEO_MCP_HOSTED_CLIENT_ID`、`SEO_MCP_HOSTED_CLIENT_SECRET`、`SEO_MCP_HOSTED_SECRET`（`openssl rand -hex 32`）、`SEO_MCP_PUBLIC_URL`。可选：`SEO_MCP_DATA_DIR`（数据库位置，Docker 镜像用 `/data`，由 `./data` 挂载）、`SEO_MCP_HOSTED_CONTACT`（隐私页上的联系方式）、Google 验证通过后设 `SEO_MCP_HOSTED_VERIFIED=1`。
 3. 重启。`/` 是首页（中英文），`/login` 开始 Google 授权，`/dashboard` 管理令牌（每人最多 10 个，只显示一次，可撤销），`/privacy` 与 `/terms` 是 Google 验证要求的法律页面，「断开 Google 账号」会撤销 Google 授权并删除该用户的记录和全部令牌。
 
+**托管用户的 GitHub。** 配置了 GitHub App（`SEO_MCP_GITHUB_APP_ID`、`_SLUG`、`_CLIENT_ID`、`_CLIENT_SECRET`、`_PRIVATE_KEY_FILE`；应用需要 *Contents: read & write* 权限、勾选 *Request user authorization (OAuth) during installation*、回调地址 `https://mcp.example.com/connect/github/callback`）后，控制台会出现「连接 GitHub」按钮。用户把应用安装到自己选定的仓库上；服务器核实该安装属于当前登录的 GitHub 用户，只保存安装 ID，工具需要时临时签发一小时有效的安装令牌。之后他的 MCP 令牌就包含 `github_*` 工具，含 `github_commit_files` 与 `github_commit_image`（都支持 `dryRun`），部署在 Cloudflare、Vercel、Netlify 的静态站就能通过他自己的助手编辑。「断开 GitHub」会卸载应用，由它签发的令牌全部失效。运营者的 `GITHUB_TOKEN` 绝不会用于托管请求。
+
 Cookie 为 `HttpOnly`、`SameSite=Lax`，HTTPS 下带 `Secure`；表单带 CSRF 令牌；OAuth 的 `state` 有签名。登录和断开各在 stderr 留一行 JSON（只有用户 ID）。四个变量都不设时这些一概不存在，服务器仍是私有的单用户实例。
 
 ## 5. 环境变量
@@ -425,6 +427,7 @@ Cookie 为 `HttpOnly`、`SameSite=Lax`，HTTPS 下带 `Secure`；表单带 CSRF 
 | `GMAIL_CREDENTIALS` | `~/.config/google-seo-mcp/gmail.json` | `npm run auth -- --gmail` 生成的只读 Gmail 授权文件，附件工具用；服务器上放 `secrets/gmail.json` |
 | `SEO_MCP_READ_ONLY` / `SEO_MCP_TOOLSETS` | 无 | 见运行模式 |
 | `SEO_MCP_HOSTED_CLIENT_ID`、`SEO_MCP_HOSTED_CLIENT_SECRET`、`SEO_MCP_HOSTED_SECRET`、`SEO_MCP_PUBLIC_URL`（可选 `SEO_MCP_DATA_DIR`、`SEO_MCP_HOSTED_CONTACT`、`SEO_MCP_HOSTED_VERIFIED`） | 无 | 托管模式：别人用 Google 登录、各自拿只读令牌，见上一节 |
+| `SEO_MCP_GITHUB_APP_ID`、`SEO_MCP_GITHUB_APP_SLUG`、`SEO_MCP_GITHUB_APP_CLIENT_ID`、`SEO_MCP_GITHUB_APP_CLIENT_SECRET`、`SEO_MCP_GITHUB_APP_PRIVATE_KEY_FILE` | 无 | 托管模式：用户安装到自己仓库上的 GitHub App，让他们的令牌获得 `github_*` 工具（一小时安装令牌） |
 | `SEO_MCP_MAX_RESULT_CHARS` | `120000` | 单次工具结果的字符上限，超出时截断最长的数组并提示如何缩小范围 |
 
 空值一律视为未设置，包括 Docker 从 env 文件原样传入的 `KEY=`。

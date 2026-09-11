@@ -10,12 +10,19 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import sharp from "sharp";
 import { tool } from "../util.js";
 import { fetchWithTimeout } from "./web.js";
+import { currentRequest } from "../google.js";
 
 const execFileP = promisify(execFile);
 const API = "https://api.github.com";
 let cachedToken: string | undefined;
 
 export async function githubToken(): Promise<string | undefined> {
+  const scoped = currentRequest();
+  if (scoped) {
+    // Hosted request: only that user's own connection counts.
+    if (!scoped.githubToken) throw new Error("GitHub is not connected for this account. Open the dashboard and click 'Connect GitHub' to install the app on the repositories you want to edit.");
+    return scoped.githubToken();
+  }
   if (cachedToken) return cachedToken;
   const fromEnv = envValue("GITHUB_TOKEN");
   if (fromEnv) return (cachedToken = fromEnv);
