@@ -4,13 +4,19 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
-### Fixed
-- `page_audit` (and therefore `site_crawl` / `compare_pages`) reported "No JSON-LD structured data" on every page: script tags were stripped for the word count before the JSON-LD blocks were read. Extraction now runs first via the exported `extractJsonLdTypes()` (unit-tested).
+## [0.6.0] - 2026-09-11
+
+### Added
+- `github_commit_files`: per-file `edits` (in-place find/replace against the branch's current content, each find validated to match exactly once, so a 300 KB content bundle no longer has to be resent) and `encoding: base64` for binaries; files whose content already matches are skipped.
+- `github_commit_image`: fetch an image from a URL, convert it on the server (webp by default), resize or cover-crop it (attention-based or centred), add variants such as a card thumbnail, and commit everything in one commit. With these two, a blog post with pictures can be published to a static site from a phone through MCP alone.
 
 ### Changed
 - README (both languages): client setup for the Claude apps, OpenAI Codex, Cursor, VS Code, Gemini CLI and any other MCP client, with timeout notes and the ChatGPT OAuth limitation; tagline, keywords and repository description mention Codex/Cursor and the current tool count.
 - README (both languages): "Works with any agent" section: compatibility table, Claude Agent SDK and OpenAI Agents SDK examples (DeepSeek through an OpenAI-compatible endpoint), third-party and local models with a read-only trimmed second instance, and the known limits (ChatGPT OAuth-only connectors, legacy SSE clients, Codex providers needing the Responses API).
 - README (both languages): community acknowledgment of LINUX DO.
+
+### Fixed
+- `page_audit` (and therefore `site_crawl` / `compare_pages`) reported "No JSON-LD structured data" on every page: script tags were stripped for the word count before the JSON-LD blocks were read. Extraction now runs first via the exported `extractJsonLdTypes()` (unit-tested).
 
 ## [0.5.1] - 2026-09-09
 
@@ -65,7 +71,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - Tool annotations, server instructions, `--read-only` mode, `--toolsets` filtering, `.env` auto-loading, smoke test with tool snapshot, secret-scan git hooks.
 - stdio and stateless Streamable HTTP transports with Bearer auth.
 
-[Unreleased]: https://github.com/Akxan/google-seo-mcp/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/Akxan/google-seo-mcp/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/Akxan/google-seo-mcp/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.3.0...v0.4.0

@@ -65,7 +65,7 @@
 | `crux_history` | Chrome 真实用户 Core Web Vitals 周走势（需启用 Chrome UX Report API） |
 | `brand_mentions` | 全网品牌提及及是否已链接（需 `BRAVE_API_KEY`，免费额度） |
 | `reviews_snapshot` | Google 商家评分与最新评论（需 `GOOGLE_PLACES_API_KEY`，需开结算） |
-| `github_get_file` / `github_list_dir` / `github_search_code` / `github_list_commits` / `github_commit_files` | 读写 GitHub 仓库，一次提交多个文件，静态站可从任何客户端修改（用 `GITHUB_TOKEN` 或本机 `gh` 登录） |
+| `github_get_file` / `github_list_dir` / `github_search_code` / `github_list_commits` / `github_commit_files` / `github_commit_image` | 读写 GitHub 仓库：一次提交多个文件（整文件、对大文件做局部 find/replace、base64 二进制），从网址取图在服务器上转 webp、裁剪、生成变体后提交；静态站可从任何客户端修改（用 `GITHUB_TOKEN` 或本机 `gh` 登录） |
 
 日期参数支持 `YYYY-MM-DD`、`today`、`yesterday`、`28daysAgo` 这类写法。
 
@@ -314,7 +314,7 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 ### 第三方模型和本地模型
 
 - 桌面端：Cherry Studio、Cline 可以选 DeepSeek、Qwen、GLM、Kimi 或本地 Ollama 模型，把本服务作为 Streamable HTTP 类型的 MCP 服务器加进去，请求头填 Authorization 即可。
-- 工具定义约 2.1 万 token，每一轮对话都要发；80 个工具对小模型来说太多了。给它们单独开一个只读、精简工具集、单独令牌的实例，模型再糊涂也写不了东西，也看不到用不着的工具：
+- 工具定义约 2.1 万 token，每一轮对话都要发；81 个工具对小模型来说太多了。给它们单独开一个只读、精简工具集、单独令牌的实例，模型再糊涂也写不了东西，也看不到用不着的工具：
 
 ```yaml
 # docker-compose.yml：在主服务旁边再加一个
@@ -381,10 +381,10 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 ## 运行模式
 
 - **只读模式**：`--read-only` 或 `SEO_MCP_READ_ONLY=1`，所有写入类工具不注册。
-- **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`。80 个工具的定义约 2.2 万 token，只用部分功能时可以裁剪。
+- **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`。81 个工具的定义约 2.2 万 token，只用部分功能时可以裁剪。
 - 每个工具都带 `readOnlyHint` / `destructiveHint` 注解，服务器在初始化时返回 instructions 说明用法与安全约定。
 - `npm test` 运行单元测试、冒烟测试（含工具清单快照，`UPDATE_SNAPSHOT=1 npm test` 刷新）和 README 计数校验。
-- 所有写入类工具和 `github_commit_files` 支持 `dryRun: true`，只返回当前值与将要做的改动，不落地。
+- 所有写入类工具和 `github_commit_*` 支持 `dryRun: true`，只返回当前值与将要做的改动，不落地。
 - 单次返回超过 `SEO_MCP_MAX_RESULT_CHARS`（默认 12 万字符）时自动截断数组并提示如何缩小范围。
 
 ## 5. 环境变量

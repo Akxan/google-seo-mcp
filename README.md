@@ -2,7 +2,7 @@
 
 # google-seo-mcp
 
-**SEO & GEO MCP server for Claude, Codex, Cursor and any MCP client — Google Search Console, Google Analytics 4, PageSpeed Insights, structured data, llms.txt, WordPress and GitHub as 80 tools, so an assistant can diagnose and fix technical SEO, content and generative-engine-optimization issues in one conversation.**
+**SEO & GEO MCP server for Claude, Codex, Cursor and any MCP client — Google Search Console, Google Analytics 4, PageSpeed Insights, structured data, llms.txt, WordPress and GitHub as 81 tools, so an assistant can diagnose and fix technical SEO, content and generative-engine-optimization issues in one conversation.**
 
 [![GitHub stars](https://img.shields.io/github/stars/Akxan/google-seo-mcp?style=flat&logo=github)](https://github.com/Akxan/google-seo-mcp/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -38,7 +38,7 @@ Most SEO MCP servers wrap one API. Real SEO work crosses several: you find a str
 | **GEO** (12) | `ai_crawler_access`, `llms_txt_check`, `llms_txt_generate`, `structured_data_audit`, `schema_generate`, `schema_validate`, `geo_page_score`, `eeat_audit`, `knowledge_graph_check`, `indexnow_submit`, `ai_citation_check`, `brand_mentions` |
 | **Analysis** (5) | `migration_check` (pre-migration URL safety net), `cross_site_links`, `content_refresh_candidates`, `crux_history`, `reviews_snapshot` |
 | **WordPress** (21, optional) | `wp_site_info`, `wp_list_posts`, `wp_get_post`, `wp_update_post`, `wp_seo_status`, `wp_update_seo`, `wp_bulk_update_seo` (Yoast fields), `wp_builder_check`, `wp_builder_list_items`, `wp_builder_update` (BeTheme / Muffin Builder content), `wp_list_media`, `wp_update_media` (alt text), `wp_list_terms`, `wp_update_term`, `wp_internal_link_suggestions`, `wp_list_redirects`, `wp_add_redirect`, `wp_delete_redirect` (Yoast Premium), `wp_get_schema`, `wp_set_schema` (JSON-LD injection), `wp_run` (raw WP-CLI) |
-| **GitHub** (5, optional) | `github_get_file`, `github_list_dir`, `github_search_code`, `github_list_commits`, `github_commit_files` (atomic multi-file commits, so a static site can be edited from any client) |
+| **GitHub** (6, optional) | `github_get_file`, `github_list_dir`, `github_search_code`, `github_list_commits`, `github_commit_files` (atomic multi-file commits with full content, in-place find/replace edits for large files, or base64 binaries), `github_commit_image` (fetch an image URL, convert to webp, resize or crop, add variants, commit) (so a static site can be edited from any client) |
 
 Plus `google_auth_status` for diagnostics. Every tool carries MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`), the server publishes `instructions` for the model, and there is a read-only mode and toolset filtering.
 
@@ -52,6 +52,7 @@ Plus `google_auth_status` for diagnostics. Every tool carries MCP annotations (`
 - *"Check whether GPTBot, PerplexityBot and ClaudeBot can reach the homepage."*
 - *"Before we move to the new host, verify every URL with traffic still resolves on new.example.com."*
 - *"Rewrite the SEO title and meta description of post 515 and publish it."*
+- *"Take this photo URL, make a 1200×675 webp cover plus a 1000-wide card, commit both to public/assets/img/blog/, then register the cover in src/lib/blog.js."*
 
 </details>
 
@@ -62,9 +63,9 @@ Plus `google_auth_status` for diagnostics. Every tool carries MCP annotations (`
 | Runtime | Node.js ≥ 18, TypeScript 5, ES modules | no build-time codegen, `tsc` only |
 | Protocol | `@modelcontextprotocol/sdk` | stdio for local clients, stateless Streamable HTTP for servers |
 | Google | `googleapis` (Search Console v1, Analytics Data v1beta, Analytics Admin v1beta) + `google-auth-library` | REST clients, no gRPC; service account or OAuth |
-| Web audits | `cheerio`, `image-size`, native `fetch` | PageSpeed Insights, CrUX, Knowledge Graph, Wikidata, Google Autocomplete, IndexNow, Perplexity, Brave, Places APIs over HTTPS |
+| Web audits | `cheerio`, `image-size`, `sharp`, native `fetch` | PageSpeed Insights, CrUX, Knowledge Graph, Wikidata, Google Autocomplete, IndexNow, Perplexity, Brave, Places APIs over HTTPS |
 | WordPress | `ssh` + WP-CLI, two PHP helpers uploaded on first use | Yoast indexable rebuild, cache purge (WP Rocket / Super Cache / W3TC / LiteSpeed), mu-plugin for JSON-LD |
-| GitHub | REST + Git Data API | token from `GITHUB_TOKEN` or `gh auth token` |
+| GitHub | REST + Git Data API, `sharp` for images | token from `GITHUB_TOKEN` or `gh auth token`; edits are validated to match exactly once before anything is committed |
 | Validation | `zod` schemas per tool | descriptions double as LLM documentation |
 | Quality | smoke test with tool-list snapshot, secret-scan git hooks | `npm test`, `npm run check:secrets` |
 
@@ -122,7 +123,7 @@ flowchart LR
 
 **WordPress path.** Every call is `ssh host 'cd <wp> && wp …'` with POSIX-quoted arguments; large payloads go over stdin. Two PHP helpers are uploaded to `~/.google-seo-mcp/` on the host when their hash changes. Yoast meta writes trigger an indexable rebuild and a cache purge so changes are live immediately.
 
-**Safety.** Write tools are recognised by name and receive `readOnlyHint:false` (`destructiveHint:true` for deletes, raw WP-CLI and commits). `--read-only` drops them at registration; `--toolsets=gsc,web` trims the tool list (80 definitions ≈ 22k tokens). Server instructions tell the model that fetched page text and CMS content are untrusted data.
+**Safety.** Write tools are recognised by name and receive `readOnlyHint:false` (`destructiveHint:true` for deletes, raw WP-CLI and commits). `--read-only` drops them at registration; `--toolsets=gsc,web` trims the tool list (81 definitions ≈ 22k tokens). Server instructions tell the model that fetched page text and CMS content are untrusted data.
 
 ## Quick start
 
@@ -300,7 +301,7 @@ LangChain (`langchain-mcp-adapters`), Google ADK (`MCPToolset`) and the Vercel A
 ### Third-party and local models
 
 - Desktop: Cherry Studio and Cline let you pick DeepSeek, Qwen, GLM, Kimi or a local Ollama model and add this server as a Streamable HTTP MCP server with the Authorization header.
-- The tool catalogue is about 21k tokens and travels with every turn, and 80 tools are a lot for smaller models. Point them at a second, read-only instance with a trimmed toolset and its own token, so a confused model can neither write nor see what it does not need:
+- The tool catalogue is about 21k tokens and travels with every turn, and 81 tools are a lot for smaller models. Point them at a second, read-only instance with a trimmed toolset and its own token, so a confused model can neither write nor see what it does not need:
 
 ```yaml
 # docker-compose.yml: a second service next to the main one
