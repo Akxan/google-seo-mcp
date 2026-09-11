@@ -43,6 +43,18 @@ sync("README.md", (s) => {
 sync("README.zh-CN.md", (s) => s.replace(/\d+ 个工具/g, `${total} 个工具`));
 sync("package.json", (s) => s.replace(/\b\d+ tools\b/g, `${total} tools`));
 
+// Every tool must be mentioned by name in both READMEs (the count sync cannot catch a missing row).
+const missing = {};
+for (const file of ["README.md", "README.zh-CN.md"]) {
+  const text = fs.readFileSync(file, "utf8");
+  const absent = names.filter((n) => !text.includes("`" + n + "`"));
+  if (absent.length) missing[file] = absent;
+}
+if (Object.keys(missing).length) {
+  for (const [file, absent] of Object.entries(missing)) console.error(`${file} does not mention: ${absent.join(", ")}`);
+  process.exit(1);
+}
+
 if (check) {
   if (edits.length) { console.error(`README counts are stale (${edits.join(", ")}); run: npm run docs:sync`); process.exit(1); }
   console.log(`docs in sync: ${total} tools`, counts);
