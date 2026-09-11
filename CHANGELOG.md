@@ -4,6 +4,9 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+- README architecture diagram, keywords, `package.json` description/keywords and the repository description now cover the Gmail integration and the image pipeline (the 0.7.0 release had left them out).
+
 ### Security
 - `sharp` 0.34.5 → 0.35.x (GHSA-f88m-g3jw-g9cj, GHSA-rgj7-g3m4-5g8c reported by Dependabot right after the 0.7.0 release).
 
