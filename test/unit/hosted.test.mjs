@@ -82,3 +82,44 @@ test("pages: language pick and escaping", () => {
   assert.match(dash, /seo_abc/);
   assert.match(privacyPage({ ...shell, lang: "zh" }, { contact: "c", host: "h" }), /隐私政策/);
 });
+
+import { generateKeyPairSync, createVerify } from "node:crypto";
+import { appJwt } from "../../dist/hosted/githubApp.js";
+import { createServer } from "../../dist/server.js";
+
+test("store: connections upsert, read, delete, cascade", () => {
+  const s = new HostedStore(":memory:", key);
+  const u = s.upsertUser({ googleSub: "g", email: "g@example.com", refreshToken: "rt", scopes: [] });
+  assert.equal(s.getConnection(u.id, "github"), null);
+  s.setConnection(u.id, { provider: "github", externalId: "123", label: "octocat", meta: { selection: "selected" } });
+  s.setConnection(u.id, { provider: "github", externalId: "456", label: "octocat" });
+  const c = s.getConnection(u.id, "github");
+  assert.equal(c.externalId, "456");
+  assert.deepEqual(c.meta, {});
+  s.deleteConnection(u.id, "github");
+  assert.equal(s.getConnection(u.id, "github"), null);
+  s.setConnection(u.id, { provider: "github", externalId: "1" });
+  s.deleteUser(u.id);
+  assert.equal(s.getConnection(u.id, "github"), null, "connections cascade with the user");
+  s.close();
+});
+
+test("GitHub App JWT is RS256-signed with the expected claims", () => {
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const pem = privateKey.export({ type: "pkcs1", format: "pem" });
+  const jwt = appJwt("12345", pem, 1_700_000_000);
+  const [h, b, sig] = jwt.split(".");
+  assert.deepEqual(JSON.parse(Buffer.from(h, "base64url")), { alg: "RS256", typ: "JWT" });
+  assert.deepEqual(JSON.parse(Buffer.from(b, "base64url")), { iat: 1_699_999_940, exp: 1_700_000_540, iss: "12345" });
+  assert.ok(createVerify("RSA-SHA256").update(`${h}.${b}`).verify(publicKey, Buffer.from(sig, "base64url")));
+});
+
+test("createServer honours readOnly + allowWrite + exclude", async () => {
+  const names = (srv) => Object.keys(srv._registeredTools ?? {});
+  const ro = createServer({ readOnly: true, toolsets: ["github"] });
+  assert.ok(names(ro).includes("github_get_file") && !names(ro).some((n) => n.startsWith("github_commit_")));
+  const gh = createServer({ readOnly: true, toolsets: ["github"], allowWrite: ["github_commit_"], exclude: ["github_commit_attachment"] });
+  assert.ok(names(gh).includes("github_commit_files") && names(gh).includes("github_commit_image"));
+  assert.ok(!names(gh).includes("github_commit_attachment"));
+  assert.ok(!names(gh).includes("gsc_submit_sitemap"));
+});

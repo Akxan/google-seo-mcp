@@ -86,6 +86,9 @@ export class HostedStore {
         hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, prefix TEXT NOT NULL, label TEXT,
         created_at TEXT NOT NULL, last_used_at TEXT, calls INTEGER NOT NULL DEFAULT 0, revoked_at TEXT);
       CREATE INDEX IF NOT EXISTS tokens_user ON tokens(user_id);
+      CREATE TABLE IF NOT EXISTS connections (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, provider TEXT NOT NULL, external_id TEXT NOT NULL,
+        label TEXT, meta TEXT, created_at TEXT NOT NULL, PRIMARY KEY (user_id, provider));
     `);
   }
 
@@ -152,7 +155,24 @@ export class HostedStore {
     this.db.prepare("UPDATE tokens SET last_used_at = ?, calls = calls + 1 WHERE hash = ?").run(new Date().toISOString(), hash);
     return { user, token: rowToToken(row) };
   }
+
+  /** Third-party connections (e.g. a GitHub App installation), one per provider and user; `meta` holds non-secret details. */
+  setConnection(userId: string, c: { provider: string; externalId: string; label?: string | null; meta?: Record<string, unknown> }) {
+    this.db.prepare("INSERT INTO connections (user_id, provider, external_id, label, meta, created_at) VALUES (?,?,?,?,?,?) ON CONFLICT(user_id, provider) DO UPDATE SET external_id=excluded.external_id, label=excluded.label, meta=excluded.meta, created_at=excluded.created_at")
+      .run(userId, c.provider, c.externalId, c.label ?? null, JSON.stringify(c.meta ?? {}), new Date().toISOString());
+  }
+
+  getConnection(userId: string, provider: string): Connection | null {
+    const r = this.db.prepare("SELECT * FROM connections WHERE user_id = ? AND provider = ?").get(userId, provider) as Record<string, string | null> | undefined;
+    return r ? { provider: r.provider!, externalId: r.external_id!, label: r.label, meta: r.meta ? (JSON.parse(r.meta) as Record<string, unknown>) : {}, createdAt: r.created_at! } : null;
+  }
+
+  deleteConnection(userId: string, provider: string) {
+    this.db.prepare("DELETE FROM connections WHERE user_id = ? AND provider = ?").run(userId, provider);
+  }
 }
+
+export interface Connection { provider: string; externalId: string; label: string | null; meta: Record<string, unknown>; createdAt: string }
 
 function rowToToken(r: Record<string, string | number | null>): TokenRow {
   return { hash: String(r.hash), userId: String(r.user_id), prefix: String(r.prefix), label: (r.label as string | null) ?? null, createdAt: String(r.created_at), lastUsedAt: (r.last_used_at as string | null) ?? null, calls: Number(r.calls ?? 0), revokedAt: (r.revoked_at as string | null) ?? null };

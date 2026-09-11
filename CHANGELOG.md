@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-11
+
+### Added
+- Hosted mode: GitHub connection through a GitHub App (`SEO_MCP_GITHUB_APP_*`). Users install the app on the repositories they choose; the server verifies the installation against the signed-in GitHub user (OAuth code returned with the installation), stores only the installation id and mints one-hour installation tokens on demand. Connected users get the `github_*` toolset including `github_commit_files` and `github_commit_image` while the rest of their server stays read-only; *Disconnect* uninstalls the app. GitHub tools inside a hosted request never fall back to the operator's `GITHUB_TOKEN`.
+- `ServerOptions.allowWrite` (write-tool prefixes that survive `readOnly`); write-audit lines carry `who` for hosted users; `google_auth_status` reports the scopes actually granted by the user.
+
 ## [0.8.0] - 2026-09-11
 
 ### Added
@@ -93,7 +99,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - Tool annotations, server instructions, `--read-only` mode, `--toolsets` filtering, `.env` auto-loading, smoke test with tool snapshot, secret-scan git hooks.
 - stdio and stateless Streamable HTTP transports with Bearer auth.
 
-[Unreleased]: https://github.com/Akxan/google-seo-mcp/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/Akxan/google-seo-mcp/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.5.1...v0.6.0

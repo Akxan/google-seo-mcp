@@ -82,6 +82,17 @@ const T = {
     codex: "OpenAI Codex", codexP: "in ~/.codex/config.toml; export the token as an environment variable first",
     cursor: "Cursor / VS Code / Gemini CLI", cursorP: "Cursor uses ~/.cursor/mcp.json (below); VS Code puts the same block under \"servers\" with \"type\": \"http\"; Gemini CLI uses \"httpUrl\".",
     tryIt: "Then try:",
+    connections: "Connections",
+    connectionsP: "Google is connected through your sign-in. Connect other services to unlock their tools for your tokens.",
+    githubTitle: "GitHub",
+    githubOff: "Not connected. Install the app on the repositories you want your agent to edit: files, in-place edits, images. Deploys happen through your host's CI (Cloudflare, Vercel, Netlify…).",
+    githubOn: "Connected as",
+    githubRepos: "Repositories",
+    githubTools: "Your tokens now include the github_* tools (read, in-place edits, image commits). Every write tool has dryRun.",
+    connectGithub: "Connect GitHub",
+    manageGithub: "Manage repositories on GitHub",
+    disconnectGithub: "Disconnect GitHub",
+    disconnectGithubP: "Uninstalls the app from your GitHub account; tokens minted for it stop working immediately.",
     disconnect: "Disconnect Google account",
     disconnectP: "Revokes the Google grant, deletes your tokens and your account record on this server.",
     disconnectConfirm: "Yes, disconnect and delete",
@@ -134,6 +145,17 @@ const T = {
     codex: "OpenAI Codex", codexP: "写在 ~/.codex/config.toml；先把令牌导出为环境变量",
     cursor: "Cursor / VS Code / Gemini CLI", cursorP: "Cursor 用 ~/.cursor/mcp.json（如下）；VS Code 把同样的块放在 \"servers\" 下并加 \"type\": \"http\"；Gemini CLI 用 \"httpUrl\"。",
     tryIt: "然后试试：",
+    connections: "连接",
+    connectionsP: "Google 已通过登录连接。连接其他服务后，你的令牌会多出对应的工具。",
+    githubTitle: "GitHub",
+    githubOff: "未连接。把应用安装到你想让助手编辑的仓库上：整文件、局部修改、图片提交。部署由你的托管方 CI 完成（Cloudflare、Vercel、Netlify 等）。",
+    githubOn: "已连接为",
+    githubRepos: "仓库",
+    githubTools: "你的令牌现在包含 github_* 工具（读取、局部修改、图片提交）。所有写入工具都支持 dryRun。",
+    connectGithub: "连接 GitHub",
+    manageGithub: "在 GitHub 上管理仓库",
+    disconnectGithub: "断开 GitHub",
+    disconnectGithubP: "从你的 GitHub 账号卸载应用；由它签发的令牌立即失效。",
     disconnect: "断开 Google 账号",
     disconnectP: "撤销 Google 授权，删除你的所有令牌和本服务器上的账号记录。",
     disconnectConfirm: "确认断开并删除",
@@ -187,6 +209,9 @@ export interface DashboardData {
   newToken?: string | null;
   endpoint: string;
   csrf: string;
+  /** undefined = GitHub App not configured on this server; null = configured but not connected. */
+  github?: { login: string; repos: string[]; manageUrl: string } | null;
+  flashError?: string | null;
 }
 
 function snippets(endpoint: string, token: string) {
@@ -212,6 +237,11 @@ export function dashboardPage(s: Shell, d: DashboardData): string {
 <div class="card"><p>${d.user.picture ? `<img class="avatar" src="${esc(d.user.picture)}" alt="">` : ""}<strong>${esc(d.user.name ?? d.user.email)}</strong> <span class="muted">${esc(d.user.email)}</span></p>
 <p class="small muted" style="margin-top:8px">${t.connectedOn} ${fmt(d.user.createdAt)} · ${t.scopes}: ${d.user.scopes.filter((x) => x.includes("googleapis")).map((x) => `<code>${esc(x.replace("https://www.googleapis.com/auth/", ""))}</code>`).join(" ")}</p></div>
 ${d.newToken ? `<div class="notice"><h3 style="margin:0 0 6px">${t.newToken}</h3><p class="small muted" style="margin:0 0 10px">${t.newTokenP}</p><div class="token">${esc(d.newToken)}</div></div>` : ""}
+${d.github === undefined ? "" : `<h2>${t.connections}</h2><p class="muted small">${t.connectionsP}</p>
+${d.flashError ? `<p class="notice warn">${esc(d.flashError)}</p>` : ""}
+<div class="card"><h3 style="margin:0 0 6px">${t.githubTitle}</h3>${d.github
+    ? `<p><span class="ok">●</span> ${t.githubOn} <strong>${esc(d.github.login)}</strong> · ${t.githubRepos}: ${d.github.repos.length ? d.github.repos.map((r) => `<code>${esc(r)}</code>`).join(" ") : "<span class=\"muted\">0</span>"}</p><p class="small muted" style="margin:8px 0 12px">${t.githubTools}</p><p style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><a class="btn ghost" href="${esc(d.github.manageUrl)}">${t.manageGithub}</a><form method="post" action="/connect/github/disconnect" onsubmit="return confirm('${t.disconnectGithub}?')"><input type="hidden" name="csrf" value="${esc(d.csrf)}"><button class="btn danger">${t.disconnectGithub}</button></form></p><p class="small muted" style="margin:6px 0 0">${t.disconnectGithubP}</p>`
+    : `<p class="muted small" style="margin:0 0 12px">${t.githubOff}</p><a class="btn" href="/connect/github">${t.connectGithub}</a>`}</div>`}
 <h2>${t.tokens}</h2><p class="muted small">${t.tokensP}</p>
 <table><thead><tr><th>Token</th><th>${t.created}</th><th>${t.lastUsed}</th><th>${t.calls}</th><th></th></tr></thead><tbody>${rows}</tbody></table>
 <form class="inline" method="post" action="/tokens" style="margin-top:16px"><input type="hidden" name="csrf" value="${esc(d.csrf)}"><input type="text" name="label" maxlength="40" placeholder="${t.label}"><button class="btn">${t.create}</button></form>

@@ -16,6 +16,7 @@ import { userOAuth, type RequestAuth } from "../google.js";
 import type { ServerOptions } from "../server.js";
 import { HostedStore, deriveKey, signPayload, verifyPayload, type User } from "./store.js";
 import { dashboardPage, landingPage, pickLang, privacyPage, termsPage, type Lang, type Shell } from "./pages.js";
+import { deleteInstallation, exchangeUserCode, installationRepos, installationToken, loadGitHubApp, userInstallations } from "./githubApp.js";
 
 export const HOSTED_SCOPES = [
   "openid",
@@ -33,7 +34,7 @@ export const HOSTED_SERVER_OPTIONS: ServerOptions = {
 };
 
 const REPO = "https://github.com/Akxan/google-seo-mcp";
-const SESSION_COOKIE = "seo_session", STATE_COOKIE = "seo_oauth", FLASH_COOKIE = "seo_flash", LANG_COOKIE = "seo_lang";
+const SESSION_COOKIE = "seo_session", STATE_COOKIE = "seo_oauth", FLASH_COOKIE = "seo_flash", LANG_COOKIE = "seo_lang", ERR_COOKIE = "seo_err";
 const SESSION_DAYS = 30;
 
 export interface Hosted {
@@ -41,8 +42,8 @@ export interface Hosted {
   mcpUrl: string;
   store: HostedStore;
   clientId: string;
-  /** Resolve a bearer token from /mcp to a per-request auth context; null if it is not a hosted token. */
-  resolve(bearer: string): { auth: RequestAuth; user: User } | null;
+  /** Resolve a bearer token from /mcp to a per-request auth context and server options; null if it is not a hosted token. */
+  resolve(bearer: string): { auth: RequestAuth; user: User; options: ServerOptions } | null;
   /** Handle web routes; returns false when the path is not one of ours. */
   handle(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<boolean>;
   describe(): string;
@@ -64,6 +65,7 @@ export function loadHosted(): Hosted | null {
   const verified = /^(1|true|yes)$/i.test(envValue("SEO_MCP_HOSTED_VERIFIED") ?? "");
   const host = new URL(publicUrl).host;
   const toolCount = countTools();
+  const ghApp = loadGitHubApp();
   const cookieBase = `Path=/; HttpOnly; SameSite=Lax${secure ? "; Secure" : ""}`;
 
   const oauth = () => new OAuth2Client({ clientId, clientSecret, redirectUri: `${publicUrl}/oauth/callback` });
@@ -137,6 +139,52 @@ export function loadHosted(): Hosted | null {
       return true;
     }
 
+    // GitHub App connection (needs a session and a configured app).
+    if (p.startsWith("/connect/github")) {
+      if (!ghApp) { json404(res); return true; }
+      if (!user) { redirect(res, "/login"); return true; }
+      if (p === "/connect/github" && m === "GET") {
+        const state = randomBytes(16).toString("base64url");
+        setCookie(res, STATE_COOKIE, signPayload({ state, exp: Date.now() + 10 * 60_000 }, key), 600);
+        redirect(res, `https://github.com/apps/${ghApp.slug}/installations/new?state=${state}`);
+        return true;
+      }
+      if (p === "/connect/github/callback" && m === "GET") {
+        // GitHub sends installation_id + setup_action (+ code when "request user authorization during installation" is on).
+        const expected = verifyPayload<{ state: string }>(c[STATE_COOKIE], key);
+        setCookie(res, STATE_COOKIE, "", 0);
+        const code = url.searchParams.get("code"), instId = url.searchParams.get("installation_id"), state = url.searchParams.get("state");
+        try {
+          if (!expected || !state || expected.state !== state) throw new Error("session expired or state mismatch, please try again");
+          if (!code) throw new Error("GitHub did not return an authorization code; enable 'Request user authorization (OAuth) during installation' on the app");
+          const userToken = await exchangeUserCode(ghApp, code);
+          const { login, installations } = await userInstallations(userToken);
+          // The user may have picked an existing installation or created one; only accept ids they can actually access.
+          const inst = installations.find((i) => String(i.id) === instId) ?? (installations.length === 1 ? installations[0] : undefined);
+          if (!inst) throw new Error("no installation of the app is visible to your GitHub account; install it on at least one repository");
+          store.setConnection(user.id, { provider: "github", externalId: String(inst.id), label: inst.account.login, meta: { githubUser: login, accountType: inst.account.type, selection: inst.repository_selection } });
+          console.error(JSON.stringify({ hosted: "connect", provider: "github", at: new Date().toISOString(), user: user.id }));
+        } catch (e) {
+          console.error("github connect failed:", (e as Error).message);
+          setCookie(res, ERR_COOKIE, signPayload({ msg: `GitHub: ${(e as Error).message}`, exp: Date.now() + 60_000 }, key), 60);
+        }
+        redirect(res, "/dashboard");
+        return true;
+      }
+      if (p === "/connect/github/disconnect" && m === "POST") {
+        const form = await readForm(req);
+        if (form.get("csrf") !== csrfFor(user.id)) { html(res, 403, "<p>Invalid form token. Reload the page and try again.</p>"); return true; }
+        const conn = store.getConnection(user.id, "github");
+        if (conn) { try { await deleteInstallation(ghApp, conn.externalId); } catch (e) { console.error("github uninstall failed (continuing):", (e as Error).message); } }
+        store.deleteConnection(user.id, "github");
+        console.error(JSON.stringify({ hosted: "disconnect", provider: "github", at: new Date().toISOString(), user: user.id }));
+        redirect(res, "/dashboard");
+        return true;
+      }
+      json404(res);
+      return true;
+    }
+
     // Everything below needs a session.
     if (p === "/dashboard" || p === "/tokens" || p === "/tokens/revoke" || p === "/disconnect" || p === "/logout") {
       if (!user) { redirect(res, "/login"); return true; }
@@ -155,6 +203,8 @@ export function loadHosted(): Hosted | null {
         if (p === "/disconnect") {
           const rt = store.refreshTokenOf(user.id);
           if (rt) { try { await oauth().revokeToken(rt); } catch (e) { console.error("google revoke failed (continuing):", (e as Error).message); } }
+          const gh = ghApp ? store.getConnection(user.id, "github") : null;
+          if (gh && ghApp) { try { await deleteInstallation(ghApp, gh.externalId); } catch (e) { console.error("github uninstall failed (continuing):", (e as Error).message); } }
           store.deleteUser(user.id);
           setCookie(res, SESSION_COOKIE, "", 0);
           console.error(JSON.stringify({ hosted: "disconnect", at: new Date().toISOString(), user: user.id }));
@@ -165,12 +215,25 @@ export function loadHosted(): Hosted | null {
       if (p === "/dashboard" && m === "GET") {
         const flash = verifyPayload<{ token: string }>(c[FLASH_COOKIE], key);
         if (c[FLASH_COOKIE]) setCookie(res, FLASH_COOKIE, "", 0);
+        const flashErr = verifyPayload<{ msg: string }>(c[ERR_COOKIE], key);
+        if (c[ERR_COOKIE]) setCookie(res, ERR_COOKIE, "", 0);
+        let github: { login: string; repos: string[]; manageUrl: string } | null | undefined;
+        if (ghApp) {
+          const conn = store.getConnection(user.id, "github");
+          if (conn) {
+            let repos: string[] = [];
+            try { repos = await installationRepos(ghApp, conn.externalId); } catch (e) { console.error("github repos failed:", (e as Error).message); }
+            github = { login: conn.label ?? "?", repos, manageUrl: `https://github.com/apps/${ghApp.slug}/installations/new` };
+          } else github = null;
+        }
         html(res, 200, dashboardPage(shell(req, url, lang, "Dashboard · google-seo-mcp", user), {
           user: { email: user.email, name: user.name, picture: user.picture, createdAt: user.createdAt, scopes: user.scopes },
           tokens: store.listTokens(user.id).filter((t) => !t.revokedAt),
           newToken: flash?.token ?? null,
           endpoint: `${publicUrl}${mcpPath}`,
           csrf: csrfFor(user.id),
+          github,
+          flashError: flashErr?.msg ?? null,
         }));
         return true;
       }
@@ -189,12 +252,24 @@ export function loadHosted(): Hosted | null {
       if (!hit) return null;
       const rt = store.refreshTokenOf(hit.user.id);
       if (!rt) return null;
-      return { user: hit.user, auth: { auth: userOAuth(clientId!, clientSecret!, rt), label: `Google account ${hit.user.email} (hosted, read-only)`, scopes: hit.user.scopes.filter((x) => x.includes("googleapis")) } };
+      const gh = ghApp ? store.getConnection(hit.user.id, "github") : null;
+      const auth: RequestAuth = {
+        auth: userOAuth(clientId!, clientSecret!, rt),
+        label: `hosted user ${hit.user.id} (${hit.user.email}${gh ? `, github:${gh.label}` : ""})`,
+        scopes: hit.user.scopes.filter((x) => x.includes("googleapis")),
+        ...(gh && ghApp ? { githubToken: () => installationToken(ghApp, gh.externalId) } : {}),
+      };
+      const options: ServerOptions = gh
+        ? { ...HOSTED_SERVER_OPTIONS, toolsets: [...HOSTED_SERVER_OPTIONS.toolsets!, "github"], allowWrite: ["github_commit_"], exclude: [...HOSTED_SERVER_OPTIONS.exclude!, "github_commit_attachment"] }
+        : HOSTED_SERVER_OPTIONS;
+      return { user: hit.user, auth, options };
     },
     handle,
-    describe: () => `hosted mode at ${publicUrl} (${store.countUsers()} users, data in ${dataDir})`,
+    describe: () => `hosted mode at ${publicUrl} (${store.countUsers()} users, data in ${dataDir}${ghApp ? `, GitHub App ${ghApp.slug}` : ""})`,
   };
 }
+
+function json404(res: http.ServerResponse) { res.writeHead(404, { "Content-Type": "application/json" }); res.end('{"error":"not found"}'); }
 
 function cookies(req: http.IncomingMessage): Record<string, string> {
   const out: Record<string, string> = {};

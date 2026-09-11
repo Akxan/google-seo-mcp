@@ -50,8 +50,19 @@ let cachedAuth: GoogleAuth | undefined;
  * `runWithAuth()` and every Google call inside it transparently uses that user's OAuth grant
  * instead of the operator's own credentials. Outside such a scope `getAuth()` behaves as before.
  */
-export interface RequestAuth { auth: GoogleAuth; label: string; scopes?: string[] }
+export interface RequestAuth {
+  auth: GoogleAuth;
+  label: string;
+  scopes?: string[];
+  /** Hosted users' own GitHub credential (GitHub App installation token); absent = GitHub tools must refuse, never fall back to the operator's token. */
+  githubToken?: () => Promise<string>;
+}
 const requestAuth = new AsyncLocalStorage<RequestAuth>();
+
+/** The hosted request scope, if any. */
+export function currentRequest(): RequestAuth | undefined {
+  return requestAuth.getStore();
+}
 
 export function runWithAuth<T>(ctx: RequestAuth, fn: () => T): T {
   return requestAuth.run(ctx, fn);

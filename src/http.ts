@@ -4,7 +4,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { createServer, SERVER_INFO } from "./server.js";
 import { envValue } from "./env.js";
 import { describeCredentialSource, runWithAuth } from "./google.js";
-import { HOSTED_SERVER_OPTIONS, loadHosted } from "./hosted/index.js";
+import { loadHosted } from "./hosted/index.js";
 
 const PORT = Number(envValue("MCP_PORT") ?? 8080);
 const HOST = envValue("MCP_HOST") ?? "127.0.0.1";
@@ -63,7 +63,7 @@ export function startHttp() {
 
     // Stateless: a fresh server + transport per request, so a crash in one
     // request never affects others and there is nothing to leak over days of uptime.
-    const server = createServer(tenant ? HOSTED_SERVER_OPTIONS : {});
+    const server = createServer(tenant ? tenant.options : {});
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => {
       void transport.close();
