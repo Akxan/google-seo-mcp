@@ -384,7 +384,7 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 ## 运行模式
 
 - **只读模式**：`--read-only` 或 `SEO_MCP_READ_ONLY=1`，所有写入类工具不注册。
-- **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`。83 个工具的定义约 2.2 万 token，只用部分功能时可以裁剪。
+- **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`、`gmail`。83 个工具的定义约 2.2 万 token，只用部分功能时可以裁剪。
 - 每个工具都带 `readOnlyHint` / `destructiveHint` 注解，服务器在初始化时返回 instructions 说明用法与安全约定。
 - `npm test` 运行单元测试、冒烟测试（含工具清单快照，`UPDATE_SNAPSHOT=1 npm test` 刷新）和 README 计数校验。
 - 所有写入类工具和 `github_commit_*` 支持 `dryRun: true`，只返回当前值与将要做的改动，不落地。

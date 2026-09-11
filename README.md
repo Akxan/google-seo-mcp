@@ -54,6 +54,7 @@ Plus `google_auth_status` for diagnostics. Every tool carries MCP annotations (`
 - *"Before we move to the new host, verify every URL with traffic still resolves on new.example.com."*
 - *"Rewrite the SEO title and meta description of post 515 and publish it."*
 - *"Take this photo URL, make a 1200×675 webp cover plus a 1000-wide card, commit both to public/assets/img/blog/, then register the cover in src/lib/blog.js."*
+- *"Alba emailed three photos yesterday. Find them, turn the first one into the cover for the new post and commit it."*
 
 </details>
 
