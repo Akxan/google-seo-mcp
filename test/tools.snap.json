@@ -20,6 +20,7 @@
   "ga_run_report",
   "geo_page_score",
   "github_commit_files",
+  "github_commit_image",
   "github_get_file",
   "github_list_commits",
   "github_list_dir",

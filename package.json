@@ -1,7 +1,7 @@
 {
   "name": "google-seo-mcp",
-  "version": "0.5.1",
-  "description": "SEO & GEO MCP server: Google Search Console, GA4, PageSpeed Insights, structured data, llms.txt, AI crawler checks, WordPress (Yoast, WP-CLI over SSH) and GitHub as 80 tools for AI agents",
+  "version": "0.6.0",
+  "description": "SEO & GEO MCP server: Google Search Console, GA4, PageSpeed Insights, structured data, llms.txt, AI crawler checks, WordPress (Yoast, WP-CLI over SSH) and GitHub as 81 tools for AI agents",
   "main": "dist/index.js",
   "scripts": {
     "test": "node --test test/unit/ && node test/smoke.mjs && node scripts/sync-readme.mjs --check",
@@ -44,6 +44,7 @@
     "google-auth-library": "^11.0.2",
     "googleapis": "^178.1.1",
     "image-size": "^2.0.2",
+    "sharp": "^0.34.5",
     "zod": "^4.5.4"
   },
   "devDependencies": {

@@ -18,6 +18,9 @@ test("write and destructive classification", () => {
   assert.equal(isWriteTool("gsc_search_analytics"), false);
   assert.equal(isWriteTool("wp_bulk_update_seo"), true);
   assert.equal(isWriteTool("gsc_delete_sitemap"), true);
+  assert.equal(isWriteTool("github_commit_image"), true);
+  assert.equal(inferAnnotations("github_commit_files").destructiveHint, true);
+  assert.equal(isWriteTool("github_get_file"), false);
   assert.equal(inferAnnotations("wp_delete_redirect").destructiveHint, true);
   assert.equal(inferAnnotations("wp_update_seo").destructiveHint, false);
   assert.equal(inferAnnotations("page_audit").readOnlyHint, true);
