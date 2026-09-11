@@ -2,7 +2,7 @@
 
 # google-seo-mcp
 
-**SEO & GEO MCP server for Claude, Codex, Cursor and any MCP client — Google Search Console, Google Analytics 4, PageSpeed Insights, structured data, llms.txt, WordPress and GitHub as 81 tools, so an assistant can diagnose and fix technical SEO, content and generative-engine-optimization issues in one conversation.**
+**SEO & GEO MCP server for Claude, Codex, Cursor and any MCP client — Google Search Console, Google Analytics 4, PageSpeed Insights, structured data, llms.txt, WordPress and GitHub as 83 tools, so an assistant can diagnose and fix technical SEO, content and generative-engine-optimization issues in one conversation.**
 
 [![GitHub stars](https://img.shields.io/github/stars/Akxan/google-seo-mcp?style=flat&logo=github)](https://github.com/Akxan/google-seo-mcp/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -38,7 +38,8 @@ Most SEO MCP servers wrap one API. Real SEO work crosses several: you find a str
 | **GEO** (12) | `ai_crawler_access`, `llms_txt_check`, `llms_txt_generate`, `structured_data_audit`, `schema_generate`, `schema_validate`, `geo_page_score`, `eeat_audit`, `knowledge_graph_check`, `indexnow_submit`, `ai_citation_check`, `brand_mentions` |
 | **Analysis** (5) | `migration_check` (pre-migration URL safety net), `cross_site_links`, `content_refresh_candidates`, `crux_history`, `reviews_snapshot` |
 | **WordPress** (21, optional) | `wp_site_info`, `wp_list_posts`, `wp_get_post`, `wp_update_post`, `wp_seo_status`, `wp_update_seo`, `wp_bulk_update_seo` (Yoast fields), `wp_builder_check`, `wp_builder_list_items`, `wp_builder_update` (BeTheme / Muffin Builder content), `wp_list_media`, `wp_update_media` (alt text), `wp_list_terms`, `wp_update_term`, `wp_internal_link_suggestions`, `wp_list_redirects`, `wp_add_redirect`, `wp_delete_redirect` (Yoast Premium), `wp_get_schema`, `wp_set_schema` (JSON-LD injection), `wp_run` (raw WP-CLI) |
-| **GitHub** (6, optional) | `github_get_file`, `github_list_dir`, `github_search_code`, `github_list_commits`, `github_commit_files` (atomic multi-file commits with full content, in-place find/replace edits for large files, or base64 binaries), `github_commit_image` (fetch an image URL, convert to webp, resize or crop, add variants, commit) (so a static site can be edited from any client) |
+| **GitHub** (7, optional) | `github_get_file`, `github_list_dir`, `github_search_code`, `github_list_commits`, `github_commit_files` (atomic multi-file commits with full content, in-place find/replace edits for large files, or base64 binaries), `github_commit_image` (fetch an image URL, convert to webp, resize or crop, add variants, commit), `github_commit_attachment` (same, from a Gmail attachment) (so a static site can be edited from any client) |
+| **Gmail** (1, optional) | `gmail_find_attachments` (read-only search of the authorized mailbox listing each message's attachments, so a photo someone emailed lands in the repo through `github_commit_attachment` without leaving the chat) |
 
 Plus `google_auth_status` for diagnostics. Every tool carries MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`), the server publishes `instructions` for the model, and there is a read-only mode and toolset filtering.
 
@@ -62,7 +63,7 @@ Plus `google_auth_status` for diagnostics. Every tool carries MCP annotations (`
 |---|---|---|
 | Runtime | Node.js ≥ 18, TypeScript 5, ES modules | no build-time codegen, `tsc` only |
 | Protocol | `@modelcontextprotocol/sdk` | stdio for local clients, stateless Streamable HTTP for servers |
-| Google | `googleapis` (Search Console v1, Analytics Data v1beta, Analytics Admin v1beta) + `google-auth-library` | REST clients, no gRPC; service account or OAuth |
+| Google | `googleapis` (Search Console v1, Analytics Data v1beta, Analytics Admin v1beta, Gmail v1 read-only, optional) + `google-auth-library` | REST clients, no gRPC; service account or OAuth |
 | Web audits | `cheerio`, `image-size`, `sharp`, native `fetch` | PageSpeed Insights, CrUX, Knowledge Graph, Wikidata, Google Autocomplete, IndexNow, Perplexity, Brave, Places APIs over HTTPS |
 | WordPress | `ssh` + WP-CLI, two PHP helpers uploaded on first use | Yoast indexable rebuild, cache purge (WP Rocket / Super Cache / W3TC / LiteSpeed), mu-plugin for JSON-LD |
 | GitHub | REST + Git Data API, `sharp` for images | token from `GITHUB_TOKEN` or `gh auth token`; edits are validated to match exactly once before anything is committed |
@@ -123,7 +124,7 @@ flowchart LR
 
 **WordPress path.** Every call is `ssh host 'cd <wp> && wp …'` with POSIX-quoted arguments; large payloads go over stdin. Two PHP helpers are uploaded to `~/.google-seo-mcp/` on the host when their hash changes. Yoast meta writes trigger an indexable rebuild and a cache purge so changes are live immediately.
 
-**Safety.** Write tools are recognised by name and receive `readOnlyHint:false` (`destructiveHint:true` for deletes, raw WP-CLI and commits). `--read-only` drops them at registration; `--toolsets=gsc,web` trims the tool list (81 definitions ≈ 22k tokens). Server instructions tell the model that fetched page text and CMS content are untrusted data.
+**Safety.** Write tools are recognised by name and receive `readOnlyHint:false` (`destructiveHint:true` for deletes, raw WP-CLI and commits). `--read-only` drops them at registration; `--toolsets=gsc,web` trims the tool list (83 definitions ≈ 22k tokens). Server instructions tell the model that fetched page text and CMS content are untrusted data.
 
 ## Quick start
 
@@ -150,6 +151,8 @@ npm run auth -- --client-secret ./client_secret.json
 and the resulting `~/.config/google-seo-mcp/credentials.json` is picked up automatically.
 
 Lookup order: `GOOGLE_CREDENTIALS_JSON` (inline) → `GOOGLE_APPLICATION_CREDENTIALS` → `~/.config/google-seo-mcp/credentials.json` → Application Default Credentials.
+
+**Gmail attachments (optional):** enable the Gmail API on the same Google Cloud project, create an OAuth client of type *Desktop app*, then run `npm run auth -- --gmail --client-secret ./client_secret.json` once. It writes `~/.config/google-seo-mcp/gmail.json` (read-only scope); point `GMAIL_CREDENTIALS` at it (on a server: `secrets/gmail.json`).
 
 ### Connect a client
 
@@ -301,7 +304,7 @@ LangChain (`langchain-mcp-adapters`), Google ADK (`MCPToolset`) and the Vercel A
 ### Third-party and local models
 
 - Desktop: Cherry Studio and Cline let you pick DeepSeek, Qwen, GLM, Kimi or a local Ollama model and add this server as a Streamable HTTP MCP server with the Authorization header.
-- The tool catalogue is about 21k tokens and travels with every turn, and 81 tools are a lot for smaller models. Point them at a second, read-only instance with a trimmed toolset and its own token, so a confused model can neither write nor see what it does not need:
+- The tool catalogue is about 21k tokens and travels with every turn, and 83 tools are a lot for smaller models. Point them at a second, read-only instance with a trimmed toolset and its own token, so a confused model can neither write nor see what it does not need:
 
 ```yaml
 # docker-compose.yml: a second service next to the main one
@@ -342,9 +345,10 @@ All settings live in `.env` (see [`.env.example`](.env.example), which documents
 | `BRAVE_API_KEY`, `PERPLEXITY_API_KEY`, `GOOGLE_PLACES_API_KEY` | optional: brand mentions, AI citation check, Google reviews |
 | `INDEXNOW_KEY`, `INDEXNOW_KEY_LOCATION` | optional: IndexNow submissions |
 | `GITHUB_TOKEN` | GitHub tools (falls back to `gh auth token`) |
+| `GMAIL_CREDENTIALS` | optional: authorized_user JSON written by `npm run auth -- --gmail` (Gmail read-only), for `gmail_find_attachments` / `github_commit_attachment` |
 | `WP_SITES` | JSON array of WordPress sites reachable over SSH; omit to disable `wp_*` tools |
 | `SEO_MCP_READ_ONLY=1` or `--read-only` | register no write tools |
-| `SEO_MCP_TOOLSETS` or `--toolsets=` | comma list of `gsc,ga4,web,geo,analysis,wordpress,github` (`google_auth_status` is always on) |
+| `SEO_MCP_TOOLSETS` or `--toolsets=` | comma list of `gsc,ga4,web,geo,analysis,wordpress,github,gmail` (`google_auth_status` is always on) |
 | `SEO_MCP_MAX_RESULT_CHARS` | cap on a single tool result (default 120000); oversized arrays are trimmed with a note on how to narrow the query |
 | `MCP_TRANSPORT=http`, `MCP_HOST`, `MCP_PORT`, `MCP_PATH`, `MCP_AUTH_TOKEN` | HTTP mode |
 | `GOOGLE_OAUTH_CLIENT_SECRET_FILE` (or `--client-secret`), `GOOGLE_OAUTH_CLIENT_ID` + `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_PORT` | `npm run auth` only: the OAuth client for the user-account flow (callback port defaults to 53682) |
@@ -366,7 +370,7 @@ MCP_TRANSPORT=http MCP_AUTH_TOKEN=$(openssl rand -hex 32) node dist/index.js --h
 curl http://127.0.0.1:8080/healthz
 ```
 
-Stateless Streamable HTTP: a fresh server instance per request, Bearer-token auth, loopback bind by default. `/healthz` answers `{"ok":true}` without a token and adds the version and credential source when the request carries the Bearer token. `deploy/vps-self-update.sh` updates a Docker deployment in place, and `.github/workflows/deploy.yml` runs it on every push to `main` through a forced-command SSH deploy key stored in repository secrets (`VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`). [`deploy/`](deploy/) contains a systemd unit, an env-file example and Caddy/Nginx reverse-proxy samples (Nginx needs `proxy_buffering off`). `Dockerfile` and `docker-compose.yml` are provided. Connect remote clients with
+Stateless Streamable HTTP: a fresh server instance per request, Bearer-token auth, loopback bind by default. Every write-tool call leaves one audit line on stderr (tool, outcome, duration, client, identifiers such as post id or file paths; never content), so `docker logs` shows who changed what. `/healthz` answers `{"ok":true}` without a token and adds the version and credential source when the request carries the Bearer token. `deploy/vps-self-update.sh` updates a Docker deployment in place, and `.github/workflows/deploy.yml` runs it on every push to `main` through a forced-command SSH deploy key stored in repository secrets (`VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`). [`deploy/`](deploy/) contains a systemd unit, an env-file example and Caddy/Nginx reverse-proxy samples (Nginx needs `proxy_buffering off`). `Dockerfile` and `docker-compose.yml` are provided. Connect remote clients with
 
 Client-side setup for the remote server (Claude apps, Codex, Cursor, VS Code, Gemini CLI, anything else that speaks MCP) is under [Connect a client](#connect-a-client).
 
@@ -387,8 +391,9 @@ src/
 ├── http.ts         Streamable HTTP transport with Bearer auth
 ├── google.ts       GoogleAuth + googleapis clients
 ├── env.ts          .env loader
+├── gmail.ts        Gmail read-only client (optional)
 ├── util.ts         tool() wrapper, error formatting, date helpers, progress heartbeat
-└── tools/          gsc · ga · web · crawl · geo · analysis · wp · github
+└── tools/          gsc · ga · web · crawl · geo · analysis · wp · github · gmail
 scripts/            wp-helper.php · mfn-builder.php (uploaded to the WordPress host) · check-secrets.sh
 deploy/             systemd · Caddy · Nginx samples
 test/               unit tests · smoke test · tool snapshot
