@@ -1,5 +1,6 @@
 # Production deployment on a VPS behind a reverse proxy (see deploy/ for Caddy / Nginx samples).
 #   mkdir -p secrets/ssh && cp /path/service-account.json secrets/ && ssh-keygen -t ed25519 -f secrets/ssh/id_ed25519 -N ""
+#   optional: cp ~/.config/google-seo-mcp/gmail.json secrets/   (Gmail attachment tools)
 #   cp .env.example .env && edit .env (WP_SITES identityFile must be /home/node/.ssh/id_ed25519)
 #   docker compose up -d --build && curl http://127.0.0.1:8787/healthz
 services:
@@ -14,8 +15,9 @@ services:
       MCP_HOST: 0.0.0.0
       MCP_PORT: 8080
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/service-account.json
+      GMAIL_CREDENTIALS: /secrets/gmail.json          # optional, from `npm run auth -- --gmail`
     volumes:
-      - ./secrets/service-account.json:/secrets/service-account.json:ro
+      - ./secrets:/secrets:ro
       - ./secrets/ssh:/home/node/.ssh:ro
     logging:
       driver: json-file

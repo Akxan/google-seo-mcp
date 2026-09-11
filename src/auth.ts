@@ -1,13 +1,14 @@
 /**
  * One-time OAuth authorization helper.
  *
- *   npm run auth -- --client-secret ./client_secret.json
+ *   npm run auth -- --client-secret ./client_secret.json            # Search Console + Analytics (read)
+ *   npm run auth -- --gmail --client-secret ./client_secret.json    # Gmail read-only, for the attachment tools
  *   # or
  *   GOOGLE_OAUTH_CLIENT_ID=... GOOGLE_OAUTH_CLIENT_SECRET=... npm run auth
  *
- * Opens a browser, asks you to grant Search Console + Analytics read access,
- * and writes ~/.config/google-seo-mcp/credentials.json (authorized_user format)
- * which the MCP server picks up automatically.
+ * Opens a browser, asks you to grant the scopes, and writes an authorized_user JSON:
+ * ~/.config/google-seo-mcp/credentials.json (Google APIs) or ~/.config/google-seo-mcp/gmail.json (--gmail),
+ * which the MCP server picks up automatically (GOOGLE_APPLICATION_CREDENTIALS / GMAIL_CREDENTIALS override the paths).
  */
 import { envValue, loadDotEnv } from "./env.js";
 loadDotEnv();
@@ -17,6 +18,9 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { OAuth2Client } from "google-auth-library";
 import { DEFAULT_CREDENTIALS_PATH, SCOPES } from "./google.js";
+import { DEFAULT_GMAIL_CREDENTIALS_PATH, GMAIL_SCOPES } from "./gmail.js";
+
+const GMAIL = process.argv.includes("--gmail");
 
 const PORT = Number(envValue("GOOGLE_OAUTH_PORT") ?? 53682);
 const REDIRECT = `http://127.0.0.1:${PORT}/oauth2callback`;
@@ -52,7 +56,7 @@ function openBrowser(url: string) {
 async function main() {
   const { clientId, clientSecret } = loadClient();
   const oauth2 = new OAuth2Client(clientId, clientSecret, REDIRECT);
-  const url = oauth2.generateAuthUrl({ access_type: "offline", prompt: "consent", scope: SCOPES });
+  const url = oauth2.generateAuthUrl({ access_type: "offline", prompt: "consent", scope: GMAIL ? GMAIL_SCOPES : SCOPES });
 
   const code = await new Promise<string>((resolve, reject) => {
     const server = http.createServer((req, res) => {
@@ -78,7 +82,7 @@ async function main() {
   if (!tokens.refresh_token) {
     throw new Error("No refresh_token returned. Remove the app from https://myaccount.google.com/permissions and run again.");
   }
-  const out = envValue("GOOGLE_APPLICATION_CREDENTIALS") ?? DEFAULT_CREDENTIALS_PATH;
+  const out = GMAIL ? (envValue("GMAIL_CREDENTIALS") ?? DEFAULT_GMAIL_CREDENTIALS_PATH) : (envValue("GOOGLE_APPLICATION_CREDENTIALS") ?? DEFAULT_CREDENTIALS_PATH);
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(
     out,

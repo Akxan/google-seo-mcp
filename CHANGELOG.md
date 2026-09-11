@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-11
+
+### Added
+- Gmail attachment tools (optional, read-only OAuth via `npm run auth -- --gmail`): `gmail_find_attachments` lists messages and their attachments; `github_commit_attachment` takes one attachment, converts it on the server when it is an image (same options as `github_commit_image`) and commits it. A photo someone emailed reaches the repository without passing through any client machine.
+- Write audit log: every write-tool call logs one JSON line to stderr (tool, outcome, duration, client user agent, identifiers such as post id, repo, branch, file paths; never content), visible with `docker logs`.
+
+### Changed
+- `docker-compose.yml` mounts the whole `secrets/` directory read-only at `/secrets` (service account, optional Gmail credentials) instead of the single file.
+
 ## [0.6.0] - 2026-09-11
 
 ### Added
@@ -71,7 +80,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - Tool annotations, server instructions, `--read-only` mode, `--toolsets` filtering, `.env` auto-loading, smoke test with tool snapshot, secret-scan git hooks.
 - stdio and stateless Streamable HTTP transports with Bearer auth.
 
-[Unreleased]: https://github.com/Akxan/google-seo-mcp/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/Akxan/google-seo-mcp/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/Akxan/google-seo-mcp/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.4.0...v0.5.0

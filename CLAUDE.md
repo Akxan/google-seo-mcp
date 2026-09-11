@@ -17,6 +17,7 @@ npm run inspector      # 用 MCP Inspector 调试 dist/
 npm run docs:sync      # 按工具清单快照同步两份 README 与 package.json 的工具计数（npm test 会校验）
 npm run check:secrets  # 扫描所有已跟踪文件里的密钥与个人信息（提交/推送钩子会自动跑）
 npm run auth -- --client-secret ./client_secret.json   # 一次性 OAuth 授权，写入 ~/.config/google-seo-mcp/credentials.json
+npm run auth -- --gmail --client-secret ./client_secret.json   # Gmail 只读授权，写入 ~/.config/google-seo-mcp/gmail.json（附件工具用）
 ```
 
 `npm test` 依次跑：`test/unit/*.test.mjs`（`node:test`，针对 `dist/` 里导出的纯函数：robots 解析、URL/路径归一化、日期、dotenv、schema 审计、工具分类）、`test/smoke.mjs`（启动服务、检查描述与注解、比对 `test/tools.snap.json`，增删工具后用 `UPDATE_SNAPSHOT=1 npm test` 刷新）、`scripts/sync-readme.mjs --check`。全部不访问网络。CI（`.github/workflows/deploy.yml` 的 test 任务）在每次推送和 PR 上跑同样的东西加密钥扫描，main 只有在它通过后才部署。真实调用的验证用临时的 MCP 客户端脚本：
@@ -35,7 +36,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 
 ## 架构
 
-- `src/server.ts`：`createServer()` 创建 `McpServer` 并注册全部工具。两种传输都调用它；HTTP 传输是**每个请求新建一个服务实例**（无状态，`sessionIdGenerator: undefined`）。它包了一层 `registerTool`：按工具名推断注解（`WRITE_TOOLS`、`DESTRUCTIVE_TOOLS` 正则）、只读模式下跳过写入工具、按 `toolsetOf()` 应用工具集筛选。**新增写入类工具时必须让名字匹配这两个正则**，否则会被当成只读。服务器 instructions 在 `buildInstructions()` 里。
+- `src/server.ts`：`createServer()` 创建 `McpServer` 并注册全部工具。两种传输都调用它；HTTP 传输是**每个请求新建一个服务实例**（无状态，`sessionIdGenerator: undefined`）。它包了一层 `registerTool`：按工具名推断注解（`WRITE_TOOLS`、`DESTRUCTIVE_TOOLS` 正则）、只读模式下跳过写入工具、按 `toolsetOf()` 应用工具集筛选（gsc/ga4/web/geo/analysis/wordpress/github/gmail/core），并给写入工具加审计日志：每次调用往 stderr 写一行 JSON（工具、成败、耗时、客户端 UA、`auditSummary()` 挑出的标识符如 id/repo/branch/文件路径，绝不含正文内容），线上用 `docker logs` 看。**新增写入类工具时必须让名字匹配这两个正则**，否则会被当成只读。服务器 instructions 在 `buildInstructions()` 里。
 - `src/index.ts`：入口，根据 `--http` 参数或 `MCP_TRANSPORT=http` 选择 stdio 或 HTTP。`src/http.ts` 是纯 `node:http` 服务，带 Bearer Token 鉴权（`MCP_AUTH_TOKEN`）、`/healthz`（无令牌只返回 `{ok:true}`，带令牌附版本号与凭据来源），默认只绑回环地址。
 - `src/google.ts`：单例 `GoogleAuth`，以及 `googleapis` 客户端工厂（`searchconsole v1`、`analyticsdata v1beta`、`analyticsadmin v1beta`）。凭据查找顺序：`GOOGLE_CREDENTIALS_JSON` → `GOOGLE_APPLICATION_CREDENTIALS` → `~/.config/google-seo-mcp/credentials.json` → ADC。GA4 用的是 `googleapis` 的 REST 客户端而不是 `@google-analytics/data`，避免引入 gRPC。
 - `src/util.ts`：`tool(fn)` 包装所有处理函数，返回值经 `fitResult()` 做体积保护（超过 `SEO_MCP_MAX_RESULT_CHARS` 时对最长的数组减半直到放下，并加 `_truncated` 说明）后以**紧凑 JSON**（不缩进）写进文本内容；抛出的异常经 `formatError` 变成 `isError` 结果（缺凭据和 403 会附加提示）。`heartbeat(extra, msg)` 给长任务发进度通知，超过约 10 秒的工具都要用。`resolveDate()` 把 `today`、`yesterday`、`NdaysAgo` 转成 `YYYY-MM-DD`，因为 Search Console 只接受绝对日期。
@@ -46,6 +47,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 - `src/tools/crawl.ts`：`site_crawl`（去重用去尾斜杠的 key，但请求始终用原始 URL，否则会误报 301 链）、`hreflang_check`、`compare_pages`（识别反爬页）、`social_preview_check`、`keyword_suggest`。
 - `src/tools/analysis.ts`：跨数据源分析（`migration_check`、`cross_site_links`、`content_refresh_candidates`、`knowledge_graph_check`、`crux_history`、`brand_mentions`、`reviews_snapshot`），依赖 `gsc.ts` 导出的 `query()` 和 `normalizePath()`。
 - `src/tools/github.ts`：GitHub REST，`github_commit_files` 用 Git Data API 一次提交多文件，每个文件三选一：`content`（整文件，`encoding: base64` 传二进制）、`edits`（对分支上当前内容做 find/replace，`applyTextEdits()` 要求每个 find 恰好匹配一次，否则整次拒绝）、`delete`；内容未变的文件自动跳过。`github_commit_image` 用 `sharp` 在服务器上取图、转 webp、缩放/裁剪（`attention` 智能裁剪）、生成变体后提交。写入正则用前缀 `github_commit_`，新加 GitHub 写入工具沿用这个前缀。token 取 `GITHUB_TOKEN`，否则 `gh auth token`。
+- `src/gmail.ts` + `src/tools/gmail.ts`：Gmail 只读客户端（`GMAIL_CREDENTIALS`，默认 `~/.config/google-seo-mcp/gmail.json`，由 `npm run auth -- --gmail` 生成）与两个工具：`gmail_find_attachments`（列邮件及附件）、`github_commit_attachment`（取附件、图片走 `renderImageOutputs()` 转换、`commitBlobs()` 提交）。凭据缺失时工具返回带操作步骤的错误，不隐藏。`collectAttachments()` 是纯函数，有单元测试。
 - `src/tools/geo.ts`：GEO 与信任信号检查。`BOTS` 表维护 AI 爬虫的 robots 令牌和 UA 字符串；`SCHEMA_RULES` 是各 schema 类型的必填/推荐字段表；`analyzePage()` 是 `geo_page_score` 和 `eeat_audit` 共用的页面信号提取。`indexnow_submit` 和 `ai_citation_check` 依赖可选环境变量，缺失时返回带说明的错误而不是不注册。
 - `src/tools/wp.ts`：WordPress 工具。只在设置了 `WP_SITES`（JSON 数组）或 `WP_SSH_*` 环境变量时注册。每次调用都是 `spawn` 一个 `ssh … 'cd <path> && wp …'`；所有远程参数都经 `shq()` 做 POSIX 单引号转义。大块数据（正文、构建器修改）通过 stdin 传，不放进 argv。
   - Yoast 字段就是原始 post meta（`_yoast_wpseo_title`、`_yoast_wpseo_metadesc` 等）。写完 meta 后 `rebuildYoastIndexable()` 用 `wp eval` 调 Yoast 的 `Indexable_Builder`，否则前台标题不会变。`purgeCache()` 清该文章在 WP Rocket、Super Cache、W3TC、LiteSpeed 中的缓存。
@@ -91,7 +93,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 ## 配置与密钥
 
 - **`.env` 是唯一真源**（gitignored）：Google 凭据路径、各 API 密钥、`WP_SITES`、可选第三方密钥、HTTP 模式参数，外加注释形式的站点信息、资源 ID、客户端配置位置和依赖清单。`src/env.ts` 在 `index.ts` / `auth.ts` 启动时读取它（按包根目录定位，与工作目录无关；已存在的环境变量优先）。`.env.example` 是脱敏模板。
-- **服务器有自己的一份 `.env`**（位置见 `CLAUDE.local.md`），不会自动同步：新增或更换密钥要本机和服务器各改一次，服务器改完需要 `docker compose up -d` 重启容器才生效（`env_file` 只在启动时读取）。
+- **服务器有自己的一份 `.env`**（位置见 `CLAUDE.local.md`），不会自动同步；`secrets/` 目录整体只读挂载到容器 `/secrets`（服务账号 JSON，可选的 `gmail.json`）：新增或更换密钥要本机和服务器各改一次，服务器改完需要 `docker compose up -d` 重启容器才生效（`env_file` 只在启动时读取）。
 - 客户端（Claude Code、桌面 App、网页、手机）都连生产 HTTP 实例，认证一律是请求头 `Authorization: Bearer <MCP_AUTH_TOKEN>`（Claude Code 用 `claude mcp add --transport http --header`，claude.ai 连接器在「Request headers」里填）；本机不再有 stdio 注册。新工具部署后客户端在下一次新对话自动拿到，不需要重连。
 - 新增需要密钥的工具时：在 `.env` 和 `.env.example` 各加一行带用途注释的条目，工具在密钥缺失时抛出带申请路径的错误（不要在注册阶段隐藏工具）。
 - **读环境变量一律用 `src/env.ts` 的 `envValue()`**，空值和纯空白视为未设置：Docker 的 `env_file` 会把 `KEY=` 原样传成空字符串，直接写 `process.env.X ?? 默认值` 会把空串当成有效值（曾导致 IndexNow 的 keyLocation 兜底失效）。`test/unit/util.test.mjs` 有对应用例。

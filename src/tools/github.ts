@@ -75,7 +75,7 @@ async function branchHead(repo: string, branch: string): Promise<string | null> 
 }
 
 /** One commit on `branch` from base64 blobs (sha null = delete). Creates the branch from the default branch when asked. */
-async function commitBlobs(repo: string, branch: string, message: string, entries: { path: string; base64: string | null }[], createBranch: boolean) {
+export async function commitBlobs(repo: string, branch: string, message: string, entries: { path: string; base64: string | null }[], createBranch: boolean) {
   let headSha = await branchHead(repo, branch);
   if (!headSha) {
     if (!createBranch) throw new Error(`Branch '${branch}' not found. Pass createBranch=true to create it from the default branch.`);
@@ -96,7 +96,35 @@ async function commitBlobs(repo: string, branch: string, message: string, entrie
   return { commit: commit.sha.slice(0, 7), url: commit.html_url };
 }
 
-const IMAGE_FORMATS = ["webp", "jpeg", "png", "avif"] as const;
+export const IMAGE_FORMATS = ["webp", "jpeg", "png", "avif"] as const;
+
+/** Image options shared by github_commit_image and github_commit_attachment. */
+export const imageOptionShape = {
+  width: z.number().int().min(16).max(8000).optional().describe("Target width. With height too, the image is cover-cropped to exactly that size; alone, height follows the aspect ratio. Never upscaled."),
+  height: z.number().int().min(16).max(8000).optional(),
+  focus: z.enum(["attention", "centre"]).default("attention").describe("Crop anchor: 'attention' keeps the visually busiest region, 'centre' crops symmetrically."),
+  format: z.enum(IMAGE_FORMATS).default("webp"),
+  quality: z.number().int().min(1).max(100).default(82),
+  variants: z.array(z.object({ path: z.string(), width: z.number().int().min(16).max(8000), height: z.number().int().min(16).max(8000).optional() })).max(5).optional().describe("Extra outputs from the same source (same format/quality/focus), e.g. a 1000×562 card version."),
+};
+export interface ImageOptions { path: string; width?: number; height?: number; focus: "attention" | "centre"; format: (typeof IMAGE_FORMATS)[number]; quality: number; variants?: { path: string; width: number; height?: number }[] }
+export interface RenderedImage { path: string; width: number; height: number; bytes: number; base64: string }
+
+/** Decode, orient, resize/crop and encode one source image into the main output plus variants. */
+export async function renderImageOutputs(src: Buffer, o: ImageOptions): Promise<{ source: { bytes: number; width: number; height: number; format?: string }; outputs: RenderedImage[]; notes: string[] }> {
+  const meta = await sharp(src, { failOn: "none" }).metadata();
+  if (!meta.width || !meta.height) throw new Error("Not a decodable image.");
+  const render = async (path: string, width?: number, height?: number): Promise<RenderedImage> => {
+    let img = sharp(src, { failOn: "none" }).rotate();
+    if (width || height) img = img.resize({ width, height, fit: width && height ? "cover" : "inside", position: o.focus === "attention" ? sharp.strategy.attention : "centre", withoutEnlargement: true });
+    const out = await img.toFormat(o.format, { quality: o.quality }).toBuffer({ resolveWithObject: true });
+    return { path: path.replace(/^\//, ""), width: out.info.width, height: out.info.height, bytes: out.info.size, base64: out.data.toString("base64") };
+  };
+  const outputs = [await render(o.path, o.width, o.height), ...(await Promise.all((o.variants ?? []).map((v) => render(v.path, v.width, v.height))))];
+  const notes: string[] = [];
+  if (o.width && meta.width < o.width) notes.push(`Source is only ${meta.width}px wide, output was not upscaled.`);
+  return { source: { bytes: src.length, width: meta.width, height: meta.height, format: meta.format }, outputs, notes };
+}
 
 export function registerGitHubTools(server: McpServer) {
   server.registerTool(
@@ -226,12 +254,7 @@ export function registerGitHubTools(server: McpServer) {
         message: z.string().describe("Commit message in the repository's conventions."),
         sourceUrl: z.string().url().describe("http(s) URL of the source image: an image already on a site, a CDN, a shared Google Drive link (uc?export=download&id=…), etc."),
         path: z.string().describe("Destination path in the repo, e.g. 'public/assets/img/blog/cover.webp'."),
-        width: z.number().int().min(16).max(8000).optional().describe("Target width. With height too, the image is cover-cropped to exactly that size; alone, height follows the aspect ratio. Never upscaled."),
-        height: z.number().int().min(16).max(8000).optional(),
-        focus: z.enum(["attention", "centre"]).default("attention").describe("Crop anchor: 'attention' keeps the visually busiest region, 'centre' crops symmetrically."),
-        format: z.enum(IMAGE_FORMATS).default("webp"),
-        quality: z.number().int().min(1).max(100).default(82),
-        variants: z.array(z.object({ path: z.string(), width: z.number().int().min(16).max(8000), height: z.number().int().min(16).max(8000).optional() })).max(5).optional().describe("Extra outputs from the same source (same format/quality/focus), e.g. a 1000×562 card version."),
+        ...imageOptionShape,
         createBranch: z.boolean().default(false),
         dryRun: z.boolean().default(false).describe("Fetch and convert, report dimensions and bytes, commit nothing."),
       },
@@ -241,19 +264,9 @@ export function registerGitHubTools(server: McpServer) {
       if (!res.ok) throw new Error(`Source image returned HTTP ${res.status}.`);
       const src = Buffer.from(await res.arrayBuffer());
       if (src.length > 40 * 1024 * 1024) throw new Error("Source image is larger than 40 MB.");
-      const meta = await sharp(src, { failOn: "none" }).metadata();
-      if (!meta.width || !meta.height) throw new Error(`Not a decodable image (content-type ${res.headers.get("content-type") ?? "unknown"}).`);
-      const render = async (path: string, width?: number, height?: number) => {
-        let img = sharp(src, { failOn: "none" }).rotate();
-        if (width || height) img = img.resize({ width, height, fit: width && height ? "cover" : "inside", position: a.focus === "attention" ? sharp.strategy.attention : "centre", withoutEnlargement: true });
-        const out = await img.toFormat(a.format, { quality: a.quality }).toBuffer({ resolveWithObject: true });
-        return { path: path.replace(/^\//, ""), width: out.info.width, height: out.info.height, bytes: out.info.size, base64: out.data.toString("base64") };
-      };
-      const outputs = [await render(a.path, a.width, a.height), ...(await Promise.all((a.variants ?? []).map((v) => render(v.path, v.width, v.height))))];
+      const { source: meta, outputs, notes } = await renderImageOutputs(src, a);
       const report = outputs.map(({ base64: _b, ...rest }) => rest);
-      const source = { url: a.sourceUrl, bytes: src.length, width: meta.width, height: meta.height, format: meta.format };
-      const notes: string[] = [];
-      if (a.width && meta.width < a.width) notes.push(`Source is only ${meta.width}px wide, output was not upscaled.`);
+      const source = { url: a.sourceUrl, ...meta };
       if (a.dryRun) return { dryRun: true, source, outputs: report, notes, note: "No commit was made." };
       const done = await commitBlobs(a.repo, a.branch, a.message, outputs.map((o) => ({ path: o.path, base64: o.base64 })), a.createBranch);
       return { repo: a.repo, branch: a.branch, ...done, source, outputs: report, notes };

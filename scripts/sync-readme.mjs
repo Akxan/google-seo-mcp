@@ -21,6 +21,7 @@ const groupLabels = {
   "**Analysis**": "analysis",
   "**WordPress**": "wordpress",
   "**GitHub**": "github",
+  "**Gmail**": "gmail",
 };
 
 const edits = [];
