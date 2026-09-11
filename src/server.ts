@@ -55,7 +55,7 @@ export function inferAnnotations(name: string) {
   return { readOnlyHint: !write, destructiveHint: write && DESTRUCTIVE_TOOLS.test(name), idempotentHint: !write || /^(wp_update_seo|wp_bulk_update_seo|wp_set_schema|wp_update_media|wp_update_term|gsc_submit_sitemap|indexnow_submit)/.test(name), openWorldHint: true };
 }
 
-export interface ServerOptions { readOnly?: boolean; toolsets?: string[] }
+export interface ServerOptions { readOnly?: boolean; toolsets?: string[]; /** Tool names to leave unregistered (hosted mode hides tools that spend the operator's paid quotas). */ exclude?: string[] }
 
 function readOptions(): ServerOptions {
   const argv = process.argv.slice(2);
@@ -93,6 +93,7 @@ export function createServer(overrides: ServerOptions = {}): McpServer {
     const n = String(name);
     if (opts.readOnly && isWriteTool(n)) return undefined;
     if (opts.toolsets && !opts.toolsets.includes(toolsetOf(n)) && toolsetOf(n) !== "core") return undefined;
+    if (opts.exclude?.includes(n)) return undefined;
     const c = config as { annotations?: Record<string, unknown> };
     // Write tools leave one audit line on stderr (tool, outcome, client, identifiers only; never content).
     const handler = isWriteTool(n)

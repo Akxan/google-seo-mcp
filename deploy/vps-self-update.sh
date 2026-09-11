@@ -6,6 +6,7 @@ cd "$(dirname "$0")/.."
 echo "== $(date -u +%FT%TZ) updating $(pwd)"
 git fetch -q origin main && git reset -q --hard origin/main
 echo "== at $(git log -1 --format='%h %s' | cut -c1-80)"
+mkdir -p data && chown 1000:1000 data 2>/dev/null || true   # hosted-mode database volume, owned by the container's node user
 docker compose up -d --build --remove-orphans 2>&1 | tail -2
 for i in $(seq 1 20); do
   if curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1; then

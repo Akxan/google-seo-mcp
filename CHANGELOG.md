@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-11
+
+### Added
+- Hosted mode (optional, `SEO_MCP_HOSTED_*` + `SEO_MCP_PUBLIC_URL`): a landing page (English/Chinese), *Sign in with Google*, and a dashboard where each user creates up to 10 personal bearer tokens for `/mcp`, plus privacy and terms pages. Users grant read-only Search Console and GA4 scopes; refresh tokens are AES-256-GCM encrypted in a `node:sqlite` database; a `seo_…` token runs the request inside that user's OAuth grant (`AsyncLocalStorage` scope around the request) on a read-only server limited to the `gsc`, `ga4`, `web`, `geo`, `analysis` toolsets, without the tools that spend paid third-party quotas. The operator's `MCP_AUTH_TOKEN` is unchanged.
+- `ServerOptions.exclude` to leave named tools unregistered; `formatError` hint for revoked/expired Google grants (`invalid_grant`).
+- Docker: `./data` volume at `/data` for the hosted database.
+
 ### Changed
 - README architecture diagram, keywords, `package.json` description/keywords and the repository description now cover the Gmail integration and the image pipeline (the 0.7.0 release had left them out).
 
@@ -86,7 +93,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - Tool annotations, server instructions, `--read-only` mode, `--toolsets` filtering, `.env` auto-loading, smoke test with tool snapshot, secret-scan git hooks.
 - stdio and stateless Streamable HTTP transports with Bearer auth.
 
-[Unreleased]: https://github.com/Akxan/google-seo-mcp/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/Akxan/google-seo-mcp/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/Akxan/google-seo-mcp/compare/v0.5.0...v0.5.1

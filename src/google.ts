@@ -2,7 +2,8 @@ import fs from "node:fs";
 import { envValue } from "./env.js";
 import os from "node:os";
 import path from "node:path";
-import { GoogleAuth } from "google-auth-library";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { GoogleAuth, OAuth2Client } from "google-auth-library";
 import { google } from "googleapis";
 
 export const SCOPES = [
@@ -44,7 +45,28 @@ function resolveCredentialOptions(): { keyFile?: string; credentials?: object } 
 
 let cachedAuth: GoogleAuth | undefined;
 
+/**
+ * Per-request credentials for hosted (multi-tenant) mode. The HTTP layer wraps each request in
+ * `runWithAuth()` and every Google call inside it transparently uses that user's OAuth grant
+ * instead of the operator's own credentials. Outside such a scope `getAuth()` behaves as before.
+ */
+export interface RequestAuth { auth: GoogleAuth; label: string }
+const requestAuth = new AsyncLocalStorage<RequestAuth>();
+
+export function runWithAuth<T>(ctx: RequestAuth, fn: () => T): T {
+  return requestAuth.run(ctx, fn);
+}
+
+/** Build a GoogleAuth backed by a user's OAuth refresh token (access tokens are refreshed automatically). */
+export function userOAuth(clientId: string, clientSecret: string, refreshToken: string): GoogleAuth {
+  const client = new OAuth2Client({ clientId, clientSecret });
+  client.setCredentials({ refresh_token: refreshToken });
+  return new GoogleAuth({ authClient: client });
+}
+
 export function getAuth(): GoogleAuth {
+  const scoped = requestAuth.getStore();
+  if (scoped) return scoped.auth;
   if (!cachedAuth) {
     cachedAuth = new GoogleAuth({ scopes: SCOPES, ...resolveCredentialOptions() });
   }
@@ -65,6 +87,8 @@ export function analyticsAdmin() {
 
 /** Describe which credential source is active, for diagnostics. */
 export function describeCredentialSource(): string {
+  const scoped = requestAuth.getStore();
+  if (scoped) return scoped.label;
   if (envValue("GOOGLE_CREDENTIALS_JSON")) return "GOOGLE_CREDENTIALS_JSON (inline)";
   const envPath = envValue("GOOGLE_APPLICATION_CREDENTIALS");
   if (envPath) return `GOOGLE_APPLICATION_CREDENTIALS=${envPath}`;

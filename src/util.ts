@@ -60,6 +60,9 @@ export function formatError(err: unknown): string {
 }
 
 function withHint(text: string): string {
+  if (/invalid_grant|Token has been expired or revoked/i.test(text)) {
+    return `${text}\nHint: the Google authorization behind this token was revoked or expired. Sign in again on the dashboard (hosted service) or re-run \`npm run auth\` (self-hosted).`;
+  }
   if (/Could not load the default credentials|GOOGLE_APPLICATION_CREDENTIALS/i.test(text)) {
     return `${text}\nHint: run \`npm run auth\` to authorize with your Google account, or set GOOGLE_APPLICATION_CREDENTIALS to a service-account JSON.`;
   }
