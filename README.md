@@ -93,6 +93,7 @@ flowchart LR
             AN[analysis.ts]
             WP[wp.ts]
             GH[github.ts]
+            GM[gmail.ts]
         end
         T1 --> S
         T2 --> S
@@ -104,6 +105,7 @@ flowchart LR
         SITES[(Your websites)]
         WPH[(WordPress host<br/>WP-CLI over SSH)]
         GHA[(GitHub)]
+        GMA[(Gmail<br/>read-only)]
         X[(Wikidata · IndexNow<br/>Perplexity · Brave · Places)]
     end
 
@@ -116,6 +118,8 @@ flowchart LR
     AN --> G
     WP --> WPH
     GH --> GHA
+    GM --> GMA
+    GM --> GHA
 ```
 
 **Request path.** A client calls a tool → `src/util.ts` `tool()` wraps the handler (JSON result or an actionable `isError`) → the handler talks to one or more upstreams → results are flattened into compact JSON (`{dimension: value, metric: number}` rows, totals first). Long-running tools (`pagespeed`, `site_crawl`, `migration_check`) send progress notifications.
@@ -412,7 +416,7 @@ Issues and pull requests are welcome. CI runs build, tests and the secret scan o
 
 ## Keywords
 
-MCP server · Model Context Protocol · SEO MCP · GEO · generative engine optimization · AI SEO agent · Claude MCP · Claude Code · OpenAI Codex MCP · Cursor MCP · Gemini CLI MCP · Claude Agent SDK · OpenAI Agents SDK · LangChain MCP · n8n · Dify · DeepSeek · Google Search Console API · Google Analytics 4 API · GA4 Data API · PageSpeed Insights API · Core Web Vitals · CrUX · technical SEO audit · site crawler · structured data · schema.org · JSON-LD · FAQPage · llms.txt · AI crawlers · GPTBot · ClaudeBot · PerplexityBot · robots.txt · sitemap · hreflang · keyword cannibalization · striking distance keywords · content decay · E-E-A-T · Knowledge Graph · IndexNow · WordPress SEO automation · Yoast SEO · WP-CLI · TypeScript
+MCP server · Model Context Protocol · SEO MCP · GEO · generative engine optimization · AI SEO agent · Claude MCP · Claude Code · OpenAI Codex MCP · Cursor MCP · Gemini CLI MCP · Claude Agent SDK · OpenAI Agents SDK · LangChain MCP · n8n · Dify · DeepSeek · Google Search Console API · Google Analytics 4 API · GA4 Data API · PageSpeed Insights API · Core Web Vitals · CrUX · technical SEO audit · site crawler · static site publishing · Astro · Cloudflare Pages · webp image pipeline · Gmail attachments · structured data · schema.org · JSON-LD · FAQPage · llms.txt · AI crawlers · GPTBot · ClaudeBot · PerplexityBot · robots.txt · sitemap · hreflang · keyword cannibalization · striking distance keywords · content decay · E-E-A-T · Knowledge Graph · IndexNow · WordPress SEO automation · Yoast SEO · WP-CLI · TypeScript
 
 ## Star history
 
