@@ -189,7 +189,7 @@ export function loadHosted(): Hosted | null {
       if (!hit) return null;
       const rt = store.refreshTokenOf(hit.user.id);
       if (!rt) return null;
-      return { user: hit.user, auth: { auth: userOAuth(clientId!, clientSecret!, rt), label: `Google account ${hit.user.email} (hosted, read-only)` } };
+      return { user: hit.user, auth: { auth: userOAuth(clientId!, clientSecret!, rt), label: `Google account ${hit.user.email} (hosted, read-only)`, scopes: hit.user.scopes.filter((x) => x.includes("googleapis")) } };
     },
     handle,
     describe: () => `hosted mode at ${publicUrl} (${store.countUsers()} users, data in ${dataDir})`,
