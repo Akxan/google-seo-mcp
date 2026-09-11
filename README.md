@@ -68,6 +68,7 @@ Plus `google_auth_status` for diagnostics. Every tool carries MCP annotations (`
 | Web audits | `cheerio`, `image-size`, `sharp`, native `fetch` | PageSpeed Insights, CrUX, Knowledge Graph, Wikidata, Google Autocomplete, IndexNow, Perplexity, Brave, Places APIs over HTTPS |
 | WordPress | `ssh` + WP-CLI, two PHP helpers uploaded on first use | Yoast indexable rebuild, cache purge (WP Rocket / Super Cache / W3TC / LiteSpeed), mu-plugin for JSON-LD |
 | GitHub | REST + Git Data API, `sharp` for images | token from `GITHUB_TOKEN` or `gh auth token`; edits are validated to match exactly once before anything is committed |
+| Hosted mode | `node:sqlite`, `google-auth-library` OAuth2, server-rendered HTML | optional multi-tenant web UI: Google sign-in, encrypted refresh tokens, per-user read-only bearer tokens |
 | Validation | `zod` schemas per tool | descriptions double as LLM documentation |
 | Quality | smoke test with tool-list snapshot, secret-scan git hooks | `npm test`, `npm run check:secrets` |
 
@@ -85,6 +86,7 @@ flowchart LR
         direction TB
         T1[stdio transport]
         T2[Streamable HTTP<br/>Bearer auth · /healthz]
+        HM[Hosted mode<br/>Google sign-in · SQLite<br/>per-user tokens]
         S["createServer()<br/>annotations · read-only · toolsets · instructions"]
         subgraph Tools
             GSC[gsc.ts]
@@ -113,6 +115,8 @@ flowchart LR
     CC --> T1
     CD --> T1
     HTTP --> T2
+    T2 --> HM
+    HM --> S
     GSC & GA --> G
     WEB & GEO & AN --> SITES
     GEO & AN --> X
@@ -128,6 +132,8 @@ flowchart LR
 **Cross-source analyses** (`ga_landing_page_seo`, `migration_check`, `cross_site_links`, `content_refresh_candidates`, `gsc_opportunities`) reuse the Search Console query function and a shared URL-path normaliser so pages line up across GA4, Search Console, sitemaps and WordPress post IDs.
 
 **WordPress path.** Every call is `ssh host 'cd <wp> && wp …'` with POSIX-quoted arguments; large payloads go over stdin. Two PHP helpers are uploaded to `~/.google-seo-mcp/` on the host when their hash changes. Yoast meta writes trigger an indexable rebuild and a cache purge so changes are live immediately.
+
+**Hosted mode.** With the `SEO_MCP_HOSTED_*` variables set, `src/hosted/` adds a landing page, Google OAuth sign-in and a token dashboard. A `seo_…` bearer token on `/mcp` resolves to that user's encrypted refresh token, and the request runs inside an `AsyncLocalStorage` scope so every Google client created by the tools uses that grant instead of the operator's credentials; the server instance for such requests is read-only and limited to own-data toolsets.
 
 **Safety.** Write tools are recognised by name and receive `readOnlyHint:false` (`destructiveHint:true` for deletes, raw WP-CLI and commits). `--read-only` drops them at registration; `--toolsets=gsc,web` trims the tool list (83 definitions ≈ 22k tokens). Server instructions tell the model that fetched page text and CMS content are untrusted data.
 
@@ -356,6 +362,7 @@ All settings live in `.env` (see [`.env.example`](.env.example), which documents
 | `SEO_MCP_TOOLSETS` or `--toolsets=` | comma list of `gsc,ga4,web,geo,analysis,wordpress,github,gmail` (`google_auth_status` is always on) |
 | `SEO_MCP_MAX_RESULT_CHARS` | cap on a single tool result (default 120000); oversized arrays are trimmed with a note on how to narrow the query |
 | `MCP_TRANSPORT=http`, `MCP_HOST`, `MCP_PORT`, `MCP_PATH`, `MCP_AUTH_TOKEN` | HTTP mode |
+| `SEO_MCP_HOSTED_CLIENT_ID`, `SEO_MCP_HOSTED_CLIENT_SECRET`, `SEO_MCP_HOSTED_SECRET`, `SEO_MCP_PUBLIC_URL` (+ optional `SEO_MCP_DATA_DIR`, `SEO_MCP_HOSTED_CONTACT`, `SEO_MCP_HOSTED_VERIFIED`) | [Hosted mode](#hosted-mode-let-other-people-sign-in-with-google): Google sign-in for other users, per-user read-only tokens |
 | `GOOGLE_OAUTH_CLIENT_SECRET_FILE` (or `--client-secret`), `GOOGLE_OAUTH_CLIENT_ID` + `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_PORT` | `npm run auth` only: the OAuth client for the user-account flow (callback port defaults to 53682) |
 
 Tools that need an optional key return an error explaining how to obtain it instead of silently disappearing. Empty values count as unset, including a `KEY=` that Docker passes through from an env file.
@@ -378,6 +385,16 @@ curl http://127.0.0.1:8080/healthz
 Stateless Streamable HTTP: a fresh server instance per request, Bearer-token auth, loopback bind by default. Every write-tool call leaves one audit line on stderr (tool, outcome, duration, client, identifiers such as post id or file paths; never content), so `docker logs` shows who changed what. `/healthz` answers `{"ok":true}` without a token and adds the version and credential source when the request carries the Bearer token. `deploy/vps-self-update.sh` updates a Docker deployment in place, and `.github/workflows/deploy.yml` runs it on every push to `main` through a forced-command SSH deploy key stored in repository secrets (`VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`). [`deploy/`](deploy/) contains a systemd unit, an env-file example and Caddy/Nginx reverse-proxy samples (Nginx needs `proxy_buffering off`). `Dockerfile` and `docker-compose.yml` are provided. Connect remote clients with
 
 Client-side setup for the remote server (Claude apps, Codex, Cursor, VS Code, Gemini CLI, anything else that speaks MCP) is under [Connect a client](#connect-a-client).
+
+## Hosted mode: let other people sign in with Google
+
+The same binary can run as a small multi-tenant service: a landing page, *Sign in with Google*, and a dashboard where each user creates personal bearer tokens for `/mcp`. Users grant **read-only** Search Console and GA4 scopes; their refresh tokens are stored encrypted (AES-256-GCM) in a SQLite file (`node:sqlite`, no extra dependency) and every `/mcp` request carrying a `seo_…` token runs against that user's Google account, with a read-only server limited to the `gsc`, `ga4`, `web`, `geo` and `analysis` toolsets (tools that write, that need SSH/GitHub/Gmail credentials, or that spend paid third-party quotas are not registered). Your own `MCP_AUTH_TOKEN` keeps working unchanged with the full tool set.
+
+1. In Google Cloud create an OAuth client of type **Web application** with the authorised redirect URI `https://mcp.example.com/oauth/callback`, enable the Search Console and Analytics Data/Admin APIs, and add the `webmasters.readonly` and `analytics.readonly` scopes on the consent screen. While the consent screen is unverified, Google shows a warning and caps sign-ins at 100 users; publishing to everyone requires [Google's OAuth verification](https://support.google.com/cloud/answer/13463073).
+2. Set the four variables together (`.env`): `SEO_MCP_HOSTED_CLIENT_ID`, `SEO_MCP_HOSTED_CLIENT_SECRET`, `SEO_MCP_HOSTED_SECRET` (`openssl rand -hex 32`), `SEO_MCP_PUBLIC_URL`. Optional: `SEO_MCP_DATA_DIR` (database location; the Docker image uses `/data`, mounted from `./data`), `SEO_MCP_HOSTED_CONTACT` (shown on the privacy page), `SEO_MCP_HOSTED_VERIFIED=1` once Google has verified the app.
+3. Restart. `/` serves the landing page (English and Chinese), `/login` starts the Google flow, `/dashboard` manages tokens (up to 10 per user, shown once, revocable), `/privacy` and `/terms` are the legal pages Google's verification asks for, and *Disconnect* revokes the Google grant and deletes the user's record and tokens.
+
+Cookies are `HttpOnly`, `SameSite=Lax` and `Secure` behind HTTPS; forms carry a CSRF token; the OAuth `state` is signed. Sign-ins and disconnects leave one JSON line on stderr (user id only). Leave all four variables empty and nothing of this exists: the server stays a private single-user instance.
 
 ## Development
 

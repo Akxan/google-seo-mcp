@@ -390,6 +390,16 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 - 所有写入类工具和 `github_commit_*` 支持 `dryRun: true`，只返回当前值与将要做的改动，不落地。
 - 单次返回超过 `SEO_MCP_MAX_RESULT_CHARS`（默认 12 万字符）时自动截断数组并提示如何缩小范围。
 
+## 托管模式：让别人用 Google 登录使用
+
+同一个程序可以变成一个小型多用户服务：首页、「用 Google 登录」、以及每个用户自己创建 `/mcp` 令牌的控制台。用户授权的是**只读**的 Search Console 与 GA4 权限；刷新令牌用 AES-256-GCM 加密后存在 SQLite 文件里（Node 自带的 `node:sqlite`，不加依赖）。带 `seo_…` 令牌的 `/mcp` 请求会用该用户自己的 Google 账号执行，服务实例是只读的，只有 `gsc`、`ga4`、`web`、`geo`、`analysis` 工具集（写入类、需要 SSH/GitHub/Gmail 密钥的、以及会花运营者付费额度的工具都不注册）。你自己的 `MCP_AUTH_TOKEN` 不受影响，仍是完整工具集。
+
+1. 在 Google Cloud 建一个类型为 **Web 应用** 的 OAuth 客户端，已授权重定向 URI 填 `https://mcp.example.com/oauth/callback`；启用 Search Console 与 Analytics Data/Admin API；同意屏幕加上 `webmasters.readonly` 和 `analytics.readonly` 两个范围。同意屏幕未经验证时 Google 会显示警告且最多 100 个用户登录，面向公众需要通过 [Google 的 OAuth 验证](https://support.google.com/cloud/answer/13463073)。
+2. 四个变量一起设置（`.env`）：`SEO_MCP_HOSTED_CLIENT_ID`、`SEO_MCP_HOSTED_CLIENT_SECRET`、`SEO_MCP_HOSTED_SECRET`（`openssl rand -hex 32`）、`SEO_MCP_PUBLIC_URL`。可选：`SEO_MCP_DATA_DIR`（数据库位置，Docker 镜像用 `/data`，由 `./data` 挂载）、`SEO_MCP_HOSTED_CONTACT`（隐私页上的联系方式）、Google 验证通过后设 `SEO_MCP_HOSTED_VERIFIED=1`。
+3. 重启。`/` 是首页（中英文），`/login` 开始 Google 授权，`/dashboard` 管理令牌（每人最多 10 个，只显示一次，可撤销），`/privacy` 与 `/terms` 是 Google 验证要求的法律页面，「断开 Google 账号」会撤销 Google 授权并删除该用户的记录和全部令牌。
+
+Cookie 为 `HttpOnly`、`SameSite=Lax`，HTTPS 下带 `Secure`；表单带 CSRF 令牌；OAuth 的 `state` 有签名。登录和断开各在 stderr 留一行 JSON（只有用户 ID）。四个变量都不设时这些一概不存在，服务器仍是私有的单用户实例。
+
 ## 5. 环境变量
 
 推荐把所有变量写在项目根目录的 `.env`（参考 `.env.example`），服务启动时自动读取，客户端配置里只需要启动命令。也可以在客户端配置的 `env` 里传，已存在的环境变量优先于 `.env`。
@@ -414,6 +424,7 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 | `GITHUB_TOKEN` | 无 | GitHub 工具；未设时尝试 `gh auth token` |
 | `GMAIL_CREDENTIALS` | `~/.config/google-seo-mcp/gmail.json` | `npm run auth -- --gmail` 生成的只读 Gmail 授权文件，附件工具用；服务器上放 `secrets/gmail.json` |
 | `SEO_MCP_READ_ONLY` / `SEO_MCP_TOOLSETS` | 无 | 见运行模式 |
+| `SEO_MCP_HOSTED_CLIENT_ID`、`SEO_MCP_HOSTED_CLIENT_SECRET`、`SEO_MCP_HOSTED_SECRET`、`SEO_MCP_PUBLIC_URL`（可选 `SEO_MCP_DATA_DIR`、`SEO_MCP_HOSTED_CONTACT`、`SEO_MCP_HOSTED_VERIFIED`） | 无 | 托管模式：别人用 Google 登录、各自拿只读令牌，见上一节 |
 | `SEO_MCP_MAX_RESULT_CHARS` | `120000` | 单次工具结果的字符上限，超出时截断最长的数组并提示如何缩小范围 |
 
 空值一律视为未设置，包括 Docker 从 env 文件原样传入的 `KEY=`。

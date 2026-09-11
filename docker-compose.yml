@@ -1,6 +1,7 @@
 # Production deployment on a VPS behind a reverse proxy (see deploy/ for Caddy / Nginx samples).
 #   mkdir -p secrets/ssh && cp /path/service-account.json secrets/ && ssh-keygen -t ed25519 -f secrets/ssh/id_ed25519 -N ""
 #   optional: cp ~/.config/google-seo-mcp/gmail.json secrets/   (Gmail attachment tools)
+#   optional hosted mode (users sign in with Google): set SEO_MCP_HOSTED_* + SEO_MCP_PUBLIC_URL in .env; ./data keeps its SQLite DB
 #   cp .env.example .env && edit .env (WP_SITES identityFile must be /home/node/.ssh/id_ed25519)
 #   docker compose up -d --build && curl http://127.0.0.1:8787/healthz
 services:
@@ -16,9 +17,11 @@ services:
       MCP_PORT: 8080
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/service-account.json
       GMAIL_CREDENTIALS: /secrets/gmail.json          # optional, from `npm run auth -- --gmail`
+      SEO_MCP_DATA_DIR: /data                          # hosted-mode database (ignored unless hosted mode is on)
     volumes:
       - ./secrets:/secrets:ro
       - ./secrets/ssh:/home/node/.ssh:ro
+      - ./data:/data
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }

@@ -12,8 +12,9 @@ ENV NODE_ENV=production MCP_TRANSPORT=http MCP_HOST=0.0.0.0 MCP_PORT=8080 HOME=/
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY scripts ./scripts
+COPY test/tools.snap.json ./test/tools.snap.json
 COPY package.json ./
-RUN mkdir -p /home/node/.ssh && chown -R node:node /home/node /app
+RUN mkdir -p /home/node/.ssh /data && chown -R node:node /home/node /app /data
 USER node
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1
