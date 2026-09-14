@@ -42,7 +42,15 @@ export function auditSummary(args: unknown): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(args as Record<string, unknown>)) {
     if (k === "files" && Array.isArray(v)) { out.files = v.map((f) => (f && typeof f === "object" ? String((f as { path?: unknown }).path ?? "?") : "?")).slice(0, 50); continue; }
-    if (Array.isArray(v)) { if (AUDIT_KEYS.has(k) && v.every((x) => typeof x !== "object")) out[k] = v.slice(0, 20); else out[k] = `[${v.length}]`; continue; }
+    if (Array.isArray(v)) {
+      if (AUDIT_KEYS.has(k) && v.every((x) => typeof x !== "object")) out[k] = v.slice(0, 20);
+      else {
+        // Arrays of objects (bulk items, edits): keep only their ids so bulk writes stay traceable.
+        const ids = v.map((x) => (x && typeof x === "object" ? (x as { id?: unknown; postId?: unknown }).id ?? (x as { postId?: unknown }).postId : undefined)).filter((x) => typeof x === "number" || typeof x === "string");
+        out[k] = ids.length ? `[${v.length}] ids=${ids.slice(0, 30).join(",")}` : `[${v.length}]`;
+      }
+      continue;
+    }
     if (!AUDIT_KEYS.has(k)) continue;
     if (typeof v === "string") out[k] = v.length > 120 ? v.slice(0, 117) + "…" : v;
     else if (typeof v === "number" || typeof v === "boolean") out[k] = v;
