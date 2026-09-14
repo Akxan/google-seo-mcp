@@ -352,7 +352,7 @@ export function registerSearchConsoleTools(server: McpServer) {
       const results: Record<string, unknown>[] = [];
       let i = 0;
       await Promise.all(
-        Array.from({ length: 3 }, async () => {
+        Array.from({ length: 6 }, async () => {   // URL Inspection API: 600 requests/min per property, each call 3-10 s on Google's side
           while (i < urls.length) {
             const url = urls[i++];
             try {
