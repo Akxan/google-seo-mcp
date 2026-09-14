@@ -23,3 +23,8 @@ test("auditSummary keeps identifiers and counts, never content", () => {
   assert.equal(JSON.stringify(s).includes("SECRET"), false);
   assert.deepEqual(auditSummary(null), {});
 });
+
+test("auditSummary keeps wp_run command tokens but not stdin", () => {
+  const s = auditSummary({ site: "mysite", args: ["plugin", "list", "--status=active"], stdin: "secret content" });
+  assert.deepEqual(s, { site: "mysite", args: ["plugin", "list", "--status=active"] });
+});
