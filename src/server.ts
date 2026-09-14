@@ -36,7 +36,7 @@ const DESTRUCTIVE_TOOLS = /^(wp_delete_|wp_run|wp_update_post|wp_builder_update|
 export function isWriteTool(name: string) { return WRITE_TOOLS.test(name); }
 
 /** Identifiers worth keeping in the write-audit log; content fields (title, content, jsonld, edits…) never appear. */
-const AUDIT_KEYS = new Set(["site", "id", "postId", "ids", "repo", "branch", "path", "url", "urls", "siteUrl", "feedpath", "sitemapUrl", "messageId", "filename", "termId", "taxonomy", "mediaId", "from", "to", "status", "dryRun", "createBranch", "convert"]);
+const AUDIT_KEYS = new Set(["site", "args", "id", "postId", "ids", "repo", "branch", "path", "url", "urls", "siteUrl", "feedpath", "sitemapUrl", "messageId", "filename", "termId", "taxonomy", "mediaId", "from", "to", "status", "dryRun", "createBranch", "convert"]);
 export function auditSummary(args: unknown): Record<string, unknown> {
   if (!args || typeof args !== "object") return {};
   const out: Record<string, unknown> = {};
