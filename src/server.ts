@@ -1,4 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import fs from "node:fs";
+import path from "node:path";
 import { envValue } from "./env.js";
 import { z } from "zod";
 import { currentRequest, currentScopes, describeCredentialSource, getAuth } from "./google.js";
@@ -117,7 +119,11 @@ export function createServer(overrides: ServerOptions = {}): McpServer {
           const res = await (cb as (a: unknown, e: unknown) => Promise<{ isError?: boolean }>)(args, extra);
           const ua = extra?.requestInfo?.headers?.["user-agent"];
           const who = currentRequest()?.label;
-          console.error(JSON.stringify({ audit: "write", at: new Date().toISOString(), tool: n, ok: !res?.isError, ms: Date.now() - t0, client: typeof ua === "string" ? ua.slice(0, 60) : "stdio", ...(who ? { who } : {}), args: auditSummary(args) }));
+          const line = JSON.stringify({ audit: "write", at: new Date().toISOString(), tool: n, ok: !res?.isError, ms: Date.now() - t0, client: typeof ua === "string" ? ua.slice(0, 60) : "stdio", ...(who ? { who } : {}), args: auditSummary(args) });
+          console.error(line);
+          // Container logs vanish on every redeploy; keep a copy on disk when a data dir is configured.
+          const dir = envValue("SEO_MCP_DATA_DIR");
+          if (dir) fs.appendFile(path.join(dir, "audit.log"), line + "\n", () => {});
           return res;
         }
       : cb;
