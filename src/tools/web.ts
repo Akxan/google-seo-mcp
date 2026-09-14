@@ -201,7 +201,9 @@ export async function auditPage(url: string, opts: AuditOptions = {}) {
   const headings = $("h1, h2, h3").map((_, el) => ({ tag: el.tagName.toLowerCase(), text: $(el).text().replace(/\s+/g, " ").trim().slice(0, 160) })).get();
   const h1s = headings.filter((h) => h.tag === "h1");
   const imgs = $("img").toArray();
-  const missingAlt = imgs.filter((el) => !($(el).attr("alt") ?? "").trim()).map((el) => $(el).attr("src") ?? $(el).attr("data-src") ?? "(no src)");
+  // `alt=""` is the correct markup for decorative images (WCAG, Google): only a *missing* attribute is a defect.
+  const missingAlt = imgs.filter((el) => $(el).attr("alt") === undefined).map((el) => $(el).attr("src") ?? $(el).attr("data-src") ?? "(no src)");
+  const decorative = imgs.filter((el) => ($(el).attr("alt") ?? "x").trim() === "").length;
   let internal = 0, external = 0, nofollow = 0;
   const internalUrls = new Set<string>();
   $("a[href]").each((_, el) => {
@@ -255,7 +257,7 @@ export async function auditPage(url: string, opts: AuditOptions = {}) {
     hreflang,
     openGraph: og,
     headings: { h1Count: h1s.length, h2Count: headings.filter((h) => h.tag === "h2").length, h3Count: headings.filter((h) => h.tag === "h3").length, outline: headings.slice(0, a.maxHeadings) },
-    images: { total: imgs.length, missingAlt: missingAlt.length, missingAltSamples: missingAlt.slice(0, a.maxImagesMissingAlt) },
+    images: { total: imgs.length, missingAlt: missingAlt.length, missingAltSamples: missingAlt.slice(0, a.maxImagesMissingAlt), decorativeEmptyAlt: decorative },
     links: { internal, internalUnique: internalUrls.size, external, nofollow },
     wordCount,
     structuredData: [...new Set(jsonLdTypes)],

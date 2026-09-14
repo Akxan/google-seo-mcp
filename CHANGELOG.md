@@ -4,6 +4,9 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+- `page_audit` / `site_crawl` no longer count `alt=""` (decorative images) as missing alt text; only a missing attribute is reported, and `images.decorativeEmptyAlt` gives the count of intentionally empty ones (a site with decorative arches was reported as 328 missing).
+
 ## [0.9.0] - 2026-09-11
 
 ### Added
