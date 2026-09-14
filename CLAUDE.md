@@ -112,4 +112,5 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 - `buildInstructions()` 里点名了推荐先用的工具（snapshot、opportunities 等），新增重要的分析类工具时把它加进去。
 - 密钥扫描器误报时，在 `scripts/check-secrets.sh` 的 `BENIGN`（合法占位值）或 `ALLOW`（合法文件）里加豁免，不要绕过钩子提交。
 - Search Console 数据延迟 2 到 3 天；URL 检查每个资源每天约 2000 次配额，不要对整站循环调用。
+- **图片二进制绝不能经过模型的文字输出**：2026-09-14 App 端会话把一张 67 KB 的 WebP 以 base64 `content` 通过 `github_commit_files` 提交，头部合法、像素全是噪声（模型自己「写」出来的 base64）。加图只能走 `github_commit_image`（URL）或 `github_commit_attachment`（邮件附件），在服务器上转换后提交。给 `github_commit_files` 加拦截（base64 图片超过几 KB 就拒绝）是待办，还没做。
 - 对基于构建器的文章，`wp_update_post` 的 `content` 参数会被主题忽略，要用 `wp_builder_*` 工具。第一次编辑某篇文章前先跑 `wp_builder_check`。
