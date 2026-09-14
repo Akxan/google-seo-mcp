@@ -4,6 +4,9 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Known issues
+- Binary files must never travel through the model as base64 `content` in `github_commit_files`: on 2026-09-14 a client session (claude.ai app) emailed a photo, ran `github_commit_attachment` only as a dry run, then committed a ~67 KB WebP whose base64 it had written out itself. The RIFF/VP8 header was plausible, so the file decoded without errors, but the pixel data was noise. A guard that rejects base64 image content above a few KB (pointing to `github_commit_image` / `github_commit_attachment`) is planned but not implemented yet.
+
 ### Fixed
 - `page_audit` / `site_crawl` no longer count `alt=""` (decorative images) as missing alt text; only a missing attribute is reported, and `images.decorativeEmptyAlt` gives the count of intentionally empty ones (a site with decorative arches was reported as 328 missing).
 
