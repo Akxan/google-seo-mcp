@@ -28,3 +28,9 @@ test("auditSummary keeps wp_run command tokens but not stdin", () => {
   const s = auditSummary({ site: "mysite", args: ["plugin", "list", "--status=active"], stdin: "secret content" });
   assert.deepEqual(s, { site: "mysite", args: ["plugin", "list", "--status=active"] });
 });
+
+test("auditSummary lists ids of bulk items", () => {
+  const s = auditSummary({ site: "mysite", items: [{ id: 5, title: "secret" }, { id: 9, description: "x" }], edits: [{ find: "a", replace: "b" }] });
+  assert.equal(s.items, "[2] ids=5,9");
+  assert.equal(s.edits, "[1]");
+});
