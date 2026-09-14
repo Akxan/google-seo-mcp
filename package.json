@@ -48,7 +48,7 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "cheerio": "^1.2.0",
     "google-auth-library": "^11.0.2",
-    "googleapis": "^178.1.1",
+    "googleapis": "^180.0.0",
     "image-size": "^2.0.2",
     "sharp": "^0.35.4",
     "zod": "^4.5.4"
