@@ -261,7 +261,7 @@ export function registerAnalysisTools(server: McpServer) {
     {
       title: "Content refresh candidates (decaying pages)",
       description:
-        "Find pages whose clicks or impressions dropped between two periods and that have not been updated recently (sitemap lastmod), with the queries they lost the most on. These are the best candidates for a content refresh: update facts, expand answers, add FAQ, re-publish with a new dateModified.",
+        "Pages that used to perform and no longer do. Finds pages whose clicks or impressions dropped between two periods and that have not been updated recently (sitemap lastmod), with the queries they lost the most on. Use it for deciding what to rewrite; gsc_opportunities is for what to push over the line. Best candidates for a content refresh: update facts, expand answers, add FAQ, re-publish with a new dateModified.",
       inputSchema: {
         siteUrl,
         sitemapUrl: z.string().url().optional().describe("Sitemap to read lastmod dates from (index supported)."),

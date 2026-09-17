@@ -37,6 +37,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 ## 架构
 
 - `src/server.ts`：`createServer()` 创建 `McpServer` 并注册全部工具。两种传输都调用它；HTTP 传输是**每个请求新建一个服务实例**（无状态，`sessionIdGenerator: undefined`）。它包了一层 `registerTool`：按工具名推断注解（`WRITE_TOOLS`、`DESTRUCTIVE_TOOLS` 正则）、只读模式下跳过写入工具、按 `toolsetOf()` 应用工具集筛选（gsc/ga4/web/geo/analysis/wordpress/github/gmail/core），并给写入工具加审计日志：每次调用往 stderr 写一行 JSON（工具、成败、耗时、客户端 UA、`auditSummary()` 挑出的标识符如 id/repo/branch/文件路径，绝不含正文内容），线上用 `docker logs` 看；设置了 `SEO_MCP_DATA_DIR` 时同一行也追加到 `<dir>/audit.log`（容器每次重建日志就没了，文件不会）。**新增写入类工具时必须让名字匹配这两个正则**，否则会被当成只读。服务器 instructions 在 `buildInstructions()` 里。
+- `src/prompts.ts`：MCP 提示词（客户端显示为斜杠命令）。每条声明 `needs`（依赖哪些工具集），`registerPrompts()` 只注册工具集齐全的那些，所以裁剪过的实例不会给出跑不了的命令。提示词正文里提到的工具名有单元测试校验必须真实存在，防止与工具清单脱节。**改动工具名时记得同步这里**。新增提示词要克制：清单随每次对话传输，正文只在用户选中时才发送，所以标题与描述要短，正文可以详细。
 - `src/index.ts`：入口，根据 `--http` 参数或 `MCP_TRANSPORT=http` 选择 stdio 或 HTTP。`src/http.ts` 是纯 `node:http` 服务，带 Bearer Token 鉴权（`MCP_AUTH_TOKEN`）、`/healthz`（无令牌只返回 `{ok:true}`，带令牌附版本号与凭据来源），默认只绑回环地址。
 - `src/google.ts`：单例 `GoogleAuth`，以及 `googleapis` 客户端工厂（`searchconsole v1`、`analyticsdata v1beta`、`analyticsadmin v1beta`）。凭据查找顺序：`GOOGLE_CREDENTIALS_JSON` → `GOOGLE_APPLICATION_CREDENTIALS` → `~/.config/google-seo-mcp/credentials.json` → ADC。GA4 用的是 `googleapis` 的 REST 客户端而不是 `@google-analytics/data`，避免引入 gRPC。
 - `src/util.ts`：`tool(fn)` 包装所有处理函数，返回值经 `fitResult()` 做体积保护（超过 `SEO_MCP_MAX_RESULT_CHARS` 时对最长的数组减半直到放下，并加 `_truncated` 说明）后以**紧凑 JSON**（不缩进）写进文本内容；抛出的异常经 `formatError` 变成 `isError` 结果（缺凭据和 403 会附加提示）。`heartbeat(extra, msg)` 给长任务发进度通知，超过约 10 秒的工具都要用。`resolveDate()` 把 `today`、`yesterday`、`NdaysAgo` 转成 `YYYY-MM-DD`，因为 Search Console 只接受绝对日期。
@@ -75,7 +76,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 2. 需要新密钥的：`.env` 与 `.env.example` 各加一行带用途注释的条目；密钥缺失时抛出带申请路径的错误。
 3. `npm run build`，用临时客户端脚本对真实数据验证（写入只用临时对象），删掉脚本。
 4. `UPDATE_SNAPSHOT=1 npm test` 刷新工具清单快照，然后 `npm run docs:sync` 让两份 README 和 `package.json` 里的工具总数、分组计数自动对齐，并检查每个工具名都出现在两份 README 里，缺一个就失败（`npm test` 会跑同样的检查），再 `npm test` 确认通过。
-5. 手动更新两份 README 的工具表（新工具名和一句话说明）与配置表，必要时更新 `buildInstructions()`；在 `CHANGELOG.md` 的 Unreleased 下加一条。**照「对外形象的维护」的第二张表逐条核对**，尤其是工具总数变化时 GitHub 仓库描述要单独更新（`docs:sync` 会打印命令）。
+5. 如果新工具和已有工具功能相近，在描述首句写清「什么时候用我、什么时候用别的」（见 `gsc_opportunities` 与 `gsc_ctr_opportunities` 的互相点名）。手动更新两份 README 的工具表（新工具名和一句话说明）与配置表，必要时更新 `buildInstructions()`；在 `CHANGELOG.md` 的 Unreleased 下加一条。**照「对外形象的维护」的第二张表逐条核对**，尤其是工具总数变化时 GitHub 仓库描述要单独更新（`docs:sync` 会打印命令）。
 6. 中文提交信息，`git push`；推送会自动部署，用 `gh run watch` 看到成功后，用线上地址调一次新工具确认（`/healthz` 先通）。
 7. 涉及服务器 `.env` 的变更（新密钥、`WP_SITES`）要在服务器上同步并重启容器。
 8. 一批功能完成后发版：`npm pkg set version=x.y.z`（服务器上报的版本号从 `package.json` 读取），把 CHANGELOG 的 Unreleased 改成版本段落并更新底部链接，提交后 `git tag -a vx.y.z -m '...'`、`git push origin vx.y.z`、`gh release create vx.y.z --title ... --notes-file <(从 CHANGELOG 摘出该段)`。版本号规则：新增工具或集成升次版本号（0.x.0），只修 bug 升补丁号（0.x.y），纯文档不发版。**发版前对照下面「对外形象的维护」逐条核对**，2026-09-11 的 0.7.0 就漏了架构图、关键词和仓库描述，事后才补。

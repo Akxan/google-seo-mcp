@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { toolsetOf, isWriteTool, inferAnnotations } from "../../dist/server.js";
 import { narrowOptions } from "../../dist/http.js";
+import { registerPrompts, PROMPT_NAMES } from "../../dist/prompts.js";
 import { shq } from "../../dist/tools/wp.js";
 
 test("toolsetOf maps prefixes to toolsets", () => {
@@ -49,4 +50,38 @@ test("narrowOptions only ever removes access", () => {
   // Typos are rejected rather than silently yielding an empty server.
   assert.throws(() => narrowOptions({}, u("?toolsets=gsc,wordpres")), /unknown toolset/);
   assert.throws(() => narrowOptions({}, u("?toolsets=")), /at least one/);
+});
+
+test("prompts are only offered when their toolsets are enabled", async () => {
+  const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
+  const make = (enabled) => {
+    const s = new McpServer({ name: "t", version: "0" });
+    return registerPrompts(s, (ts) => enabled === null || enabled.includes(ts));
+  };
+  const all = make(null);
+  assert.equal(all, PROMPT_NAMES.length, "an unrestricted instance offers every prompt");
+  // publish_check and site_health need web + geo, so a data-only instance must not advertise them.
+  assert.ok(make(["gsc", "ga4"]) < all);
+  // An instance with no Search Console cannot run the four that start from it.
+  assert.ok(make(["web", "geo"]) < all);
+  assert.equal(make([]), 0, "a server with no toolsets offers no workflow it cannot run");
+});
+
+test("every prompt body names only tools that exist", async () => {
+  const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
+  const names = JSON.parse(await (await import("node:fs/promises")).readFile(new URL("../tools.snap.json", import.meta.url), "utf8"));
+  const captured = [];
+  const s = new McpServer({ name: "t", version: "0" });
+  s.registerPrompt = (name, cfg, cb) => { captured.push([name, cb]); return {}; };
+  registerPrompts(s, () => true);
+  for (const [name, cb] of captured) {
+    const text = cb({}).messages[0].content.text;
+    // Any snake_case token that looks like one of our tool prefixes must be a real tool.
+    for (const m of text.match(/\b(gsc|ga|wp|github|gmail)_[a-z_]+\b/g) ?? []) {
+      assert.ok(names.includes(m), `prompt ${name} refers to unknown tool ${m}`);
+    }
+    for (const m of text.match(/\b(page_audit|site_crawl|sitemap_check|robots_check|canonical_host_check|hreflang_check|social_preview_check|structured_data_audit|geo_page_score|eeat_audit|llms_txt_check|ai_crawler_access|crux_snapshot|crux_history|content_refresh_candidates|migration_check)\b/g) ?? []) {
+      assert.ok(names.includes(m), `prompt ${name} refers to unknown tool ${m}`);
+    }
+  }
 });

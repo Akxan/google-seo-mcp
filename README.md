@@ -359,6 +359,12 @@ All settings live in `.env` (see [`.env.example`](.env.example), which documents
 | `GMAIL_CREDENTIALS` | optional: authorized_user JSON written by `npm run auth -- --gmail` (Gmail read-only), for `gmail_find_attachments` / `github_commit_attachment` |
 | `WP_SITES` | JSON array of WordPress sites reachable over SSH; omit to disable `wp_*` tools |
 | `SEO_MCP_READ_ONLY=1` or `--read-only` | register no write tools |
+### Prompts (slash commands)
+
+Six ready-made workflows are registered as MCP prompts, so a client shows them as slash commands and the model follows a written sequence instead of guessing which tool fits: `/traffic_drop` (what changed when clicks fell, and whether it is ranking, indexing or technical), `/quick_wins` (near-miss rankings plus pages that rank but are not clicked, merged and ranked), `/publish_check` (one page: on-page, structured data, sharing card, AI-answer readiness), `/site_health` (whole-site technical pass), `/monthly_report` (Search Console and GA4 written as a report), `/index_bloat` (thin archives that should not be indexed).
+
+Prompts follow the toolset narrowing below: an instance limited to `gsc,ga4` offers only the workflows it can actually run.
+
 | `SEO_MCP_TOOLSETS` or `--toolsets=` | comma list of `gsc,ga4,web,geo,analysis,wordpress,github,gmail` (`google_auth_status` is always on) |
 
 In HTTP mode a single instance can also be narrowed **per connection**, without changing the server's configuration or affecting other clients: append `?toolsets=gsc,ga4,web,geo,analysis` to the endpoint URL, and `?readOnly=1` to make that entry point unable to write. Both parameters only ever remove access — a request cannot reach a toolset the instance was not started with, and cannot turn a read-only tenant into a writing one. An unknown toolset name returns 400 rather than silently yielding an empty server.
