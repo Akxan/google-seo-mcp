@@ -20,3 +20,6 @@ CLAUDE.local.md
 secrets/
 data/
 *.pem
+
+# Subagent git worktrees (never committed)
+.claude/worktrees/
