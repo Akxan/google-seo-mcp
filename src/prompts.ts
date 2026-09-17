@@ -14,8 +14,15 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 /** MCP prompt arguments are always strings on the wire, so every schema here is a z.string(). */
 type PromptArgs = Record<string, z.ZodString | z.ZodOptional<z.ZodString>>;
 
-const site = z.string().describe("Search Console property, e.g. 'sc-domain:example.com'.");
-const url = z.string().describe("Full page URL.");
+// Every argument is optional on purpose: some clients list a prompt but never ask the user to
+// fill its arguments, and a required argument then fails the call outright. Missing values are
+// handled inside each body by telling the model to discover or ask, which is always recoverable.
+const site = z.string().optional().describe("Search Console property, e.g. 'sc-domain:example.com'. Omit to be asked.");
+const url = z.string().optional().describe("Full page URL. Omit to be asked.");
+/** Fills an argument the client never asked for, with an instruction the model can act on. */
+const or = (v: string | undefined, fallback: string) => v ?? fallback;
+const ASK_SITE = "the site (no property was given: call gsc_list_sites and, if there is more than one, ask which)";
+const ASK_URL = "the page (no URL was given: ask which page)";
 
 interface PromptDef {
   name: string;
@@ -34,7 +41,7 @@ const PROMPTS: PromptDef[] = [
     description: "Find out what changed when clicks fell: totals, which pages and queries lost, and whether it is a ranking, indexing or technical problem.",
     needs: ["gsc"],
     argsSchema: { siteUrl: site, days: z.string().optional().describe("Comparison window in days, default 28.") },
-    body: (a) => `Investigate the traffic drop on ${a.siteUrl}. Work in this order and stop early if one step explains it:
+    body: (a) => `Investigate the traffic drop on ${or(a.siteUrl, ASK_SITE)}. Work in this order and stop early if one step explains it:
 
 1. gsc_site_snapshot (days=${a.days ?? 28}) for the shape of the drop: clicks, impressions, average position, and which pages moved most.
 2. gsc_compare_periods on the same window by page, then by query, to name the specific losers.
@@ -50,7 +57,7 @@ Report what changed, the most likely cause with the evidence for it, and the sma
     description: "The changes with the best effort-to-traffic ratio right now: near-miss rankings and pages that rank but are not clicked.",
     needs: ["gsc"],
     argsSchema: { siteUrl: site, section: z.string().optional().describe("Optional path fragment to scope to, e.g. '/es/'.") },
-    body: (a) => `Find the quick wins for ${a.siteUrl}${a.section ? `, scoped to pages containing '${a.section}'` : ""}.
+    body: (a) => `Find the quick wins for ${or(a.siteUrl, ASK_SITE)}${a.section ? `, scoped to pages containing '${a.section}'` : ""}.
 
 1. gsc_opportunities for queries ranking just outside the top results.
 2. gsc_ctr_opportunities for queries already ranking well but under-clicked.
@@ -64,7 +71,7 @@ Merge the three into one ranked list. For each item give the page, the query, wh
     description: "Everything worth checking on one page before or just after publishing it: on-page SEO, structured data, sharing preview and AI-answer readiness.",
     needs: ["web", "geo"],
     argsSchema: { url },
-    body: (a) => `Run the pre-publish checks on ${a.url} and report only what needs fixing:
+    body: (a) => `Run the pre-publish checks on ${or(a.url, ASK_URL)} and report only what needs fixing:
 
 1. page_audit for title, meta description, headings, canonical, images without alt and the favicon.
 2. structured_data_audit for JSON-LD problems.
@@ -79,7 +86,7 @@ Give one list, ordered by impact, each item saying exactly what to change. If th
     description: "A whole-site technical pass: crawl, sitemap, robots, redirects, hreflang, Core Web Vitals and AI crawler access.",
     needs: ["web", "geo"],
     argsSchema: { startUrl: url, siteUrl: z.string().optional().describe("Search Console property, to add index coverage.") },
-    body: (a) => `Audit ${a.startUrl} technically:
+    body: (a) => `Audit ${or(a.startUrl, ASK_URL)} technically:
 
 1. canonical_host_check on the domain: every variant must land on one address.
 2. site_crawl for broken links, redirect chains, duplicate titles and orphan pages.
@@ -95,11 +102,11 @@ Report findings grouped as: breaks indexing, hurts ranking, cosmetic. Skip anyth
     title: "Monthly performance report",
     description: "Search Console and GA4 for the last month against the previous one, written as a report rather than a data dump.",
     needs: ["gsc", "ga4"],
-    argsSchema: { siteUrl: site, propertyId: z.string().describe("GA4 property ID, e.g. '123456789'.") },
-    body: (a) => `Write the monthly report for ${a.siteUrl}.
+    argsSchema: { siteUrl: site, propertyId: z.string().optional().describe("GA4 property ID, e.g. '123456789'. Omit to look it up.") },
+    body: (a) => `Write the monthly report for ${or(a.siteUrl, ASK_SITE)}.
 
 1. gsc_site_snapshot (days=30) and gsc_compare_periods for search performance.
-2. ga_compare_periods on property ${a.propertyId} for sessions, engagement and key events.
+2. ga_compare_periods on ${a.propertyId ? `property ${a.propertyId}` : "the matching GA4 property (call ga_list_properties to find it)"} for sessions, engagement and key events.
 3. ga_landing_page_seo to join organic landing pages with their search data.
 
 Write it for someone who will not read the raw numbers: what moved, why as far as the data shows, and the two or three things worth doing next month. Quote every figure with its period. Do not extrapolate beyond what the tools returned, and name anything the data cannot explain.`,
@@ -110,7 +117,7 @@ Write it for someone who will not read the raw numbers: what moved, why as far a
     description: "Thin or duplicate pages that should not be indexed: author and date archives, tag pages, paginated and parameter URLs.",
     needs: ["gsc"],
     argsSchema: { siteUrl: site },
-    body: (a) => `Look for index bloat on ${a.siteUrl}:
+    body: (a) => `Look for index bloat on ${or(a.siteUrl, ASK_SITE)}:
 
 1. gsc_search_analytics by page over 90 days to list indexed URLs with near-zero clicks.
 2. gsc_list_sitemaps, and if there is an index file pass sitemapIndex to see the child sitemaps: author, date, tag and format archives are the usual culprits.
