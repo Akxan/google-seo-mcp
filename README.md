@@ -365,6 +365,8 @@ Six ready-made workflows are registered as MCP prompts, so a client shows them a
 
 Prompts follow the toolset narrowing below: an instance limited to `gsc,ga4` offers only the workflows it can actually run.
 
+Client support, as tested on 2026-09-17: the **Claude Code CLI** lists them as `/google-seo:monthly_report` and filters on a fragment; the **VS Code extension does not** expose MCP prompts as slash commands (upstream issue closed as not planned); Claude Desktop support is undocumented. Every argument is optional, because a client that lists a prompt without eliciting its arguments would otherwise fail the call outright - a missing value becomes an instruction to look it up or ask.
+
 | `SEO_MCP_TOOLSETS` or `--toolsets=` | comma list of `gsc,ga4,web,geo,analysis,wordpress,github,gmail` (`google_auth_status` is always on) |
 
 In HTTP mode a single instance can also be narrowed **per connection**, without changing the server's configuration or affecting other clients: append `?toolsets=gsc,ga4,web,geo,analysis` to the endpoint URL, and `?readOnly=1` to make that entry point unable to write. Both parameters only ever remove access — a request cannot reach a toolset the instance was not started with, and cannot turn a read-only tenant into a writing one. An unknown toolset name returns 400 rather than silently yielding an empty server.

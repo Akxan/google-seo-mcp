@@ -409,6 +409,8 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 
 提示词会跟随工具集裁剪：用 `?toolsets=gsc,ga4` 连接时只显示那 4 个跑得通的，不会给出跑不了的命令。
 
+客户端支持情况（2026-09-17 实测）：**Claude Code 终端版可用**，命令形如 `/google-seo:monthly_report`，输入片段即可筛选；**Claude Code 的 VS Code 扩展不支持**把 MCP 提示词做成斜杠命令（官方 issue 已标记为不计划支持）；桌面 App 是否支持没有官方文档。所有参数都设成可选，因为部分客户端会列出提示词却从不向用户索要参数，缺参数时正文会让模型自己查或问你，而不是直接报错。
+
 - **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`、`gmail`。96 个工具的定义约 3.4 万 token，每次对话都会完整加载，只用部分功能时应当裁剪。
 - **按连接裁剪（HTTP 模式）**：在 URL 后面加 `?toolsets=...` 就能让某一个客户端只加载它需要的工具，服务端不用改配置，也不影响其他客户端。加 `?readOnly=1` 可以让这个入口完全不能写。两个参数**只能收窄权限**：请求不到实例本身没开的工具集，也无法把只读实例变成可写。工具集名字拼错会直接返回 400，而不是静默给你一个空服务器。
 

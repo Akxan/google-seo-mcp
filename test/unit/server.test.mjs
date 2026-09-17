@@ -85,3 +85,21 @@ test("every prompt body names only tools that exist", async () => {
     }
   }
 });
+
+test("a prompt never fails just because the client did not ask for its arguments", async () => {
+  // Claude Code's VS Code extension does not surface MCP prompts at all, and the CLI lists them
+  // without eliciting arguments, so an empty call is a real path, not a theoretical one.
+  const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
+  const captured = [];
+  const s = new McpServer({ name: "t", version: "0" });
+  s.registerPrompt = (name, cfg, cb) => { captured.push([name, cfg, cb]); return {}; };
+  registerPrompts(s, () => true);
+  for (const [name, cfg, cb] of captured) {
+    for (const [arg, schema] of Object.entries(cfg.argsSchema ?? {})) {
+      assert.ok(schema.safeParse(undefined).success, `${name}.${arg} must be optional`);
+    }
+    const text = cb({}).messages[0].content.text;
+    assert.ok(!text.includes("undefined"), `${name} interpolates "undefined" when called without arguments`);
+    assert.ok(text.length > 100, `${name} produced no usable body without arguments`);
+  }
+});
