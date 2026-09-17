@@ -509,7 +509,7 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
     "wp_list_media",
     {
       title: "List media images",
-      description: "List images in the media library with alt text, caption, dimensions, file size and the post they are attached to. Use missingAltOnly to find images without alt text.",
+      description: "List images in the media library with alt text, caption, dimensions, file size and the post they are attached to. Use missingAltOnly to find images without alt text; with it the result also carries totalMissingAlt, pages and hasMore so you can work through a backlog page by page.",
       inputSchema: {
         site: siteParam,
         missingAltOnly: z.boolean().default(false),

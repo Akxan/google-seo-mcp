@@ -102,17 +102,34 @@ switch ($action) {
     $q = ['post_type' => 'attachment', 'post_status' => 'inherit', 'post_mime_type' => 'image', 'posts_per_page' => (int) ($in['perPage'] ?? 50), 'paged' => (int) ($in['page'] ?? 1), 'orderby' => 'date', 'order' => 'DESC'];
     if (!empty($in['search'])) $q['s'] = $in['search'];
     if (!empty($in['attachedTo'])) $q['post_parent'] = (int) $in['attachedTo'];
-    if (!empty($in['missingAltOnly'])) { $q['posts_per_page'] = -1; $q['paged'] = 1; }
+    $perPage = max(1, (int) ($in['perPage'] ?? 50));
+    $page = max(1, (int) ($in['page'] ?? 1));
+    $missingOnly = !empty($in['missingAltOnly']);
+    // Alt text lives in postmeta, so "missing alt" cannot be a WP_Query condition:
+    // load every attachment and page through the matches by hand.
+    if ($missingOnly) { $q['posts_per_page'] = -1; $q['paged'] = 1; }
     $items = get_posts($q);
     $out = [];
+    $matched = 0;
+    $offset = $missingOnly ? ($page - 1) * $perPage : 0;
     foreach ($items as $m) {
       $alt = get_post_meta($m->ID, '_wp_attachment_image_alt', true);
-      if (!empty($in['missingAltOnly']) && trim($alt) !== '') continue;
+      if ($missingOnly && trim($alt) !== '') continue;
+      $matched++;
+      if ($matched <= $offset) continue;            // earlier page
+      if ($missingOnly && count($out) >= $perPage) continue;  // keep counting for the total
       $meta = wp_get_attachment_metadata($m->ID);
-      $out[] = ['ID' => $m->ID, 'title' => $m->post_title, 'alt' => $alt, 'caption' => $m->post_excerpt, 'url' => wp_get_attachment_url($m->ID), 'width' => $meta['width'] ?? null, 'height' => $meta['height'] ?? null, 'sizeKB' => isset($meta['filesize']) ? round($meta['filesize'] / 1024) : null, 'attachedTo' => $m->post_parent ?: null, 'attachedTitle' => $m->post_parent ? get_the_title($m->post_parent) : null, 'date' => $m->post_date];
-      if (!empty($in['missingAltOnly']) && count($out) >= (int) ($in['perPage'] ?? 50)) break;
+      $bytes = $meta['filesize'] ?? null;
+      if ($bytes === null) { $f = get_attached_file($m->ID); if ($f && file_exists($f)) $bytes = filesize($f); }
+      $out[] = ['ID' => $m->ID, 'title' => $m->post_title, 'alt' => $alt, 'caption' => $m->post_excerpt, 'url' => wp_get_attachment_url($m->ID), 'width' => $meta['width'] ?? null, 'height' => $meta['height'] ?? null, 'sizeKB' => $bytes ? round($bytes / 1024) : null, 'attachedTo' => $m->post_parent ?: null, 'attachedTitle' => $m->post_parent ? get_the_title($m->post_parent) : null, 'date' => $m->post_date];
     }
-    h_out(['count' => count($out), 'media' => $out]);
+    $res = ['count' => count($out), 'page' => $page, 'perPage' => $perPage, 'media' => $out];
+    if ($missingOnly) {
+      $res['totalMissingAlt'] = $matched;
+      $res['pages'] = (int) ceil($matched / $perPage);
+      $res['hasMore'] = $matched > $page * $perPage;
+    }
+    h_out($res);
   }
 
   case 'media_update': {
