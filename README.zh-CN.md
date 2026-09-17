@@ -18,9 +18,9 @@
 | `google_auth_status` | 检查当前使用的 Google 凭据是否有效（排障先跑这个） |
 | `gsc_list_sites` | 列出账号可访问的所有 Search Console 资源 |
 | `gsc_search_analytics` | 搜索表现报告：点击、展示、CTR、排名，可按 query/page/country/device/date 分组并过滤 |
-| `gsc_compare_periods` | 两个时间段对比，按点击变化排序，直接看出涨跌页面/关键词 |
+| `gsc_compare_periods` | 两个时间段对比，按点击变化排序，直接看出涨跌页面/关键词；可按关键词、页面、国家、设备、搜索外观或日期分组，支持 dataState 与 aggregationType |
 | `gsc_inspect_url` | URL 检查：索引状态、抓取时间、规范网址、robots、移动可用性 |
-| `gsc_list_sitemaps` | 列出已提交的站点地图及错误/警告 |
+| `gsc_list_sitemaps` | 列出已提交的站点地图及错误/警告；传 sitemapIndex 可列出索引文件里的子站点地图各自的错误数，定位问题出在哪个子文件 |
 | `gsc_submit_sitemap` | 提交或重新提交站点地图 |
 | `ga_list_properties` | 列出账号可访问的 GA4 媒体资源 |
 | `ga_run_report` | GA4 报告：任意维度/指标、过滤、排序、分页，支持对比时间段 |
@@ -36,7 +36,7 @@
 | `gsc_delete_sitemap` / `gsc_add_site` / `gsc_delete_site` | 站点地图删除、资源添加与移除 |
 | `gsc_opportunities` | 展示高但排名在 8 到 20 位的关键词与页面，自动映射到 WordPress 文章 ID |
 | `gsc_cannibalization` | 同一关键词被多个页面分摊的情况 |
-| `gsc_index_coverage` | 批量 URL 检查，汇总索引状态 |
+| `gsc_index_coverage` | 批量 URL 检查，汇总索引状态；另给出收录该页的站点地图、引荐链接、带严重级别的富媒体结果问题，以及孤立页标记 |
 | `page_audit` | 抓取任意 URL：title、描述、canonical、robots、标题结构、缺 alt 图片、内外链、字数、结构化数据、问题清单 |
 | `pagespeed` | PageSpeed Insights：性能与 SEO 得分、Core Web Vitals 实验室与真实用户数据、优化建议（需 `PAGESPEED_API_KEY`） |
 | `sitemap_check` | 拉取站点地图（支持索引与 gz），抽样或全量检查状态码 |
@@ -57,7 +57,7 @@
 | `compare_pages` | 与竞品页面并排对比字数、标题结构、schema，并给出内容差距词 |
 | `social_preview_check` | OG 与 Twitter 卡片校验，含图片尺寸与比例 |
 | `keyword_suggest` | Google 联想词扩展，含问句前缀与字母扩展 |
-| `gsc_site_snapshot` | 一次调用给全貌：与上一周期对比的总量、Top 关键词与页面、设备国家分布、涨跌页面、每日曲线 |
+| `gsc_site_snapshot` | 一次调用给全貌：与上一周期对比的总量、Top 关键词与页面、设备国家分布、涨跌页面、每日曲线；dataState=all 可看到截至昨天的新鲜数据 |
 | `gsc_ctr_opportunities` | 已在首页但点击率低于基准的关键词与页面，估算改标题能多拿的点击 |
 | `migration_check` | 迁移前安全网：把 Search Console 有流量的 URL 和旧站点地图逐个拿到新站测，分类 OK、重定向、跳首页、404 |
 | `cross_site_links` | 两个 Search Console 资源的关键词交叉比对，建议互链并检测是否已链接 |

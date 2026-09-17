@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Search Console
+- Analysis tools no longer truncate silently. `gsc_opportunities`, `gsc_cannibalization`, `gsc_ctr_opportunities` and `gsc_question_queries` request the API's 25000-row maximum in one call; when the response comes back at that limit the result now carries `truncated: true` and a note telling you to shorten the period or add a filter, instead of quietly analysing part of the property.
+- `gsc_index_coverage` keeps the inspection fields it used to drop: which sitemaps list each URL, its referring URLs (first five, with the real total), and rich-result issues with their severity rather than a bare list of type names. It also derives `orphan` (indexed, in no sitemap, nothing linking to it) and an orphan count, set only when the inspection came back complete, because Google omits both lists on partial results.
+- `gsc_compare_periods` compares by `searchAppearance` and `date` as well, and accepts `dataState` and `aggregationType`.
+- `gsc_site_snapshot` accepts `dataState`; with `all` the window ends yesterday instead of three days ago, so fresh not-yet-final data is visible. It also accepts `aggregationType`. With the default `final` the dates are unchanged.
+- `gsc_rich_results_report` and `gsc_question_queries` accept `searchType`; they were locked to web results.
+- `gsc_list_sitemaps` accepts `sitemapIndex`, listing the child sitemaps inside an index file with their own error and warning counts. On a Yoast site that is how you find which child file holds the problem.
+
 ### Added
 - `canonical_host_check`: confirms http/https, www/bare and trailing-slash variants of a URL all end at one address, with the full redirect chain for each. Two variants both answering 200 splits ranking signals between what Google reads as two sites; it is a silent failure on Cloudflare Pages and after a WordPress migration, and nothing here tested for it.
 - Search Console analysis tools accept `filters`: `gsc_site_snapshot`, `gsc_opportunities`, `gsc_cannibalization`, `gsc_ctr_opportunities` and `gsc_question_queries` can now be scoped to a language folder or a site section (`page contains /es/`, or a regex) instead of always covering the whole property. `gsc_opportunities` merges them with its existing `country` shortcut.
