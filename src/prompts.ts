@@ -93,7 +93,7 @@ Give one list, ordered by impact, each item saying exactly what to change. If th
 3. sitemap_check and robots_check.
 4. hreflang_check if the site is multilingual.
 5. crux_snapshot for real-user Core Web Vitals and, if LCP is poor, which phase is to blame.
-6. ai_crawler_access and llms_txt_check for AI answer engines.${a.siteUrl ? `\n7. gsc_index_coverage on a sample from the sitemap of ${a.siteUrl}.` : ""}
+6. ai_crawler_access and llms_txt_check for AI answer engines.${a.siteUrl ? `\n7. gsc_index_coverage on a sample from the sitemap of ${a.siteUrl}.` : "\n\nNo Search Console property was given, so skip index coverage rather than guessing one."}
 
 Report findings grouped as: breaks indexing, hurts ranking, cosmetic. Skip anything that is already correct.`,
   },
@@ -106,8 +106,8 @@ Report findings grouped as: breaks indexing, hurts ranking, cosmetic. Skip anyth
     body: (a) => `Write the monthly report for ${or(a.siteUrl, ASK_SITE)}.
 
 1. gsc_site_snapshot (days=30) and gsc_compare_periods for search performance.
-2. ga_compare_periods on ${a.propertyId ? `property ${a.propertyId}` : "the matching GA4 property (call ga_list_properties to find it)"} for sessions, engagement and key events.
-3. ga_landing_page_seo to join organic landing pages with their search data.
+2. ${a.propertyId ? `ga_compare_periods on property ${a.propertyId} for sessions, engagement and key events.` : "No GA4 property was given: call ga_list_properties and use the one whose name clearly matches this site. If none clearly matches, skip GA4 entirely and say the report covers search data only - do not guess a property."}
+3. ga_landing_page_seo to join organic landing pages with their search data${a.propertyId ? "" : ", only if step 2 found a property"}.
 
 Write it for someone who will not read the raw numbers: what moved, why as far as the data shows, and the two or three things worth doing next month. Quote every figure with its period. Do not extrapolate beyond what the tools returned, and name anything the data cannot explain.`,
   },
