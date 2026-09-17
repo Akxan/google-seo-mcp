@@ -394,7 +394,17 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 ## 运行模式
 
 - **只读模式**：`--read-only` 或 `SEO_MCP_READ_ONLY=1`，所有写入类工具不注册。
-- **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`、`gmail`。96 个工具的定义约 2.2 万 token，只用部分功能时可以裁剪。
+- **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`、`gmail`。96 个工具的定义约 3.5 万 token，每次对话都会完整加载，只用部分功能时应当裁剪。
+- **按连接裁剪（HTTP 模式）**：在 URL 后面加 `?toolsets=...` 就能让某一个客户端只加载它需要的工具，服务端不用改配置，也不影响其他客户端。加 `?readOnly=1` 可以让这个入口完全不能写。两个参数**只能收窄权限**：请求不到实例本身没开的工具集，也无法把只读实例变成可写。工具集名字拼错会直接返回 400，而不是静默给你一个空服务器。
+
+  | 连接 URL | 工具数 | 约耗 token |
+  |---|---|---|
+  | `/mcp` | 96 | 35500 |
+  | `/mcp?toolsets=gsc,ga4,web,geo,analysis` | 58 | 21000 |
+  | `/mcp?toolsets=gsc,ga4` | 28 | 11700 |
+  | `/mcp?toolsets=web,geo,github,gmail` | 34 | 11000 |
+
+  建议把日常分析用的连接器指向裁剪过的地址，需要改站点时再用完整地址。
 - 每个工具都带 `readOnlyHint` / `destructiveHint` 注解，服务器在初始化时返回 instructions 说明用法与安全约定。
 - `npm test` 运行单元测试、冒烟测试（含工具清单快照，`UPDATE_SNAPSHOT=1 npm test` 刷新）和 README 计数校验。
 - 所有写入类工具和 `github_commit_*` 支持 `dryRun: true`，只返回当前值与将要做的改动，不落地。
