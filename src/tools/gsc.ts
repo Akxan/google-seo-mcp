@@ -8,6 +8,8 @@ import { collectSitemapUrls, fetchWithTimeout } from "./web.js";
 import * as cheerio from "cheerio";
 
 const DIMENSIONS = ["query", "page", "country", "device", "date", "searchAppearance"] as const;
+// The API accepts only these as *filter* dimensions; filtering on "date" is rejected with HTTP 400.
+const FILTER_DIMENSIONS = ["query", "page", "country", "device", "searchAppearance"] as const;
 const SEARCH_TYPES = ["web", "image", "video", "news", "discover", "googleNews"] as const;
 const OPERATORS = ["equals", "notEquals", "contains", "notContains", "includingRegex", "excludingRegex"] as const;
 
@@ -19,7 +21,7 @@ const dateField = (what: string) =>
   z.string().describe(`${what}: YYYY-MM-DD, today, yesterday or NdaysAgo (data lags 2-3 days).`);
 
 const filterSchema = z.object({
-  dimension: z.enum(DIMENSIONS),
+  dimension: z.enum(FILTER_DIMENSIONS),
   operator: z.enum(OPERATORS).default("equals"),
   expression: z.string().describe("Value; device: DESKTOP/MOBILE/TABLET, country: 3-letter code like 'usa'."),
 });

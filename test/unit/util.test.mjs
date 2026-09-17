@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolveDate, round, toNumber, formatError } from "../../dist/util.js";
 import { parseDotEnv, envValue } from "../../dist/env.js";
+import { isAdditive, periodTotals } from "../../dist/tools/ga.js";
 
 test("resolveDate keeps ISO dates and resolves relative ones", () => {
   assert.equal(resolveDate("2026-01-31"), "2026-01-31");
@@ -40,4 +41,26 @@ test("envValue treats empty and blank variables as unset", () => {
   assert.equal(envValue("SEO_MCP_TEST_SET"), "value");
   assert.equal(envValue("SEO_MCP_TEST_MISSING"), undefined);
   assert.equal(envValue("SEO_MCP_TEST_EMPTY") ?? "fallback", "fallback");
+});
+
+test("isAdditive rejects rates and averages, accepts counts", () => {
+  for (const m of ["sessions", "activeUsers", "screenPageViews", "keyEvents", "eventCount"]) assert.equal(isAdditive(m), true, m);
+  for (const m of ["engagementRate", "bounceRate", "averageSessionDuration", "sessionsPerUser"]) assert.equal(isAdditive(m), false, m);
+});
+
+test("periodTotals splits the API totals by date-range name", () => {
+  const out = periodTotals({
+    dimensionHeaders: [{ name: "pagePath" }, { name: "dateRange" }],
+    metricHeaders: [{ name: "sessions" }, { name: "engagementRate" }],
+    totals: [
+      { dimensionValues: [{ value: "RESERVED_TOTAL" }, { value: "current" }], metricValues: [{ value: "120" }, { value: "0.64" }] },
+      { dimensionValues: [{ value: "RESERVED_TOTAL" }, { value: "previous" }], metricValues: [{ value: "90" }, { value: "0.58" }] },
+    ],
+  });
+  assert.deepEqual(out.current, { sessions: 120, engagementRate: 0.64 });
+  assert.deepEqual(out.previous, { sessions: 90, engagementRate: 0.58 });
+});
+
+test("periodTotals returns nothing when the report has no dateRange dimension", () => {
+  assert.deepEqual(periodTotals({ dimensionHeaders: [{ name: "pagePath" }], metricHeaders: [{ name: "sessions" }], totals: [{ dimensionValues: [{ value: "RESERVED_TOTAL" }], metricValues: [{ value: "5" }] }] }), {});
 });

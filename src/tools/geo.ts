@@ -111,6 +111,35 @@ const SCHEMA_RULES: Record<string, { required: string[]; recommended: string[] }
   HowTo: { required: ["name", "step"], recommended: ["totalTime", "image", "supply", "tool"] },
 };
 
+/** Perplexity Agent API (POST /v1/agent) response: one typed item per step the model took. */
+export type PerplexityAgentResponse = {
+  error?: { message?: string };
+  output?: (
+    | { type: "message"; content?: { type?: string; text?: string; annotations?: { type?: string; url?: string; title?: string }[] }[] }
+    | { type: "search_results"; results?: { url?: string; title?: string }[] }
+    | { type: string }
+  )[];
+};
+
+/** Answer text and cited URLs out of an Agent API response. In-text citations come first (that is what the answer actually used); the search_results step is the fallback. */
+export function parseAgentOutput(data: PerplexityAgentResponse): { answer: string; citations: string[] } {
+  let answer = "";
+  const cited: string[] = [];
+  const found: string[] = [];
+  for (const item of data.output ?? []) {
+    if (item.type === "message") {
+      for (const part of ("content" in item ? item.content : undefined) ?? []) {
+        if (typeof part.text === "string") answer += part.text;
+        for (const ann of part.annotations ?? []) if (ann.url) cited.push(ann.url);
+      }
+    } else if (item.type === "search_results") {
+      for (const r of ("results" in item ? item.results : undefined) ?? []) if (r.url) found.push(r.url);
+    }
+  }
+  const ordered = [...cited, ...found];
+  return { answer, citations: [...new Set(ordered)] };
+}
+
 export function auditNode(node: Record<string, unknown>) {
   const types = typesOf(node);
   const missing: string[] = [];
@@ -478,27 +507,27 @@ export function registerGeoTools(server: McpServer) {
     {
       title: "Check AI answer citations (Perplexity)",
       description:
-        "Ask Perplexity's Sonar API a question a customer might ask and report which sources it cites, whether your domain is among them, and the answer text. Useful to see if the site is being cited by AI search for target queries. Requires PERPLEXITY_API_KEY (paid, cents per call). ChatGPT and Google AI Overviews have no such API.",
+        "Ask Perplexity's Agent API a question a customer might ask and report which sources it cites, whether your domain is among them, and the answer text. Useful to see if the site is being cited by AI search for target queries. Requires PERPLEXITY_API_KEY (paid, cents per call). ChatGPT and Google AI Overviews have no such API.",
       inputSchema: {
         question: z.string().describe("A natural question, e.g. 'What is the best guided walking tour in Seville?'"),
         domain: z.string().describe("Your domain to look for in the citations, e.g. 'example.com'."),
-        model: z.enum(["sonar", "sonar-pro"]).default("sonar"),
+        effort: z.enum(["fast", "low", "medium"]).default("fast").describe("Search effort: fast is the cheapest and closest to a plain AI answer; medium researches over several steps."),
         country: z.string().optional().describe("Optional 2-letter country code for localized search, e.g. 'ES', 'US'."),
       },
     },
     tool(async (a) => {
       const key = envValue("PERPLEXITY_API_KEY");
       if (!key) throw new Error("PERPLEXITY_API_KEY is not set. Create a key at https://www.perplexity.ai/settings/api and add it to the MCP env.");
-      const body: Record<string, unknown> = { model: a.model, messages: [{ role: "user", content: a.question }], return_citations: true };
-      if (a.country) body.web_search_options = { user_location: { country: a.country } };
-      const res = await fetchWithTimeout("https://api.perplexity.ai/chat/completions", { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify(body) }, 60_000);
-      const data = (await res.json()) as { error?: { message?: string }; citations?: string[]; search_results?: { url: string; title?: string }[]; choices?: { message?: { content?: string } }[] };
+      const webSearch: Record<string, unknown> = { type: "web_search", search_context_size: "medium" };
+      if (a.country) webSearch.user_location = { country: a.country };
+      const body = { preset: a.effort, input: a.question, tools: [webSearch], instructions: "Answer as a search engine would: ground every claim in the web sources you find and cite them." };
+      const res = await fetchWithTimeout("https://api.perplexity.ai/v1/agent", { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify(body) }, 120_000);
+      const data = (await res.json()) as PerplexityAgentResponse;
       if (!res.ok) throw new Error(`Perplexity API: ${data.error?.message ?? `HTTP ${res.status}`}`);
-      const citations = data.citations ?? data.search_results?.map((s) => s.url) ?? [];
+      const { answer, citations } = parseAgentOutput(data);
       const dom = a.domain.replace(/^www\./, "").toLowerCase();
       const cited = citations.filter((c) => { try { return new URL(c).hostname.replace(/^www\./, "").toLowerCase().endsWith(dom); } catch { return false; } });
-      const answer = data.choices?.[0]?.message?.content ?? "";
-      return { question: a.question, model: a.model, cited: cited.length > 0, yourCitations: cited, citationRank: cited.length ? citations.indexOf(cited[0]) + 1 : null, allCitations: citations, competitorDomains: [...new Set(citations.map((c) => { try { return new URL(c).hostname.replace(/^www\./, ""); } catch { return c; } }))].filter((d) => !d.endsWith(dom)), answer: answer.slice(0, 3000), mentionsDomainInText: answer.toLowerCase().includes(dom) };
+      return { question: a.question, effort: a.effort, cited: cited.length > 0, yourCitations: cited, citationRank: cited.length ? citations.indexOf(cited[0]) + 1 : null, allCitations: citations, competitorDomains: [...new Set(citations.map((c) => { try { return new URL(c).hostname.replace(/^www\./, ""); } catch { return c; } }))].filter((d) => !d.endsWith(dom)), answer: answer.slice(0, 3000), mentionsDomainInText: answer.toLowerCase().includes(dom) };
     }),
   );
   server.registerTool(
