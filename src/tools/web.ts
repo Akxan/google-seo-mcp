@@ -6,6 +6,11 @@ import { gunzipSync } from "node:zlib";
 import { envValue } from "../env.js";
 import { z } from "zod";
 import * as cheerio from "cheerio";
+import { imageSize, disableTypes } from "image-size";
+
+// Same advisories as in crawl.ts (GHSA-w3rx-r6r6-pgpr / GHSA-5p2g-fcmc-qvqq): favicon bytes come from
+// whatever host is being audited, so the parsers that can loop forever on crafted input stay off.
+disableTypes(["icns", "jxl", "jxl-stream", "heif"]);
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { heartbeat, round, tool } from "../util.js";
 
@@ -40,7 +45,7 @@ async function fetchFollow(url: string, maxHops = 6): Promise<{ response: Respon
 export async function collectSitemapUrls(sitemapUrl: string, opts: { maxSitemaps?: number; maxUrls?: number } = {}) {
   const maxSitemaps = opts.maxSitemaps ?? 50;
   const maxUrls = opts.maxUrls ?? 50_000;
-  const urls: { loc: string; lastmod?: string; sitemap: string }[] = [];
+  const urls: { loc: string; lastmod?: string; sitemap: string; alternates?: { hreflang: string; href: string }[] }[] = [];
   const sitemaps: { url: string; type: "index" | "urlset" | "error"; count: number; error?: string }[] = [];
   const queue = [sitemapUrl];
   const seen = new Set<string>();
@@ -65,7 +70,9 @@ export async function collectSitemapUrls(sitemapUrl: string, opts: { maxSitemaps
           const loc = /<loc>\s*([^<\s]+)\s*<\/loc>/i.exec(e[1])?.[1];
           if (!loc) continue;
           const lastmod = /<lastmod>\s*([^<\s]+)\s*<\/lastmod>/i.exec(e[1])?.[1];
-          urls.push({ loc: decodeXml(loc), lastmod, sitemap: u });
+          // Multilingual plugins (Polylang, WPML, some Astro integrations) put hreflang in the sitemap instead of the HTML.
+          const alternates = /hreflang/i.test(e[1]) ? parseSitemapAlternates(e[1]) : undefined;
+          urls.push({ loc: decodeXml(loc), lastmod, sitemap: u, ...(alternates?.length ? { alternates } : {}) });
           n++;
           if (urls.length >= maxUrls) break;
         }
@@ -76,6 +83,37 @@ export async function collectSitemapUrls(sitemapUrl: string, opts: { maxSitemaps
     }
   }
   return { sitemaps, urls, truncated: queue.length > 0 || urls.length >= maxUrls };
+}
+
+/** `<xhtml:link rel="alternate" hreflang="es" href="..."/>` entries inside one `<url>` block of a sitemap. */
+export function parseSitemapAlternates(urlBlock: string): { hreflang: string; href: string }[] {
+  const out: { hreflang: string; href: string }[] = [];
+  for (const m of urlBlock.matchAll(/<(?:[a-z0-9]+:)?link\b[^>]*>/gi)) {
+    const tag = m[0];
+    if (!/rel\s*=\s*["']?alternate/i.test(tag)) continue;
+    const hreflang = /hreflang\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1];
+    const href = /href\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1];
+    if (hreflang && href) out.push({ hreflang: hreflang.trim().toLowerCase(), href: decodeXml(href.trim()) });
+  }
+  return out;
+}
+
+/** Parse an HTTP `Link:` header into its entries: `<https://example.com/en/>; rel="alternate"; hreflang="en"`. */
+export function parseLinkHeader(header: string | null | undefined): { url: string; params: Record<string, string> }[] {
+  if (!header) return [];
+  const out: { url: string; params: Record<string, string> }[] = [];
+  // Split on commas that separate entries (a comma inside <...> or "..." belongs to the value).
+  for (const part of header.split(/,\s*(?=<)/)) {
+    const m = /^\s*<([^>]*)>\s*(.*)$/.exec(part);
+    if (!m) continue;
+    const params: Record<string, string> = {};
+    for (const p of m[2].split(";")) {
+      const kv = /^\s*([a-z*-]+)\s*=\s*("([^"]*)"|[^;]*)\s*$/i.exec(p);
+      if (kv) params[kv[1].toLowerCase()] = (kv[3] ?? kv[2] ?? "").trim();
+    }
+    out.push({ url: m[1].trim(), params });
+  }
+  return out;
 }
 
 function decodeXml(s: string) {
@@ -173,12 +211,90 @@ export function extractJsonLdTypes($: cheerio.CheerioAPI): string[] {
   return types;
 }
 
-export interface AuditOptions { maxHeadings?: number; maxImagesMissingAlt?: number }
+/* ---------- favicon ---------- */
+
+export interface IconLink { rel: string; href: string; sizes?: string; type?: string; px: number | null }
+
+/** Largest square edge declared in a `sizes` attribute ("16x16 32x32" -> 32). "any" (scalable SVG) wins over any pixel size. */
+export function sizesToPx(sizes?: string): number | null {
+  if (!sizes) return null;
+  if (/\bany\b/i.test(sizes)) return Number.MAX_SAFE_INTEGER;
+  const found = [...sizes.matchAll(/(\d+)\s*[x×]\s*(\d+)/gi)].map((m) => Math.min(Number(m[1]), Number(m[2])));
+  return found.length ? Math.max(...found) : null;
+}
+
+/** Icon-related <link>/<meta> declarations of a page, hrefs resolved against the page URL. */
+export function collectIcons($: cheerio.CheerioAPI, pageUrl: string): { icons: IconLink[]; appleTouchIcons: IconLink[]; manifest: string | null; themeColor: string | null } {
+  const abs = (h?: string) => { try { return h ? new URL(h.trim(), pageUrl).toString() : null; } catch { return null; } };
+  const icons: IconLink[] = [];
+  const appleTouchIcons: IconLink[] = [];
+  $("link[rel][href]").each((_, el) => {
+    const rel = ($(el).attr("rel") ?? "").trim().toLowerCase();
+    const href = abs($(el).attr("href"));
+    if (!href) return;
+    const tokens = rel.split(/\s+/);
+    const sizes = $(el).attr("sizes")?.trim();
+    const entry: IconLink = { rel, href, sizes, type: $(el).attr("type")?.trim(), px: sizesToPx(sizes) };
+    if (tokens.includes("icon") || tokens.includes("shortcut") || tokens.includes("mask-icon")) icons.push(entry);
+    else if (tokens.some((t) => t.startsWith("apple-touch-icon"))) appleTouchIcons.push(entry);
+  });
+  return { icons, appleTouchIcons, manifest: abs($('link[rel~="manifest"]').first().attr("href")), themeColor: $('meta[name="theme-color"]').first().attr("content")?.trim() ?? null };
+}
+
+/**
+ * The icon Google would use for the mobile result: the largest declared rel=icon (>=48 px preferred),
+ * then apple-touch-icon, then the implicit /favicon.ico.
+ */
+export function pickFavicon(found: { icons: IconLink[]; appleTouchIcons: IconLink[] }, pageUrl: string): { url: string; source: string; declaredPx: number | null } {
+  const best = (list: IconLink[]) => [...list].sort((a, b) => (b.px ?? 0) - (a.px ?? 0))[0];
+  const big = best(found.icons.filter((i) => (i.px ?? 0) >= 48));
+  const icon = big ?? best(found.icons) ?? best(found.appleTouchIcons);
+  if (icon) return { url: icon.href, source: `<link rel="${icon.rel}">`, declaredPx: icon.px === Number.MAX_SAFE_INTEGER ? null : icon.px };
+  return { url: new URL("/favicon.ico", pageUrl).toString(), source: "implicit /favicon.ico", declaredPx: null };
+}
+
+/** Fetch the chosen favicon and judge it against Google's requirements (square, >=48x48, crawlable). */
+async function verifyFavicon(candidate: { url: string; source: string; declaredPx: number | null }, origin: string) {
+  const issues: string[] = [];
+  let status = 0, contentType: string | null = null, bytes = 0;
+  let width: number | null = null, height: number | null = null, format: string | null = null;
+  // An inline data: icon (a common "disable the favicon" trick) can never be crawled or shown by Google.
+  if (/^data:/i.test(candidate.url)) return { ...candidate, status: null, contentType: null, bytes: null, width, height, format, crawlable: null, issues: ["Favicon is declared as an inline data: URI; Google needs a crawlable file URL (e.g. /favicon.ico or /icon-192.png)"] };
+  try {
+    const res = await fetchWithTimeout(candidate.url, {}, 15_000);
+    status = res.status;
+    contentType = res.headers.get("content-type");
+    const buf = Buffer.from(await res.arrayBuffer());
+    bytes = buf.length;
+    if (status !== 200) issues.push(`Favicon ${candidate.url} returns HTTP ${status}: Google shows a generic globe instead`);
+    else {
+      try { const d = imageSize(buf); width = d.width ?? null; height = d.height ?? null; format = d.type ?? null; } catch { /* unreadable format */ }
+      if (format === "svg") { /* scalable: no size check */ }
+      else if (width && height) {
+        if (width !== height) issues.push(`Favicon is ${width}x${height}, not square; Google requires a square icon`);
+        else if (width < 48) issues.push(`Favicon is ${width}x${width}; Google wants at least 48x48 (a multiple of 48) for the mobile result icon`);
+      } else issues.push("Could not read the favicon's dimensions (unsupported format?)");
+    }
+  } catch (e) { issues.push(`Favicon fetch failed: ${(e as Error).message}`); }
+  // Google fetches the favicon with Googlebot and Googlebot-Image; a robots.txt block hides it from the SERP.
+  let crawlable: { googlebot: boolean; googlebotImage: boolean } | null = null;
+  try {
+    const r = await fetchWithTimeout(`${origin}/robots.txt`, {}, 10_000);
+    if (r.ok) {
+      const parsed = parseRobots(await r.text());
+      crawlable = { googlebot: robotsAllows(parsed, candidate.url, "googlebot").allowed, googlebotImage: robotsAllows(parsed, candidate.url, "googlebot-image").allowed };
+      if (!crawlable.googlebot || !crawlable.googlebotImage) issues.push(`robots.txt blocks the favicon for ${!crawlable.googlebot ? "Googlebot" : ""}${!crawlable.googlebot && !crawlable.googlebotImage ? " and " : ""}${!crawlable.googlebotImage ? "Googlebot-Image" : ""}`);
+    }
+  } catch { /* ignore */ }
+  return { ...candidate, status, contentType, bytes, width, height, format, crawlable, issues };
+}
+
+export interface AuditOptions { maxHeadings?: number; maxImagesMissingAlt?: number; checkFavicon?: boolean }
 export type AuditResult = Awaited<ReturnType<typeof auditPage>>;
 
 /** Core of page_audit, reused by site_crawl and compare_pages. */
 export async function auditPage(url: string, opts: AuditOptions = {}) {
-  const a = { url, maxHeadings: opts.maxHeadings ?? 60, maxImagesMissingAlt: opts.maxImagesMissingAlt ?? 20 };
+  const a = { url, maxHeadings: opts.maxHeadings ?? 60, maxImagesMissingAlt: opts.maxImagesMissingAlt ?? 20, checkFavicon: opts.checkFavicon ?? false };
   const t0 = Date.now();
   const { response, chain } = await fetchFollow(a.url);
   const html = await response.text();
@@ -198,6 +314,10 @@ export async function auditPage(url: string, opts: AuditOptions = {}) {
   const lang = $("html").attr("lang");
   const hreflang = $('link[rel="alternate"][hreflang]').map((_, el) => ({ hreflang: $(el).attr("hreflang"), href: $(el).attr("href") })).get();
   const og = Object.fromEntries($('meta[property^="og:"]').map((_, el) => [[$(el).attr("property"), $(el).attr("content")]]).get());
+  const feeds = $('link[rel~="alternate"][href][type*="rss"], link[rel~="alternate"][href][type*="atom"]').map((_, el) => { try { return { title: $(el).attr("title"), href: new URL($(el).attr("href")!, finalUrl).toString() }; } catch { return null; } }).get().filter(Boolean);
+  const iconLinks = collectIcons($, finalUrl);
+  const faviconPick = pickFavicon(iconLinks, finalUrl);
+  const favicon = a.checkFavicon ? await verifyFavicon(faviconPick, base.origin) : { ...faviconPick, issues: [] as string[] };
   const headings = $("h1, h2, h3").map((_, el) => ({ tag: el.tagName.toLowerCase(), text: $(el).text().replace(/\s+/g, " ").trim().slice(0, 160) })).get();
   const h1s = headings.filter((h) => h.tag === "h1");
   const imgs = $("img").toArray();
@@ -240,6 +360,10 @@ export async function auditPage(url: string, opts: AuditOptions = {}) {
   if (!lang) add("info", "No lang attribute on <html>");
   if (!$('meta[name="viewport"]').length) add("warning", "No viewport meta tag");
   if (!jsonLdTypes.length) add("info", "No JSON-LD structured data");
+  if (a.checkFavicon) {
+    if (!iconLinks.icons.length && !iconLinks.appleTouchIcons.length) add("info", "No <link rel=icon>: Google falls back to /favicon.ico");
+    for (const m of favicon.issues) add("warning", m);
+  }
 
   return {
     requestedUrl: a.url,
@@ -256,6 +380,8 @@ export async function auditPage(url: string, opts: AuditOptions = {}) {
     lang: lang ?? null,
     hreflang,
     openGraph: og,
+    feeds,
+    favicon: { ...favicon, declared: iconLinks.icons.map((i) => ({ rel: i.rel, href: i.href, sizes: i.sizes, type: i.type })), appleTouchIcon: iconLinks.appleTouchIcons[0]?.href ?? null, manifest: iconLinks.manifest, themeColor: iconLinks.themeColor },
     headings: { h1Count: h1s.length, h2Count: headings.filter((h) => h.tag === "h2").length, h3Count: headings.filter((h) => h.tag === "h3").length, outline: headings.slice(0, a.maxHeadings) },
     images: { total: imgs.length, missingAlt: missingAlt.length, missingAltSamples: missingAlt.slice(0, a.maxImagesMissingAlt), decorativeEmptyAlt: decorative },
     links: { internal, internalUnique: internalUrls.size, external, nofollow },
@@ -285,17 +411,54 @@ export async function traceRedirects(url: string, maxHops = 6): Promise<{ start:
   }
 }
 
+/* ---------- PageSpeed Insights helpers ---------- */
+
+/**
+ * One CrUX block of a PSI response (page-level `loadingExperience` or site-level `originLoadingExperience`).
+ * CrUX reports CLS as an integer scaled by 100 (5 = 0.05), so it is scaled back here.
+ */
+export function extractFieldData(exp?: PsiLoadingExperience) {
+  if (!exp || (!exp.metrics && !exp.overall_category)) return null;
+  const m = exp.metrics ?? {};
+  const pick = (k: string, scale = 1) => (m[k] ? { p75: round(m[k].percentile * scale, 3), category: m[k].category } : null);
+  return {
+    overall: exp.overall_category ?? null,
+    lcp: pick("LARGEST_CONTENTFUL_PAINT_MS"),
+    inp: pick("INTERACTION_TO_NEXT_PAINT"),
+    cls: pick("CUMULATIVE_LAYOUT_SHIFT_SCORE", 0.01),
+    fcp: pick("FIRST_CONTENTFUL_PAINT_MS"),
+    ttfb: pick("EXPERIMENTAL_TIME_TO_FIRST_BYTE"),
+  };
+}
+
+/** Failed audits grouped by the Lighthouse category that references them (only the categories PSI was asked for exist in the response). */
+export function failedAuditsByCategory(lh: PsiResponse["lighthouseResult"], max = 20): Record<string, { id: string; title: string; score: number | null }[]> {
+  const audits = Object.values(lh?.audits ?? {});
+  const out: Record<string, { id: string; title: string; score: number | null }[]> = {};
+  for (const [name, cat] of Object.entries(lh?.categories ?? {})) {
+    const refs = new Set((cat.auditRefs ?? []).map((r) => r.id));
+    const failed = audits
+      .filter((x) => refs.has(x.id) && typeof x.score === "number" && x.score < 1 && x.scoreDisplayMode !== "notApplicable" && x.scoreDisplayMode !== "informative" && x.scoreDisplayMode !== "manual")
+      .sort((x, y) => (x.score ?? 0) - (y.score ?? 0))
+      .slice(0, max)
+      .map((x) => ({ id: x.id, title: x.title, score: x.score ?? null }));
+    if (failed.length) out[name] = failed;
+  }
+  return out;
+}
+
 export function registerWebTools(server: McpServer) {
   server.registerTool(
     "page_audit",
     {
       title: "On-page SEO audit of a URL",
       description:
-        "Fetch a page like a crawler and report: final URL and redirect chain, status, title, meta description, robots (meta + X-Robots-Tag), canonical, lang/hreflang, Open Graph, H1/H2/H3 outline, images missing alt, internal/external/nofollow link counts, word count, JSON-LD schema types, HTML size and fetch time, plus a list of flagged issues. Works for any site, no authorization needed.",
+        "Fetch a page like a crawler and report: final URL and redirect chain, status, title, meta description, robots (meta + X-Robots-Tag), canonical, lang/hreflang, Open Graph, RSS/Atom feeds, favicon (declared icons, apple-touch-icon, manifest, theme-color, and a live check that it is square, >=48x48 and crawlable by Googlebot/Googlebot-Image, which is what the mobile result icon needs), H1/H2/H3 outline, images missing alt, internal/external/nofollow link counts, word count, JSON-LD schema types, HTML size and fetch time, plus a list of flagged issues. Works for any site, no authorization needed.",
       inputSchema: {
         url: z.string().url(),
         maxHeadings: z.number().int().min(0).max(200).default(60).describe("How many H1-H3 headings to include in the outline."),
         maxImagesMissingAlt: z.number().int().min(0).max(200).default(20),
+        checkFavicon: z.boolean().default(true).describe("Fetch the favicon and robots.txt to verify size, shape and crawlability (2 extra requests)."),
       },
     },
     tool(async (a) => auditPage(a.url, a)),
@@ -306,12 +469,14 @@ export function registerWebTools(server: McpServer) {
     {
       title: "PageSpeed Insights / Core Web Vitals",
       description:
-        "Run Google PageSpeed Insights for a URL. Returns Lighthouse category scores (performance, SEO, accessibility, best practices), lab metrics (LCP, CLS, TBT, FCP, Speed Index), real-user CrUX field data (LCP, CLS, INP) when available, and the top improvement opportunities with estimated savings. Set PAGESPEED_API_KEY for a higher quota. Each run takes 15-60 s; Google caches results for a short while, so if a call times out simply call again. A 'Lighthouse returned error' after retry usually means the page never becomes idle (endless animations/JS) and cannot be audited by PSI.",
+        "Run Google PageSpeed Insights for a URL. Returns Lighthouse category scores (performance, SEO, accessibility, best practices), lab metrics (LCP, CLS, TBT, FCP, Speed Index), real-user CrUX data for the page and for the whole origin (LCP, INP, CLS, FCP, TTFB), so low-traffic pages still get field numbers, the failed audits of every requested category, and the top opportunities with estimated savings. Set PAGESPEED_API_KEY for a higher quota. Each run takes 15-60 s; Google caches results for a short while, so if a call times out simply call again. A 'Lighthouse returned error' after retry usually means the page never becomes idle (endless animations/JS) and cannot be audited by PSI.",
       inputSchema: {
         url: z.string().url(),
         strategy: z.enum(["mobile", "desktop", "both"]).default("mobile"),
         categories: z.array(z.enum(["performance", "seo", "accessibility", "best-practices"])).default(["performance", "seo"]),
         topOpportunities: z.number().int().min(0).max(20).default(8),
+        locale: z.string().optional().describe("Language of the audit titles and descriptions, e.g. 'es', 'en', 'pt-BR'. Default 'en'."),
+        maxFailedAudits: z.number().int().min(0).max(50).default(15).describe("Failed audits to list per category."),
       },
     },
     tool(async (a, extra) => {
@@ -320,6 +485,7 @@ export function registerWebTools(server: McpServer) {
       const run = async (strategy: "mobile" | "desktop") => {
         const params = new URLSearchParams({ url: a.url, strategy });
         for (const c of a.categories) params.append("category", c);
+        if (a.locale) params.set("locale", a.locale);
         const psiKey = envValue("PAGESPEED_API_KEY");
           if (psiKey) params.set("key", psiKey);
         const fetchOnce = async () => {
@@ -338,22 +504,27 @@ export function registerWebTools(server: McpServer) {
         const lh = data.lighthouseResult;
         const audits = lh?.audits ?? {};
         const num = (id: string) => audits[id]?.numericValue;
-        const field = data.loadingExperience?.metrics ?? {};
-        const fieldMetric = (k: string) => (field[k] ? { p75: field[k].percentile, category: field[k].category } : null);
         const opportunities = Object.values(audits)
           .filter((x) => x.details?.type === "opportunity" && (x.details.overallSavingsMs ?? 0) > 0)
           .sort((x, y) => (y.details?.overallSavingsMs ?? 0) - (x.details?.overallSavingsMs ?? 0))
           .slice(0, a.topOpportunities)
           .map((x) => ({ id: x.id, title: x.title, savingsMs: Math.round(x.details?.overallSavingsMs ?? 0), score: x.score }));
-        const failedSeo = Object.values(audits).filter((x) => lh?.categories?.seo?.auditRefs?.some((r) => r.id === x.id) && x.score !== null && x.score !== undefined && x.score < 1 && x.scoreDisplayMode !== "notApplicable").map((x) => ({ id: x.id, title: x.title }));
+        const originFallback = Boolean(data.loadingExperience?.origin_fallback);
+        // PSI returns an empty loadingExperience (or origin_fallback) when the URL has too little CrUX traffic.
+        const pageField = originFallback ? null : extractFieldData(data.loadingExperience);
+        const originField = extractFieldData(data.originLoadingExperience);
         return {
           strategy,
           scores: Object.fromEntries(Object.entries(lh?.categories ?? {}).map(([k, v]) => [k, v.score == null ? null : Math.round(v.score * 100)])),
           lab: { lcpMs: Math.round(num("largest-contentful-paint") ?? -1), cls: round(num("cumulative-layout-shift"), 3), tbtMs: Math.round(num("total-blocking-time") ?? -1), fcpMs: Math.round(num("first-contentful-paint") ?? -1), speedIndexMs: Math.round(num("speed-index") ?? -1) },
-          field: data.loadingExperience?.overall_category ? { overall: data.loadingExperience.overall_category, lcp: fieldMetric("LARGEST_CONTENTFUL_PAINT_MS"), cls: fieldMetric("CUMULATIVE_LAYOUT_SHIFT_SCORE"), inp: fieldMetric("INTERACTION_TO_NEXT_PAINT"), fcp: fieldMetric("FIRST_CONTENTFUL_PAINT_MS") } : null,
+          // Page-level CrUX is empty for low-traffic URLs; the origin block covers the whole site.
+          field: pageField,
+          fieldOrigin: originField,
+          fieldNote: pageField ? undefined : originField ? "No page-level field data (too little CrUX traffic for this URL); fieldOrigin is the site-wide real-user data." : "No CrUX field data for this URL or its origin (too little Chrome traffic); only the lab metrics apply.",
           opportunities,
-          failedSeoAudits: failedSeo,
+          failedAudits: failedAuditsByCategory(lh, a.maxFailedAudits),
           lighthouseVersion: lh?.lighthouseVersion,
+          locale: lh?.configSettings?.locale,
         };
       };
       const strategies: ("mobile" | "desktop")[] = a.strategy === "both" ? ["mobile", "desktop"] : [a.strategy];
@@ -481,11 +652,15 @@ export function registerWebTools(server: McpServer) {
   );
 }
 
-interface PsiResponse {
+export interface PsiLoadingExperience { overall_category?: string; origin_fallback?: boolean; metrics?: Record<string, { percentile: number; category: string }> }
+
+export interface PsiResponse {
   error?: { message?: string };
-  loadingExperience?: { overall_category?: string; metrics?: Record<string, { percentile: number; category: string }> };
+  loadingExperience?: PsiLoadingExperience;
+  originLoadingExperience?: PsiLoadingExperience;
   lighthouseResult?: {
     lighthouseVersion?: string;
+    configSettings?: { locale?: string };
     categories?: Record<string, { score?: number | null; auditRefs?: { id: string }[] }>;
     audits?: Record<string, { id: string; title: string; score?: number | null; scoreDisplayMode?: string; numericValue?: number; details?: { type?: string; overallSavingsMs?: number } }>;
   };

@@ -140,6 +140,47 @@ export function parseAgentOutput(data: PerplexityAgentResponse): { answer: strin
   return { answer, citations: [...new Set(ordered)] };
 }
 
+/** Perplexity Search API (POST /search): a flat ranked list, or one list per query when several queries were sent. */
+export type PerplexitySearchResponse = { error?: { message?: string }; detail?: unknown; results?: unknown };
+export interface SearchSource { query: string | null; rank: number; title: string; url: string; snippet?: string; date?: string }
+
+export function parseSearchResults(data: PerplexitySearchResponse, queries: string[]): SearchSource[] {
+  const raw: unknown[] = Array.isArray(data.results) ? data.results : [];
+  const perQuery = raw.length > 0 && raw.every((x) => Array.isArray(x));
+  const groups = perQuery
+    ? (raw as unknown[][]).map((list, i) => ({ query: queries[i] ?? null, items: list }))
+    : [{ query: queries.length === 1 ? queries[0] : null, items: raw }];
+  const out: SearchSource[] = [];
+  for (const g of groups) {
+    (g.items as Record<string, unknown>[]).forEach((r, i) => {
+      if (!r || typeof r !== "object" || typeof r.url !== "string") return;
+      const date = typeof r.date === "string" ? r.date : typeof r.last_updated === "string" ? r.last_updated : undefined;
+      out.push({ query: g.query, rank: i + 1, title: typeof r.title === "string" ? r.title : "", url: r.url, snippet: typeof r.snippet === "string" ? r.snippet.slice(0, 400) : undefined, date });
+    });
+  }
+  return out;
+}
+
+/** Which domains a ranked source list surfaces, and where your own domain sits in it. */
+export function rankSources(sources: SearchSource[], domain?: string) {
+  const host = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, "").toLowerCase(); } catch { return ""; } };
+  const dom = domain?.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "").toLowerCase();
+  const agg = new Map<string, { domain: string; results: number; bestRank: number; queries: Set<string> }>();
+  for (const s of sources) {
+    const h = host(s.url);
+    if (!h) continue;
+    const cur = agg.get(h) ?? { domain: h, results: 0, bestRank: s.rank, queries: new Set<string>() };
+    cur.results++;
+    cur.bestRank = Math.min(cur.bestRank, s.rank);
+    if (s.query) cur.queries.add(s.query);
+    agg.set(h, cur);
+  }
+  const domains = [...agg.values()].sort((x, y) => y.results - x.results || x.bestRank - y.bestRank).map((d) => ({ domain: d.domain, results: d.results, bestRank: d.bestRank, queries: [...d.queries] }));
+  const yours = dom ? sources.filter((s) => host(s.url) === dom || host(s.url).endsWith(`.${dom}`)) : [];
+  const missedQueries = dom ? [...new Set(sources.map((s) => s.query).filter((q): q is string => Boolean(q)))].filter((q) => !yours.some((y) => y.query === q)) : [];
+  return { domains, yours, bestRank: yours.length ? Math.min(...yours.map((y) => y.rank)) : null, missedQueries };
+}
+
 export function auditNode(node: Record<string, unknown>) {
   const types = typesOf(node);
   const missing: string[] = [];
@@ -484,8 +525,8 @@ export function registerGeoTools(server: McpServer) {
     {
       title: "IndexNow: notify Bing/Yandex of changed URLs",
       description:
-        "Submit up to 1000 changed URLs to IndexNow (Bing, Yandex, Naver, Seznam; Bing's index feeds ChatGPT search and Copilot). Requires INDEXNOW_KEY and the key file published at https://<host>/<key>.txt (or set INDEXNOW_KEY_LOCATION). The tool verifies the key file before submitting. Google does not support IndexNow.",
-      inputSchema: { urls: z.array(z.string().url()).min(1).max(1000), key: z.string().optional().describe("Overrides INDEXNOW_KEY."), keyLocation: z.string().url().optional().describe("Overrides INDEXNOW_KEY_LOCATION.") },
+        "Submit up to 10000 changed URLs to IndexNow in one call; one submission is shared by every participant (Bing, Yandex, Seznam, Naver, Yep, Internet Archive and Amazonbot). Bing's index feeds ChatGPT search and Copilot. Requires INDEXNOW_KEY and the key file published at https://<host>/<key>.txt (or set INDEXNOW_KEY_LOCATION). The tool verifies the key file before submitting. Google does not support IndexNow.",
+      inputSchema: { urls: z.array(z.string().url()).min(1).max(10000).describe("URLs on one single host, max 10000 per call (the protocol's limit)."), key: z.string().optional().describe("Overrides INDEXNOW_KEY."), keyLocation: z.string().url().optional().describe("Overrides INDEXNOW_KEY_LOCATION.") },
     },
     tool(async (a) => {
       const key = a.key ?? envValue("INDEXNOW_KEY");
@@ -530,6 +571,43 @@ export function registerGeoTools(server: McpServer) {
       return { question: a.question, effort: a.effort, cited: cited.length > 0, yourCitations: cited, citationRank: cited.length ? citations.indexOf(cited[0]) + 1 : null, allCitations: citations, competitorDomains: [...new Set(citations.map((c) => { try { return new URL(c).hostname.replace(/^www\./, ""); } catch { return c; } }))].filter((d) => !d.endsWith(dom)), answer: answer.slice(0, 3000), mentionsDomainInText: answer.toLowerCase().includes(dom) };
     }),
   );
+  server.registerTool(
+    "ai_search_sources",
+    {
+      title: "Ranked sources AI search returns (Perplexity Search API)",
+      description:
+        "Ask Perplexity's Search API which pages it retrieves as sources for up to 10 questions in one call, and whether your domain is among them. Unlike ai_citation_check it only returns ranked results (title, URL, snippet, date) with no answer generation, so it is cheaper and repeatable: track share of sources over time and see which competitors AI search keeps pulling from. Requires PERPLEXITY_API_KEY (paid; https://www.perplexity.ai/settings/api).",
+      inputSchema: {
+        queries: z.array(z.string().min(3)).min(1).max(10).describe("Questions a customer would type, e.g. ['best guided tour of the Alcazar', 'mejores tours en Sevilla']."),
+        domain: z.string().optional().describe("Your domain to locate in the rankings, e.g. 'example.com'."),
+        maxResults: z.number().int().min(1).max(20).default(10).describe("Results per query."),
+        country: z.string().optional().describe("2-letter country code for localized results, e.g. 'ES', 'US'."),
+        searchDomains: z.array(z.string()).max(20).optional().describe("Restrict to these domains, or exclude one by prefixing '-', e.g. ['-pinterest.com']. Max 20."),
+        recency: z.enum(["hour", "day", "week", "month", "year"]).optional().describe("Only pages published within this window."),
+        language: z.string().optional().describe("Restrict results to this language code, e.g. 'es'."),
+        contextSize: z.enum(["low", "medium", "high"]).default("low").describe("How much page text Perplexity retrieves per result; 'low' is enough for a source list and costs least."),
+      },
+    },
+    tool(async (a, extra) => {
+      const stop = heartbeat(extra, "querying Perplexity search");
+      try {
+        const key = envValue("PERPLEXITY_API_KEY");
+        if (!key) throw new Error("PERPLEXITY_API_KEY is not set. Create a key at https://www.perplexity.ai/settings/api and add it to the MCP env.");
+        const body: Record<string, unknown> = { query: a.queries.length === 1 ? a.queries[0] : a.queries, max_results: a.maxResults, search_context_size: a.contextSize };
+        if (a.country) body.country = a.country;
+        if (a.searchDomains?.length) body.search_domain_filter = a.searchDomains;
+        if (a.recency) body.search_recency_filter = a.recency;
+        if (a.language) body.search_language_filter = a.language;
+        const res = await fetchWithTimeout("https://api.perplexity.ai/search", { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify(body) }, 60_000);
+        const data = (await res.json()) as PerplexitySearchResponse;
+        if (!res.ok) throw new Error(`Perplexity Search API: ${data.error?.message ?? (data.detail ? JSON.stringify(data.detail).slice(0, 300) : `HTTP ${res.status}`)}`);
+        const sources = parseSearchResults(data, a.queries);
+        const { domains, yours, bestRank, missedQueries } = rankSources(sources, a.domain);
+        return { queries: a.queries, results: sources.length, cited: a.domain ? yours.length > 0 : undefined, bestRank, yourResults: yours, missedQueries: a.domain ? missedQueries : undefined, topDomains: domains.slice(0, 20), sources };
+      } finally { stop(); }
+    }),
+  );
+
   server.registerTool(
     "schema_validate",
     {

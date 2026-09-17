@@ -51,6 +51,7 @@
 | `gsc_rich_results_report` | 按搜索外观类型（富媒体、FAQ、评价、视频等）统计点击展示与对应页面 |
 | `indexnow_submit` | 向 Bing/Yandex 推送变更 URL（需 `INDEXNOW_KEY` 及站点根目录密钥文件） |
 | `ai_citation_check` | 用 Perplexity API 问一个问题，看引用来源里有没有你的域名（需 `PERPLEXITY_API_KEY`，付费） |
+| `ai_search_sources` | 一次问最多 10 个问题，只取搜索结果不生成答案（更便宜也更稳定），统计哪些域名被引用、你排第几、哪些问题完全没提到你（需 `PERPLEXITY_API_KEY`） |
 | `schema_generate` / `schema_validate` | 从现有页面生成 FAQPage、BlogPosting、面包屑的 JSON-LD 草稿；发布前校验 |
 | `site_crawl` | 全站爬取审计：状态码、断链、重定向链、重复标题描述、缺 H1、noindex、薄内容、孤立页、入链数、点击深度 |
 | `hreflang_check` | 多语言互引、自引用、x-default、canonical 冲突核对 |
@@ -64,6 +65,8 @@
 | `content_refresh_candidates` | 点击下滑且长期未更新的页面，附丢失的关键词 |
 | `knowledge_graph_check` | Wikidata 与 Google 知识图谱里是否存在该实体（后者需启用 Knowledge Graph Search API） |
 | `crux_history` | Chrome 真实用户 Core Web Vitals 周走势（需启用 Chrome UX Report API） |
+| `crux_snapshot` | 最新一期真实用户数据，含 LCP 四段拆解（服务器响应、资源发现、资源传输、渲染阻塞），直接指出慢在哪一段并给出对应建议 |
+| `wikipedia_pageviews` | 通过 Wikidata 找到某个实体在各语言维基百科的条目，给出逐月浏览量、同比变化与季节性高峰（免费，无需密钥） |
 | `brand_mentions` | 全网品牌提及及是否已链接（需 `BRAVE_API_KEY`，免费额度） |
 | `reviews_snapshot` | Google 商家评分与最新评论（需 `GOOGLE_PLACES_API_KEY`，需开结算） |
 | `github_get_file` / `github_list_dir` / `github_search_code` / `github_list_commits` / `github_build_status` / `github_commit_files` / `github_commit_image` | 读写 GitHub 仓库：一次提交多个文件（整文件、对大文件做局部 find/replace、base64 二进制），从网址取图在服务器上转 webp、裁剪、生成变体后提交；静态站可从任何客户端修改（用 `GITHUB_TOKEN` 或本机 `gh` 登录）；`github_build_status` 查提交后站点是否真的构建成功并上线（检查项、部署记录，或对不回报状态的托管商直接抓页面验证） |
@@ -318,7 +321,7 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 ### 第三方模型和本地模型
 
 - 桌面端：Cherry Studio、Cline 可以选 DeepSeek、Qwen、GLM、Kimi 或本地 Ollama 模型，把本服务作为 Streamable HTTP 类型的 MCP 服务器加进去，请求头填 Authorization 即可。
-- 工具定义约 2.1 万 token，每一轮对话都要发；87 个工具对小模型来说太多了。给它们单独开一个只读、精简工具集、单独令牌的实例，模型再糊涂也写不了东西，也看不到用不着的工具：
+- 工具定义约 2.1 万 token，每一轮对话都要发；90 个工具对小模型来说太多了。给它们单独开一个只读、精简工具集、单独令牌的实例，模型再糊涂也写不了东西，也看不到用不着的工具：
 
 ```yaml
 # docker-compose.yml：在主服务旁边再加一个
@@ -387,7 +390,7 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 ## 运行模式
 
 - **只读模式**：`--read-only` 或 `SEO_MCP_READ_ONLY=1`，所有写入类工具不注册。
-- **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`、`gmail`。87 个工具的定义约 2.2 万 token，只用部分功能时可以裁剪。
+- **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`、`gmail`。90 个工具的定义约 2.2 万 token，只用部分功能时可以裁剪。
 - 每个工具都带 `readOnlyHint` / `destructiveHint` 注解，服务器在初始化时返回 instructions 说明用法与安全约定。
 - `npm test` 运行单元测试、冒烟测试（含工具清单快照，`UPDATE_SNAPSHOT=1 npm test` 刷新）和 README 计数校验。
 - 所有写入类工具和 `github_commit_*` 支持 `dryRun: true`，只返回当前值与将要做的改动，不落地。
@@ -422,7 +425,7 @@ Cookie 为 `HttpOnly`、`SameSite=Lax`，HTTPS 下带 `Secure`；表单带 CSRF 
 | `WP_SITES` | 无 | WordPress 站点 SSH 配置 JSON 数组，见 WordPress 工具一节 |
 | `PAGESPEED_API_KEY` | 无 | PageSpeed Insights API 密钥；不设则用公共匿名配额，经常已耗尽 |
 | `INDEXNOW_KEY` / `INDEXNOW_KEY_LOCATION` | 无 | IndexNow 密钥及密钥文件 URL |
-| `PERPLEXITY_API_KEY` | 无 | Perplexity Sonar API 密钥，仅 `ai_citation_check` 需要 |
+| `PERPLEXITY_API_KEY` | 无 | Perplexity API 密钥，`ai_citation_check` 与 `ai_search_sources` 需要 |
 | `GOOGLE_API_KEY` / `CRUX_API_KEY` | 无 | 知识图谱与 CrUX 的密钥，未设时复用 `PAGESPEED_API_KEY` |
 | `BRAVE_API_KEY` | 无 | Brave Search，仅 `brand_mentions` |
 | `GOOGLE_PLACES_API_KEY` | 无 | Places API (New)，仅 `reviews_snapshot` |
