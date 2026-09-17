@@ -248,7 +248,15 @@ curl -s https://mcp.example.com/mcp -H "Authorization: Bearer <token>" -H "Conte
   -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-Two things to know: `pagespeed`, `site_crawl` and `gsc_index_coverage` stream progress notifications but can run for minutes, so raise the client's per-tool timeout if it defaults to 60 s; and ChatGPT needs Developer Mode switched on (Settings, Advanced settings) before a custom connector can use all the tools - without it ChatGPT treats the server as a Deep Research source and only looks for `search` and `fetch`.
+**ChatGPT, and anything else that cannot send a header.** ChatGPT adds MCP servers at `chatgpt.com/plugins` (the *+* button, after switching on Developer mode under Settings → Account security & login). Its authentication menu offers *OAuth*, *No authentication* and *Hybrid* only - there is nowhere to paste a static token. Start the server with `SEO_MCP_OAUTH=1` and choose *OAuth*; the client then discovers everything it needs by itself.
+
+```bash
+SEO_MCP_OAUTH=1     # requires MCP_AUTH_TOKEN; adds the OAuth endpoints next to /mcp
+```
+
+The server becomes its own authorization server: the client registers itself (RFC 7591), sends you to an approval page, and that page asks for `MCP_AUTH_TOKEN` - the same secret, typed once in a browser instead of sent on every request. Approving mints an access token (24 h) and a rotating refresh token (90 days), stored only as hashes in `<SEO_MCP_DATA_DIR>/oauth.db`. A **read-only** checkbox on that page issues a token whose server registers no write tools, which is what you want for a third-party assistant; replaying a rotated refresh token revokes the whole grant. Endpoints: `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/oauth/register`, `/oauth/authorize`, `/oauth/token`, `/oauth/revoke`, with PKCE S256 required and `plain` refused. Your own `MCP_AUTH_TOKEN` keeps working as a plain bearer token throughout, and nothing changes for clients that never ask for the metadata.
+
+Two things to know: `pagespeed`, `site_crawl` and `gsc_index_coverage` stream progress notifications but can run for minutes, so raise the client's per-tool timeout if it defaults to 60 s; and Developer mode really is required in ChatGPT - without it the server is treated as a Deep Research source and only `search` and `fetch` are looked for.
 
 ## Works with any agent
 
@@ -340,7 +348,7 @@ LangChain (`langchain-mcp-adapters`), Google ADK (`MCPToolset`) and the Vercel A
 
 ### Known limits
 
-- ChatGPT: create a custom connector with Developer Mode enabled, pointing at the same `/mcp` URL, and pick the *Access token / API key* authentication option with `MCP_AUTH_TOKEN`. Reported working by OpenAI's documentation; not verified against this server.
+- ChatGPT: its plugin dialog (checked 2026-09-17) offers only *OAuth*, *No authentication* and *Hybrid*, so a static token cannot be entered there. Run the server with `SEO_MCP_OAUTH=1` and pick *OAuth* - see [Connect a client](#connect-a-client). The flow is covered end to end by `test/oauth-http.mjs`.
 - Clients that only implement the legacy HTTP+SSE transport: this server speaks Streamable HTTP only (stateless, one `POST` per call). Open an issue if you need SSE.
 - Codex custom model providers must implement the Responses API, so Codex cannot drive a Chat-Completions-only provider such as DeepSeek; use an SDK or Cherry Studio for those.
 
@@ -374,6 +382,7 @@ In HTTP mode a single instance can also be narrowed **per connection**, without 
 The full set of tool definitions costs roughly 34k tokens in every conversation. Pointing a day-to-day client at `/mcp?toolsets=gsc,ga4,web,geo,analysis` cuts that to about 21k, and `?toolsets=gsc,ga4` to about 12k; keep the full URL for the connection you use to edit sites.
 | `SEO_MCP_MAX_RESULT_CHARS` | cap on a single tool result (default 120000); oversized arrays are trimmed with a note on how to narrow the query |
 | `MCP_TRANSPORT=http`, `MCP_HOST`, `MCP_PORT`, `MCP_PATH`, `MCP_AUTH_TOKEN` | HTTP mode |
+| `SEO_MCP_OAUTH=1` | HTTP mode: also accept OAuth, for clients that cannot send an `Authorization` header (ChatGPT). Needs `MCP_AUTH_TOKEN`; grants live in `<SEO_MCP_DATA_DIR>/oauth.db` |
 | `SEO_MCP_HOSTED_CLIENT_ID`, `SEO_MCP_HOSTED_CLIENT_SECRET`, `SEO_MCP_HOSTED_SECRET`, `SEO_MCP_PUBLIC_URL` (+ optional `SEO_MCP_DATA_DIR`, `SEO_MCP_HOSTED_CONTACT`, `SEO_MCP_HOSTED_VERIFIED`) | [Hosted mode](#hosted-mode-let-other-people-sign-in-with-google): Google sign-in for other users, per-user read-only tokens |
 | `SEO_MCP_GITHUB_APP_ID`, `SEO_MCP_GITHUB_APP_SLUG`, `SEO_MCP_GITHUB_APP_CLIENT_ID`, `SEO_MCP_GITHUB_APP_CLIENT_SECRET`, `SEO_MCP_GITHUB_APP_PRIVATE_KEY_FILE` | hosted mode: a GitHub App users install on their repositories to get the `github_*` tools (installation tokens, one hour) |
 | `GOOGLE_OAUTH_CLIENT_SECRET_FILE` (or `--client-secret`), `GOOGLE_OAUTH_CLIENT_ID` + `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_PORT` | `npm run auth` only: the OAuth client for the user-account flow (callback port defaults to 53682) |

@@ -255,7 +255,15 @@ curl -s https://mcp.example.com/mcp -H "Authorization: Bearer <MCP_AUTH_TOKEN>" 
   -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-两点注意：`pagespeed`、`site_crawl`、`gsc_index_coverage` 这类工具会跑几分钟（期间有进度通知），客户端的单工具超时若默认 60 秒要调大；ChatGPT 必须先在设置的高级选项里打开开发者模式，自定义连接器才能用到全部工具；不打开的话它会把服务当成深度研究数据源，只找 `search` 和 `fetch` 两个工具。
+**ChatGPT，以及其他发不了请求头的客户端。** ChatGPT 加 MCP 服务的入口是 `chatgpt.com/plugins` 页右上角的 *+*（先在设置 → 账户安全与登录 → 开发者模式里打开「开发人员模式」）。它的认证下拉只有 *OAuth*、*无身份验证*、*混合* 三项，没有填固定令牌的地方。给服务加上 `SEO_MCP_OAUTH=1`，然后选 *OAuth*，客户端会自己把该知道的都发现出来。
+
+```bash
+SEO_MCP_OAUTH=1     # 需要 MCP_AUTH_TOKEN；在 /mcp 旁边加出下面这些端点
+```
+
+服务自己就成了授权服务器：客户端先自行注册（RFC 7591），再把你送到一个授权页，那一页要你填 `MCP_AUTH_TOKEN` —— 同一个密钥，只是改成在浏览器里输一次，不再随每个请求发送。同意之后签发一个访问令牌（24 小时）和一个轮换的刷新令牌（90 天），两者都只以哈希存进 `<SEO_MCP_DATA_DIR>/oauth.db`。授权页上有个**只读**勾选框，勾上签发的令牌对应的实例不注册任何写入工具，给第三方助手用就该勾它；已经轮换掉的刷新令牌被重放时，整个授权连带作废。端点：`/.well-known/oauth-protected-resource`、`/.well-known/oauth-authorization-server`、`/oauth/register`、`/oauth/authorize`、`/oauth/token`、`/oauth/revoke`，强制 PKCE S256，拒绝 `plain`。你自己的 `MCP_AUTH_TOKEN` 全程照旧当 Bearer 令牌用，不问元数据的客户端也毫无变化。
+
+两点注意：`pagespeed`、`site_crawl`、`gsc_index_coverage` 这类工具会跑几分钟（期间有进度通知），客户端的单工具超时若默认 60 秒要调大；ChatGPT 的开发者模式确实必须打开，不打开的话它会把服务当成深度研究数据源，只找 `search` 和 `fetch` 两个工具。
 
 ## 接入任何 agent、SDK 和第三方模型
 
@@ -347,7 +355,7 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 
 ### 已知限制
 
-- ChatGPT：在设置里打开开发者模式后新建自定义连接器，地址同样填 `/mcp`，认证方式选「Access token / API key」，填 `MCP_AUTH_TOKEN`。依据是 OpenAI 的官方说明，尚未对本服务实测。
+- ChatGPT：它的插件弹窗（2026-09-17 核对）只给 *OAuth*、*无身份验证*、*混合* 三项，填不了固定令牌。服务端设 `SEO_MCP_OAUTH=1` 后选 *OAuth*，见「连接客户端」一节；整条流程由 `test/oauth-http.mjs` 端到端覆盖。
 - 只实现了旧版 HTTP+SSE 传输的客户端：本服务只开了 Streamable HTTP（无状态，每次调用一个 `POST`）。需要 SSE 的话开个 issue。
 - Codex 的自定义模型提供方必须实现 Responses API，所以 Codex 带不动 DeepSeek 这类只有 Chat Completions 接口的厂商；这类模型走 SDK 或 Cherry Studio。
 
@@ -450,6 +458,7 @@ Cookie 为 `HttpOnly`、`SameSite=Lax`，HTTPS 下带 `Secure`；表单带 CSRF 
 | `MCP_PORT` | `8080` | HTTP 端口 |
 | `MCP_PATH` | `/mcp` | HTTP 路径 |
 | `MCP_AUTH_TOKEN` | 无 | Bearer Token；非回环地址监听时务必设置 |
+| `SEO_MCP_OAUTH` | 无 | 设为 `1` 时同时接受 OAuth，给发不了 `Authorization` 头的客户端（ChatGPT）用；需要 `MCP_AUTH_TOKEN`，授权数据存在 `<SEO_MCP_DATA_DIR>/oauth.db` |
 | `GOOGLE_APPLICATION_CREDENTIALS` | 无 | 服务账号或 authorized_user JSON 路径 |
 | `GOOGLE_CREDENTIALS_JSON` | 无 | 直接内联凭据 JSON（适合容器平台的 secret） |
 | `GOOGLE_OAUTH_CLIENT_SECRET_FILE`（或 `--client-secret`）、`GOOGLE_OAUTH_CLIENT_ID` + `GOOGLE_OAUTH_CLIENT_SECRET`、`GOOGLE_OAUTH_PORT` | 端口 `53682` | 只有 `npm run auth` 用：自己账号 OAuth 授权的客户端信息与本机回调端口 |
