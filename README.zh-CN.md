@@ -23,16 +23,16 @@
 | `gsc_list_sitemaps` | 列出已提交的站点地图及错误/警告；传 sitemapIndex 可列出索引文件里的子站点地图各自的错误数，定位问题出在哪个子文件 |
 | `gsc_submit_sitemap` | 提交或重新提交站点地图 |
 | `ga_list_properties` | 列出账号可访问的 GA4 媒体资源 |
-| `ga_run_report` | GA4 报告：任意维度/指标、过滤、排序、分页，支持对比时间段 |
-| `ga_run_realtime_report` | GA4 实时（最近 30 分钟）数据 |
-| `ga_get_metadata` | 查询某媒体资源可用的维度和指标（含自定义维度） |
+| `ga_run_report` | GA4 报告：任意维度/指标、过滤（可一次匹配多值、可用或逻辑）、排序、分页，最多 4 个日期区间；结果附时区、货币，数据被抽样或因隐私阈值抑制时会明确告知 |
+| `ga_run_realtime_report` | GA4 实时（最近 30 分钟）数据，可筛选、排序、按分钟区间切分 |
+| `ga_get_metadata` | 查询某媒体资源可用的维度和指标（含自定义维度），带指标类型（秒/货币/普通）与已废弃的旧名 |
 | `ga_compare_periods` | GA4 两个时间段对比，按维度拆分，含总量和百分比变化 |
 | `ga_landing_page_seo` | 自然搜索落地页：GA4 行为数据与 Search Console 点击数据合并成一张表 |
 | `ga_run_pivot_report` | 透视表：一个维度做行、一个做列，例如落地页 × 设备 |
 | `ga_batch_run_reports` | 一次调用跑最多 5 个报表 |
-| `ga_run_funnel_report` | 漏斗：按事件定义步骤，看每步人数与流失，可按维度拆分 |
+| `ga_run_funnel_report` | 漏斗：按事件定义步骤，看每步人数与流失，可按维度拆分；可看流失后用户的下一步动作，也可做趋势漏斗 |
 | `ga_check_compatibility` | 检查维度指标组合能否一起查询 |
-| `ga_property_config` | 只读配置：时区货币、数据保留、数据流与增强型衡量、自定义维度指标、关键事件、Google Ads 关联、受众 |
+| `ga_property_config` | 只读配置：时区货币、数据保留、数据流与增强型衡量、自定义维度指标、关键事件、Google Ads 关联、受众（含定义条件）、归因模型与回溯窗口、Google Signals 状态 |
 | `gsc_delete_sitemap` / `gsc_add_site` / `gsc_delete_site` | 站点地图删除、资源添加与移除 |
 | `gsc_opportunities` | 展示高但排名在 8 到 20 位的关键词与页面，自动映射到 WordPress 文章 ID |
 | `gsc_cannibalization` | 同一关键词被多个页面分摊的情况 |

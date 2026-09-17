@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Google Analytics 4
+- Reports no longer hide incomplete data. Every reporting tool now returns a `dataQuality` note when GA4 withheld rows for privacy thresholding, collapsed rows into `(other)`, sampled the data (with the sampling percentage) or returned nothing for a stated reason. Until now the response metadata was discarded, so a materially incomplete report looked identical to a complete one. Results also carry `currencyCode` and `timeZone`.
+- Dimension filters accept a list of values (one filter matching 20 URLs instead of 20 filters) and an `or` mode; `ga_compare_periods` gained the raw `dimensionFilter` escape hatch and `metricFilters`, which `ga_batch_run_reports` also gained.
+- `ga_run_realtime_report` accepts filters, ordering and minute ranges, and now sorts by the first metric by default; previously `limit` truncated an arbitrary slice of unordered rows.
+- `ga_property_config` reads the attribution settings (model plus both lookback windows — the usual explanation for GA4 key-event counts disagreeing with Search Console or Ads) and the Google Signals state, which is what triggers the thresholding above. `accessBindings` and `bigQueryLinks` are available as opt-in sections, and audiences now include the clauses that define them.
+- `ga_run_funnel_report` exposes `nextAction` (what users did after abandoning a step), trended funnels, filters, a row limit, and the breakdown limit that was hardcoded to 5.
+- `ga_get_metadata` returns each metric's `type` (seconds, currency, standard) and deprecated names; `averageSessionDuration` could not be interpreted without it.
+- `ga_run_report` accepts up to 4 named date ranges and `currencyCode`; pivot and batch reports accept an offset; the quota block reports every bucket the API returns, not just the two token buckets.
+
 ### Search Console
 - Analysis tools no longer truncate silently. `gsc_opportunities`, `gsc_cannibalization`, `gsc_ctr_opportunities` and `gsc_question_queries` request the API's 25000-row maximum in one call; when the response comes back at that limit the result now carries `truncated: true` and a note telling you to shorten the period or add a filter, instead of quietly analysing part of the property.
 - `gsc_index_coverage` keeps the inspection fields it used to drop: which sitemaps list each URL, its referring URLs (first five, with the real total), and rich-result issues with their severity rather than a bare list of type names. It also derives `orphan` (indexed, in no sitemap, nothing linking to it) and an orphan count, set only when the inspection came back complete, because Google omits both lists on partial results.

@@ -18,11 +18,14 @@ const MATCH_TYPES = ["EXACT", "BEGINS_WITH", "ENDS_WITH", "CONTAINS", "FULL_REGE
 
 const simpleDimensionFilter = z.object({
   field: z.string().describe("Dimension API name, e.g. pagePath, country."),
-  value: z.string(),
+  value: z.string().optional().describe("Single value, matched with matchType."),
+  values: z.array(z.string()).min(1).optional().describe("Match any value in this list (inListFilter), e.g. 20 page paths. Use instead of value."),
   matchType: z.enum(MATCH_TYPES).default("EXACT"),
   caseSensitive: z.boolean().default(false),
   not: z.boolean().default(false).describe("Negate this filter."),
 });
+
+const filterLogic = z.enum(["and", "or"]).default("and").describe("How to join several dimensionFilters.");
 
 const simpleMetricFilter = z.object({
   field: z.string().describe("Metric API name, e.g. 'sessions'."),
@@ -30,15 +33,36 @@ const simpleMetricFilter = z.object({
   value: z.number(),
 });
 
-function buildDimensionFilter(filters: z.infer<typeof simpleDimensionFilter>[] | undefined): analyticsdata_v1beta.Schema$FilterExpression | undefined {
+const orderBySpec = z
+  .array(z.object({ metric: z.string().optional(), dimension: z.string().optional(), desc: z.boolean().default(true) }))
+  .optional()
+  .describe("Sort order. Defaults to first metric descending.");
+
+/** Shape of one entry of the tools' simplified dimension filter list. */
+export interface SimpleDimensionFilter {
+  field: string;
+  value?: string;
+  values?: string[];
+  matchType?: string;
+  caseSensitive?: boolean;
+  not?: boolean;
+}
+
+/** Build a FilterExpression: stringFilter, or inListFilter when `values` is given; joined with AND (default) or OR. */
+export function buildDimensionFilter(filters: SimpleDimensionFilter[] | undefined, logic: "and" | "or" = "and"): analyticsdata_v1beta.Schema$FilterExpression | undefined {
   if (!filters?.length) return undefined;
   const exprs = filters.map((f) => {
-    const expr: analyticsdata_v1beta.Schema$FilterExpression = {
-      filter: { fieldName: f.field, stringFilter: { matchType: f.matchType, value: f.value, caseSensitive: f.caseSensitive } },
-    };
+    const hasList = !!f.values?.length;
+    if (hasList && f.value !== undefined) throw new Error(`Filter on "${f.field}": use either value or values, not both.`);
+    if (!hasList && f.value === undefined) throw new Error(`Filter on "${f.field}": one of value or values is required.`);
+    const filter: analyticsdata_v1beta.Schema$Filter = hasList
+      ? { fieldName: f.field, inListFilter: { values: f.values, caseSensitive: f.caseSensitive ?? false } }
+      : { fieldName: f.field, stringFilter: { matchType: f.matchType ?? "EXACT", value: f.value, caseSensitive: f.caseSensitive ?? false } };
+    const expr: analyticsdata_v1beta.Schema$FilterExpression = { filter };
     return f.not ? { notExpression: expr } : expr;
   });
-  return exprs.length === 1 ? exprs[0] : { andGroup: { expressions: exprs } };
+  if (exprs.length === 1) return exprs[0];
+  return logic === "or" ? { orGroup: { expressions: exprs } } : { andGroup: { expressions: exprs } };
 }
 
 function buildMetricFilter(filters: z.infer<typeof simpleMetricFilter>[] | undefined): analyticsdata_v1beta.Schema$FilterExpression | undefined {
@@ -47,6 +71,84 @@ function buildMetricFilter(filters: z.infer<typeof simpleMetricFilter>[] | undef
     filter: { fieldName: f.field, numericFilter: { operation: f.operation, value: { doubleValue: f.value } } },
   }));
   return exprs.length === 1 ? exprs[0] : { andGroup: { expressions: exprs } };
+}
+
+/** Expand the simplified sort spec, falling back to "first metric, descending" so results are never arbitrary. */
+export function buildOrderBys(spec: { metric?: string; dimension?: string; desc?: boolean }[] | undefined, defaultMetric: string): analyticsdata_v1beta.Schema$OrderBy[] {
+  if (!spec?.length) return [{ metric: { metricName: defaultMetric }, desc: true }];
+  return spec.map((o) =>
+    o.dimension ? { dimension: { dimensionName: o.dimension }, desc: o.desc ?? true } : { metric: { metricName: o.metric ?? defaultMetric }, desc: o.desc ?? true },
+  );
+}
+
+/** The parts of ResponseMetaData that say whether a report is complete. */
+export interface ReportMetadata {
+  currencyCode?: string | null;
+  timeZone?: string | null;
+  dataLossFromOtherRow?: boolean | null;
+  subjectToThresholding?: boolean | null;
+  emptyReason?: string | null;
+  samplingMetadatas?: { samplesReadCount?: string | null; samplingSpaceSize?: string | null }[] | null;
+}
+
+export interface DataQuality {
+  thresholded?: boolean;
+  otherRowDataLoss?: boolean;
+  sampling?: { samplesRead: number; samplingSpace: number; percent: number | null }[];
+  emptyReason?: string;
+  note: string;
+}
+
+/** Turn ResponseMetaData into a short warning, or undefined when nothing was hidden, collapsed or sampled. */
+export function dataQuality(meta: ReportMetadata | null | undefined): DataQuality | undefined {
+  if (!meta) return undefined;
+  const out: DataQuality = { note: "" };
+  const notes: string[] = [];
+  if (meta.subjectToThresholding) {
+    out.thresholded = true;
+    notes.push("rows below GA4's privacy threshold are hidden (this happens when Google Signals is on), so rows can be missing and totals larger than the sum of the rows");
+  }
+  if (meta.dataLossFromOtherRow) {
+    out.otherRowDataLoss = true;
+    notes.push("high-cardinality values were rolled into an '(other)' row, so some rows are absent; use a filter or fewer dimensions");
+  }
+  const sampling = (meta.samplingMetadatas ?? []).map((s) => {
+    const read = Number(s?.samplesReadCount);
+    const space = Number(s?.samplingSpaceSize);
+    const usable = Number.isFinite(read) && Number.isFinite(space) && space > 0;
+    return { samplesRead: Number.isFinite(read) ? read : 0, samplingSpace: Number.isFinite(space) ? space : 0, percent: usable ? round((read / space) * 100, 1) : null };
+  });
+  if (sampling.length) {
+    out.sampling = sampling;
+    notes.push(`sampled: ${sampling.map((s) => (s.percent == null ? "?" : `${s.percent}%`)).join(", ")} of events per date range were read, so the figures are estimates`);
+  }
+  if (meta.emptyReason) {
+    out.emptyReason = meta.emptyReason;
+    notes.push(`empty report: ${meta.emptyReason}`);
+  }
+  if (!notes.length) return undefined;
+  out.note = notes.join("; ");
+  return out;
+}
+
+export interface QuotaStatusLike { consumed?: number | null; remaining?: number | null }
+export interface PropertyQuotaLike {
+  tokensPerDay?: QuotaStatusLike | null;
+  tokensPerHour?: QuotaStatusLike | null;
+  concurrentRequests?: QuotaStatusLike | null;
+  serverErrorsPerProjectPerHour?: QuotaStatusLike | null;
+  potentiallyThresholdedRequestsPerHour?: QuotaStatusLike | null;
+  tokensPerProjectPerHour?: QuotaStatusLike | null;
+}
+
+/** Every quota bucket the response carried, as consumed/remaining pairs. */
+export function quotaOf(quota: PropertyQuotaLike | null | undefined): Record<string, { consumed: number | null; remaining: number | null }> | undefined {
+  if (!quota) return undefined;
+  const out: Record<string, { consumed: number | null; remaining: number | null }> = {};
+  for (const [key, status] of Object.entries(quota) as [string, QuotaStatusLike | null | undefined][]) {
+    if (status && (status.consumed != null || status.remaining != null)) out[key] = { consumed: status.consumed ?? null, remaining: status.remaining ?? null };
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 function tabulate(res: analyticsdata_v1beta.Schema$RunReportResponse | analyticsdata_v1beta.Schema$RunRealtimeReportResponse) {
@@ -63,7 +165,19 @@ function tabulate(res: analyticsdata_v1beta.Schema$RunReportResponse | analytics
     metNames.forEach((n, i) => (o[n] = toNumber(r.metricValues?.[i]?.value)));
     return o;
   });
-  return { dimensions: dimNames, metrics: metNames, rowCount: res.rowCount ?? rows.length, returnedRows: rows.length, totals, rows };
+  // Realtime responses carry no metadata; report responses do.
+  const meta = (res as analyticsdata_v1beta.Schema$RunReportResponse).metadata;
+  return {
+    dimensions: dimNames,
+    metrics: metNames,
+    rowCount: res.rowCount ?? rows.length,
+    returnedRows: rows.length,
+    currencyCode: meta?.currencyCode ?? undefined,
+    timeZone: meta?.timeZone ?? undefined,
+    dataQuality: dataQuality(meta),
+    totals,
+    rows,
+  };
 }
 
 /** Ratios and averages cannot be summed across dimension rows; only counts can. */
@@ -85,6 +199,67 @@ export function periodTotals(data: { dimensionHeaders?: { name?: string | null }
     out[period] = bucket;
   }
   return out;
+}
+
+/** Minimal shape of an Admin API audience filter expression (only the fields we render). */
+export interface AudienceFilterExpr {
+  andGroup?: { filterExpressions?: AudienceFilterExpr[] } | null;
+  orGroup?: { filterExpressions?: AudienceFilterExpr[] } | null;
+  notExpression?: AudienceFilterExpr | null;
+  eventFilter?: { eventName?: string | null; eventParameterFilterExpression?: AudienceFilterExpr | null } | null;
+  dimensionOrMetricFilter?: {
+    fieldName?: string | null;
+    stringFilter?: { matchType?: string | null; value?: string | null } | null;
+    inListFilter?: { values?: string[] | null } | null;
+    numericFilter?: { operation?: string | null; value?: { doubleValue?: number | null; int64Value?: string | null } | null } | null;
+    betweenFilter?: { fromValue?: { doubleValue?: number | null; int64Value?: string | null } | null; toValue?: { doubleValue?: number | null; int64Value?: string | null } | null } | null;
+  } | null;
+}
+
+export interface AudienceFilterClauseLike {
+  clauseType?: string | null;
+  simpleFilter?: { scope?: string | null; filterExpression?: AudienceFilterExpr | null } | null;
+  sequenceFilter?: { scope?: string | null; sequenceMaximumDuration?: string | null; sequenceSteps?: { filterExpression?: AudienceFilterExpr | null }[] | null } | null;
+}
+
+const numText = (v: { doubleValue?: number | null; int64Value?: string | null } | null | undefined) => v?.doubleValue ?? v?.int64Value ?? "?";
+
+/** Render an audience filter expression as one readable line, e.g. `pagePath CONTAINS "/tours/" AND event purchase`. */
+export function audienceFilterText(expr: AudienceFilterExpr | null | undefined): string {
+  if (!expr) return "";
+  if (expr.andGroup?.filterExpressions?.length) return expr.andGroup.filterExpressions.map(audienceFilterText).filter(Boolean).join(" AND ");
+  if (expr.orGroup?.filterExpressions?.length) return `(${expr.orGroup.filterExpressions.map(audienceFilterText).filter(Boolean).join(" OR ")})`;
+  if (expr.notExpression) return `NOT ${audienceFilterText(expr.notExpression)}`;
+  const e = expr.eventFilter;
+  if (e) {
+    const inner = audienceFilterText(e.eventParameterFilterExpression);
+    return `event ${e.eventName ?? "?"}${inner ? ` [${inner}]` : ""}`;
+  }
+  const d = expr.dimensionOrMetricFilter;
+  if (d) {
+    const field = d.fieldName ?? "?";
+    if (d.stringFilter) return `${field} ${d.stringFilter.matchType ?? "EXACT"} "${d.stringFilter.value ?? ""}"`;
+    if (d.inListFilter) return `${field} IN [${(d.inListFilter.values ?? []).join(", ")}]`;
+    if (d.numericFilter) return `${field} ${d.numericFilter.operation ?? "EQUAL"} ${numText(d.numericFilter.value)}`;
+    if (d.betweenFilter) return `${field} BETWEEN ${numText(d.betweenFilter.fromValue)}..${numText(d.betweenFilter.toValue)}`;
+    return field;
+  }
+  return "";
+}
+
+/** The clauses that actually define an audience, compacted to one line each. */
+export function compactAudienceClauses(clauses: AudienceFilterClauseLike[] | null | undefined): { type: string; scope?: string; filter?: string; sequence?: string[]; maxDuration?: string }[] {
+  const scopeOf = (s: string | null | undefined) => (s ? s.replace(/^AUDIENCE_FILTER_SCOPE_/, "") : undefined);
+  return (clauses ?? []).map((c) =>
+    c.sequenceFilter
+      ? {
+          type: c.clauseType ?? "INCLUDE",
+          scope: scopeOf(c.sequenceFilter.scope),
+          maxDuration: c.sequenceFilter.sequenceMaximumDuration ?? undefined,
+          sequence: (c.sequenceFilter.sequenceSteps ?? []).map((s) => audienceFilterText(s?.filterExpression)),
+        }
+      : { type: c.clauseType ?? "INCLUDE", scope: scopeOf(c.simpleFilter?.scope), filter: audienceFilterText(c.simpleFilter?.filterExpression) },
+  );
 }
 
 export function registerAnalyticsTools(server: McpServer) {
@@ -121,59 +296,58 @@ export function registerAnalyticsTools(server: McpServer) {
     {
       title: "GA4 report",
       description:
-        "GA4 Data API report. Common dimensions: date, pagePath, landingPage, sessionDefaultChannelGroup, sessionSource, country, deviceCategory, eventName. Common metrics: sessions, activeUsers, newUsers, screenPageViews, engagementRate, bounceRate, keyEvents, eventCount (more via ga_get_metadata). Optional comparison range.",
+        "GA4 Data API report. Common dimensions: date, pagePath, landingPage, sessionDefaultChannelGroup, sessionSource, country, deviceCategory, eventName. Common metrics: sessions, activeUsers, newUsers, screenPageViews, engagementRate, bounceRate, keyEvents, eventCount (more via ga_get_metadata). Optional comparison range, or up to 4 explicit dateRanges. Returns dataQuality when rows were thresholded, sampled or rolled into '(other)'.",
       inputSchema: {
         propertyId,
         startDate: z.string().default("28daysAgo").describe("YYYY-MM-DD, today, yesterday or NdaysAgo."),
         endDate: z.string().default("yesterday"),
         compareStartDate: z.string().optional().describe("Second range start; adds a dateRange dimension."),
         compareEndDate: z.string().optional(),
+        dateRanges: z
+          .array(z.object({ startDate: z.string(), endDate: z.string(), name: z.string().optional().describe("Label shown in the dateRange column; defaults to range_0, range_1…") }))
+          .min(1)
+          .max(4)
+          .optional()
+          .describe("Up to 4 date ranges; overrides startDate/endDate/compare*."),
         dimensions: z.array(z.string()).default([]),
         metrics: z.array(z.string()).min(1).default(["sessions", "activeUsers", "screenPageViews"]),
-        dimensionFilters: z.array(simpleDimensionFilter).optional().describe("AND-ed dimension filters."),
+        dimensionFilters: z.array(simpleDimensionFilter).optional().describe("Dimension filters, AND-ed unless filterLogic says otherwise."),
+        filterLogic,
         metricFilters: z.array(simpleMetricFilter).optional().describe("AND-ed metric filters (post-aggregation)."),
         dimensionFilter: z.any().optional().describe("Raw FilterExpression; overrides dimensionFilters."),
         metricFilter: z.any().optional().describe("Raw FilterExpression; overrides metricFilters."),
-        orderBy: z
-          .array(z.object({ metric: z.string().optional(), dimension: z.string().optional(), desc: z.boolean().default(true) }))
-          .optional()
-          .describe("Sort order. Defaults to first metric descending."),
+        orderBy: orderBySpec,
         limit: z.number().int().min(1).max(100000).default(100),
         offset: z.number().int().min(0).default(0),
+        currencyCode: z.string().optional().describe("ISO 4217 code for revenue metrics, e.g. 'EUR'. Defaults to the property's currency."),
         keepEmptyRows: z.boolean().default(false),
       },
     },
     tool(async (args) => {
-      const dateRanges = [{ startDate: args.startDate, endDate: args.endDate, name: "current" }];
-      if (args.compareStartDate && args.compareEndDate) {
-        dateRanges.push({ startDate: args.compareStartDate, endDate: args.compareEndDate, name: "previous" });
-      }
-      const orderBys: analyticsdata_v1beta.Schema$OrderBy[] | undefined = args.orderBy
-        ? args.orderBy.map((o) =>
-            o.dimension
-              ? { dimension: { dimensionName: o.dimension }, desc: o.desc }
-              : { metric: { metricName: o.metric ?? args.metrics[0] }, desc: o.desc },
-          )
-        : [{ metric: { metricName: args.metrics[0] }, desc: true }];
+      const ranges = args.dateRanges?.length
+        ? args.dateRanges.map((r, i) => ({ startDate: r.startDate, endDate: r.endDate, name: r.name ?? `range_${i}` }))
+        : [
+            { startDate: args.startDate, endDate: args.endDate, name: "current" },
+            ...(args.compareStartDate && args.compareEndDate ? [{ startDate: args.compareStartDate, endDate: args.compareEndDate, name: "previous" }] : []),
+          ];
       const res = await analyticsData().properties.runReport({
         property: propertyName(args.propertyId),
         requestBody: {
-          dateRanges,
+          dateRanges: ranges,
           dimensions: args.dimensions.map((name) => ({ name })),
           metrics: args.metrics.map((name) => ({ name })),
-          dimensionFilter: args.dimensionFilter ?? buildDimensionFilter(args.dimensionFilters),
+          dimensionFilter: args.dimensionFilter ?? buildDimensionFilter(args.dimensionFilters, args.filterLogic),
           metricFilter: args.metricFilter ?? buildMetricFilter(args.metricFilters),
-          orderBys,
+          orderBys: buildOrderBys(args.orderBy, args.metrics[0]),
           limit: String(args.limit),
           offset: String(args.offset),
+          currencyCode: args.currencyCode,
           keepEmptyRows: args.keepEmptyRows,
           metricAggregations: ["TOTAL"],
           returnPropertyQuota: true,
         },
       });
-      const q = res.data.propertyQuota;
-      const quota = q ? { tokensPerDayRemaining: q.tokensPerDay?.remaining, tokensPerHourRemaining: q.tokensPerHour?.remaining } : undefined;
-      return { property: propertyName(args.propertyId), dateRanges, ...tabulate(res.data), quota };
+      return { property: propertyName(args.propertyId), dateRanges: ranges, ...tabulate(res.data), quota: quotaOf(res.data.propertyQuota) };
     }),
   );
 
@@ -182,11 +356,24 @@ export function registerAnalyticsTools(server: McpServer) {
     {
       title: "GA4 realtime report",
       description:
-        "Real-time (last 30 minutes) GA4 data. Dimensions: country, city, deviceCategory, unifiedScreenName, eventName, minutesAgo. Metrics: activeUsers, screenPageViews, eventCount, keyEvents.",
+        "Real-time (last 30 minutes) GA4 data. Dimensions: country, city, deviceCategory, unifiedScreenName, eventName, minutesAgo. Metrics: activeUsers, screenPageViews, eventCount, keyEvents. Rows are sorted by the first metric unless orderBy says otherwise.",
       inputSchema: {
         propertyId,
         dimensions: z.array(z.string()).default([]),
         metrics: z.array(z.string()).min(1).default(["activeUsers"]),
+        dimensionFilters: z.array(simpleDimensionFilter).optional().describe("Dimension filters, e.g. unifiedScreenName CONTAINS '/tours/'."),
+        filterLogic,
+        minuteRanges: z
+          .array(z.object({
+            startMinutesAgo: z.number().int().min(0).max(29).default(29).describe("Window start, minutes ago (0 = current minute)."),
+            endMinutesAgo: z.number().int().min(0).max(29).default(0).describe("Window end, minutes ago."),
+            name: z.string().optional().describe("Label shown in the dateRange column."),
+          }))
+          .min(1)
+          .max(4)
+          .optional()
+          .describe("Windows inside the last 30 minutes; default is the whole 30 minutes."),
+        orderBy: orderBySpec,
         limit: z.number().int().min(1).max(100000).default(50),
       },
     },
@@ -196,11 +383,15 @@ export function registerAnalyticsTools(server: McpServer) {
         requestBody: {
           dimensions: args.dimensions.map((name) => ({ name })),
           metrics: args.metrics.map((name) => ({ name })),
+          dimensionFilter: buildDimensionFilter(args.dimensionFilters, args.filterLogic),
+          minuteRanges: args.minuteRanges?.map((m, i) => ({ startMinutesAgo: m.startMinutesAgo, endMinutesAgo: m.endMinutesAgo, name: m.name ?? `minutes_${i}` })),
+          orderBys: buildOrderBys(args.orderBy, args.metrics[0]),
           limit: String(args.limit),
           metricAggregations: ["TOTAL"],
+          returnPropertyQuota: true,
         },
       });
-      return { property: propertyName(args.propertyId), ...tabulate(res.data) };
+      return { property: propertyName(args.propertyId), ...tabulate(res.data), quota: quotaOf(res.data.propertyQuota) };
     }),
   );
 
@@ -209,7 +400,7 @@ export function registerAnalyticsTools(server: McpServer) {
     {
       title: "GA4 dimensions & metrics metadata",
       description:
-        "List the dimensions and metrics available for a GA4 property (including custom ones). Filter by a search string to keep the output small.",
+        "List the dimensions and metrics available for a GA4 property (including custom ones), with each metric's type (TYPE_SECONDS, TYPE_CURRENCY, TYPE_STANDARD…) and any deprecated API names. Filter by a search string to keep the output small.",
       inputSchema: {
         propertyId,
         search: z.string().optional().describe("Case-insensitive substring matched against API name, UI name and category, e.g. 'page', 'conversion'."),
@@ -219,10 +410,18 @@ export function registerAnalyticsTools(server: McpServer) {
     tool(async (args) => {
       const res = await analyticsData().properties.getMetadata({ name: `${propertyName(args.propertyId)}/metadata` });
       const q = args.search?.toLowerCase();
-      const pick = <T extends { apiName?: string | null; uiName?: string | null; category?: string | null; description?: string | null; customDefinition?: boolean | null }>(items: T[] | undefined) =>
+      const pick = <T extends { apiName?: string | null; uiName?: string | null; category?: string | null; description?: string | null; customDefinition?: boolean | null; type?: string | null; deprecatedApiNames?: string[] | null }>(items: T[] | undefined) =>
         (items ?? [])
           .filter((i) => !q || [i.apiName, i.uiName, i.category].some((s) => s?.toLowerCase().includes(q)))
-          .map((i) => ({ apiName: i.apiName, uiName: i.uiName, category: i.category, description: i.description, custom: i.customDefinition ?? false }));
+          .map((i) => ({
+            apiName: i.apiName,
+            uiName: i.uiName,
+            category: i.category,
+            description: i.description,
+            custom: i.customDefinition ?? false,
+            type: i.type ?? undefined,
+            deprecatedApiNames: i.deprecatedApiNames?.length ? i.deprecatedApiNames : undefined,
+          }));
       return {
         dimensions: args.kind === "metrics" ? undefined : pick(res.data.dimensions),
         metrics: args.kind === "dimensions" ? undefined : pick(res.data.metrics),
@@ -244,6 +443,9 @@ export function registerAnalyticsTools(server: McpServer) {
         previousStart: z.string().default("56daysAgo"),
         previousEnd: z.string().default("29daysAgo"),
         dimensionFilters: z.array(simpleDimensionFilter).optional(),
+        filterLogic,
+        dimensionFilter: z.any().optional().describe("Raw FilterExpression; overrides dimensionFilters."),
+        metricFilters: z.array(simpleMetricFilter).optional().describe("AND-ed metric filters (post-aggregation)."),
         limit: z.number().int().min(1).max(1000).default(50).describe("Rows returned (sorted by absolute change of the first metric)."),
       },
     },
@@ -257,7 +459,8 @@ export function registerAnalyticsTools(server: McpServer) {
           ],
           dimensions: args.dimensions.map((name) => ({ name })),
           metrics: args.metrics.map((name) => ({ name })),
-          dimensionFilter: buildDimensionFilter(args.dimensionFilters),
+          dimensionFilter: args.dimensionFilter ?? buildDimensionFilter(args.dimensionFilters, args.filterLogic),
+          metricFilter: buildMetricFilter(args.metricFilters),
           limit: "100000",
           metricAggregations: ["TOTAL"],
         },
@@ -303,6 +506,9 @@ export function registerAnalyticsTools(server: McpServer) {
         property: propertyName(args.propertyId),
         current: { start: args.currentStart, end: args.currentEnd },
         previous: { start: args.previousStart, end: args.previousEnd },
+        currencyCode: t.currencyCode,
+        timeZone: t.timeZone,
+        dataQuality: t.dataQuality,
         totals: totalRows,
         rows: rows.slice(0, args.limit),
       };
@@ -375,6 +581,7 @@ export function registerAnalyticsTools(server: McpServer) {
         siteUrl: args.siteUrl,
         period: { start, end },
         pages: rows.length,
+        dataQuality: dataQuality(gaRes.data.metadata),
         totals: { sessions: rows.reduce((a, r) => a + r.sessions, 0), clicks: rows.reduce((a, r) => a + r.clicks, 0), impressions: rows.reduce((a, r) => a + r.impressions, 0) },
         rows: rows.slice(0, args.limit),
       };
@@ -395,7 +602,9 @@ export function registerAnalyticsTools(server: McpServer) {
         startDate: z.string().default("28daysAgo"),
         endDate: z.string().default("yesterday"),
         dimensionFilters: z.array(simpleDimensionFilter).optional(),
+        filterLogic,
         rowLimit: z.number().int().min(1).max(500).default(50),
+        rowOffset: z.number().int().min(0).default(0).describe("Skip this many values of the row dimension (pagination)."),
         columnLimit: z.number().int().min(1).max(50).default(10),
       },
     },
@@ -406,9 +615,9 @@ export function registerAnalyticsTools(server: McpServer) {
           dateRanges: [{ startDate: args.startDate, endDate: args.endDate }],
           dimensions: [{ name: args.rowDimension }, { name: args.columnDimension }],
           metrics: args.metrics.map((name) => ({ name })),
-          dimensionFilter: buildDimensionFilter(args.dimensionFilters),
+          dimensionFilter: buildDimensionFilter(args.dimensionFilters, args.filterLogic),
           pivots: [
-            { fieldNames: [args.rowDimension], limit: String(args.rowLimit), orderBys: [{ metric: { metricName: args.metrics[0] }, desc: true }] },
+            { fieldNames: [args.rowDimension], limit: String(args.rowLimit), offset: String(args.rowOffset), orderBys: [{ metric: { metricName: args.metrics[0] }, desc: true }] },
             { fieldNames: [args.columnDimension], limit: String(args.columnLimit), orderBys: [{ metric: { metricName: args.metrics[0] }, desc: true }] },
           ],
         },
@@ -429,7 +638,7 @@ export function registerAnalyticsTools(server: McpServer) {
       }
       const rows = [...matrix.values()].map((e) => { for (const m of metNames) e[`total.${m}`] = [...columns].reduce((s, c) => s + (typeof e[`${c}.${m}`] === "number" ? (e[`${c}.${m}`] as number) : 0), 0); return e; });
       rows.sort((a, b) => ((b[`total.${metNames[0]}`] as number) ?? 0) - ((a[`total.${metNames[0]}`] as number) ?? 0));
-      return { property: propertyName(args.propertyId), period: { start: args.startDate, end: args.endDate }, rowDimension: args.rowDimension, columnDimension: args.columnDimension, columns: [...columns], metrics: metNames, rows };
+      return { property: propertyName(args.propertyId), period: { start: args.startDate, end: args.endDate }, rowDimension: args.rowDimension, columnDimension: args.columnDimension, columns: [...columns], metrics: metNames, currencyCode: d.metadata?.currencyCode ?? undefined, timeZone: d.metadata?.timeZone ?? undefined, dataQuality: dataQuality(d.metadata), rows };
     }),
   );
 
@@ -437,7 +646,7 @@ export function registerAnalyticsTools(server: McpServer) {
     "ga_batch_run_reports",
     {
       title: "GA4 batch reports",
-      description: "Run up to 5 standard reports in one API call (same property). Each item takes the same fields as ga_run_report's core: dimensions, metrics, startDate, endDate, dimensionFilters, limit. Returns one tabulated result per report, in order.",
+      description: "Run up to 5 standard reports in one API call (same property). Each item takes the same fields as ga_run_report's core: dimensions, metrics, startDate, endDate, dimensionFilters, metricFilters, limit, offset. Returns one tabulated result per report, in order.",
       inputSchema: {
         propertyId,
         reports: z.array(z.object({
@@ -447,14 +656,17 @@ export function registerAnalyticsTools(server: McpServer) {
           startDate: z.string().default("28daysAgo"),
           endDate: z.string().default("yesterday"),
           dimensionFilters: z.array(simpleDimensionFilter).optional(),
+          filterLogic: z.enum(["and", "or"]).default("and").describe("How to join this report's dimensionFilters."),
+          metricFilters: z.array(simpleMetricFilter).optional().describe("AND-ed metric filters (post-aggregation)."),
           limit: z.number().int().min(1).max(10000).default(50),
+          offset: z.number().int().min(0).default(0).describe("Skip this many rows (pagination)."),
         })).min(1).max(5),
       },
     },
     tool(async (args) => {
       const res = await analyticsData().properties.batchRunReports({
         property: propertyName(args.propertyId),
-        requestBody: { requests: args.reports.map((r) => ({ dateRanges: [{ startDate: r.startDate, endDate: r.endDate }], dimensions: r.dimensions.map((name) => ({ name })), metrics: r.metrics.map((name) => ({ name })), dimensionFilter: buildDimensionFilter(r.dimensionFilters), limit: String(r.limit), orderBys: [{ metric: { metricName: r.metrics[0] }, desc: true }], metricAggregations: ["TOTAL"] })) },
+        requestBody: { requests: args.reports.map((r) => ({ dateRanges: [{ startDate: r.startDate, endDate: r.endDate }], dimensions: r.dimensions.map((name) => ({ name })), metrics: r.metrics.map((name) => ({ name })), dimensionFilter: buildDimensionFilter(r.dimensionFilters, r.filterLogic), metricFilter: buildMetricFilter(r.metricFilters), limit: String(r.limit), offset: String(r.offset), orderBys: [{ metric: { metricName: r.metrics[0] }, desc: true }], metricAggregations: ["TOTAL"] })) },
       });
       return { property: propertyName(args.propertyId), reports: (res.data.reports ?? []).map((rep, i) => ({ name: args.reports[i].name ?? `report ${i + 1}`, period: { start: args.reports[i].startDate, end: args.reports[i].endDate }, ...tabulate(rep) })) };
     }),
@@ -465,7 +677,7 @@ export function registerAnalyticsTools(server: McpServer) {
     {
       title: "GA4 funnel report",
       description:
-        "Funnel (v1alpha): users reaching each step and drop-off between steps. Steps are event names with an optional page-path filter, e.g. [{name:'Tour page', event:'page_view', pagePathContains:'/tours/'}, {name:'Book', event:'click_book'}]. Open by default; closed=true requires entering at step 1. Optional breakdown dimension.",
+        "Funnel (v1alpha): users reaching each step and drop-off between steps. Steps are event names with an optional page-path filter, e.g. [{name:'Tour page', event:'page_view', pagePathContains:'/tours/'}, {name:'Book', event:'click_book'}]. Open by default; closed=true requires entering at step 1. Optional breakdown dimension, nextAction (what abandoners did next) and TRENDED_FUNNEL (per-date) visualization.",
       inputSchema: {
         propertyId,
         steps: z.array(z.object({ name: z.string(), event: z.string().describe("Event name, e.g. page_view, view_item, purchase."), pagePathContains: z.string().optional().describe("Only count the event on pages whose path contains this.") })).min(2).max(10),
@@ -473,6 +685,13 @@ export function registerAnalyticsTools(server: McpServer) {
         endDate: z.string().default("yesterday"),
         closed: z.boolean().default(false),
         breakdown: z.string().optional().describe("Dimension to break the funnel down by, e.g. 'deviceCategory' or 'sessionDefaultChannelGroup'."),
+        breakdownLimit: z.number().int().min(1).max(15).default(5).describe("Values kept for the breakdown dimension."),
+        nextAction: z.string().optional().describe("Dimension showing what users did after each step, e.g. 'eventName' or 'unifiedPagePathScreen'; comes back in the visualization block."),
+        nextActionLimit: z.number().int().min(1).max(15).default(5).describe("Next-action values kept per step."),
+        visualization: z.enum(["STANDARD_FUNNEL", "TRENDED_FUNNEL"]).default("STANDARD_FUNNEL").describe("TRENDED_FUNNEL adds a date column so the funnel can be read per day."),
+        dimensionFilters: z.array(simpleDimensionFilter).optional().describe("Restrict the funnel to a segment, e.g. sessionDefaultChannelGroup EXACT 'Organic Search'."),
+        filterLogic,
+        limit: z.number().int().min(1).max(10000).default(250).describe("Rows returned per sub-report."),
       },
     },
     tool(async (args) => {
@@ -486,15 +705,43 @@ export function registerAnalyticsTools(server: McpServer) {
       const body: Record<string, unknown> = {
         dateRanges: [{ startDate: args.startDate, endDate: args.endDate }],
         funnel: { isOpenFunnel: !args.closed, steps: args.steps.map((s) => ({ name: s.name, filterExpression: stepFilter(s).funnelFilterExpression })) },
+        funnelVisualizationType: args.visualization,
+        limit: String(args.limit),
+        returnPropertyQuota: true,
       };
-      if (args.breakdown) body.funnelBreakdown = { breakdownDimension: { name: args.breakdown }, limit: "5" };
-      const res = await client.request<{ funnelTable?: { dimensionHeaders?: { name: string }[]; metricHeaders?: { name: string }[]; rows?: { dimensionValues?: { value: string }[]; metricValues?: { value: string }[] }[] } }>({ url: `https://analyticsdata.googleapis.com/v1alpha/${propertyName(args.propertyId)}:runFunnelReport`, method: "POST", data: body });
-      const t = res.data.funnelTable ?? {};
-      const dims = (t.dimensionHeaders ?? []).map((h) => h.name);
-      // The alpha API repeats the metric headers; keep the first occurrence of each name.
-      const mets = [...new Set((t.metricHeaders ?? []).map((h) => h.name))];
-      const rows = (t.rows ?? []).map((r) => { const o: Record<string, unknown> = {}; dims.forEach((n, i) => (o[n] = r.dimensionValues?.[i]?.value)); mets.forEach((n, i) => { if (i < (r.metricValues?.length ?? 0)) o[n] = toNumber(r.metricValues?.[i]?.value); }); return o; });
-      return { property: propertyName(args.propertyId), period: { start: args.startDate, end: args.endDate }, openFunnel: !args.closed, steps: args.steps.map((x) => x.name), dimensions: dims, metrics: mets, rows, note: "activeUsers per step; completion rate and abandonments are relative to the previous step." };
+      if (args.breakdown) body.funnelBreakdown = { breakdownDimension: { name: args.breakdown }, limit: String(args.breakdownLimit) };
+      if (args.nextAction) body.funnelNextAction = { nextActionDimension: { name: args.nextAction }, limit: String(args.nextActionLimit) };
+      const dimensionFilter = buildDimensionFilter(args.dimensionFilters, args.filterLogic);
+      if (dimensionFilter) body.dimensionFilter = dimensionFilter;
+      type FunnelSub = {
+        dimensionHeaders?: { name: string }[];
+        metricHeaders?: { name: string }[];
+        rows?: { dimensionValues?: { value: string }[]; metricValues?: { value: string }[] }[];
+        metadata?: { samplingMetadatas?: { samplesReadCount?: string; samplingSpaceSize?: string }[] };
+      };
+      const res = await client.request<{ funnelTable?: FunnelSub; funnelVisualization?: FunnelSub; propertyQuota?: PropertyQuotaLike }>({ url: `https://analyticsdata.googleapis.com/v1alpha/${propertyName(args.propertyId)}:runFunnelReport`, method: "POST", data: body });
+      const flatten = (t: FunnelSub | undefined) => {
+        if (!t) return undefined;
+        const dims = (t.dimensionHeaders ?? []).map((h) => h.name);
+        // The alpha API repeats the metric headers; keep the first occurrence of each name.
+        const mets = [...new Set((t.metricHeaders ?? []).map((h) => h.name))];
+        const rows = (t.rows ?? []).map((r) => { const o: Record<string, unknown> = {}; dims.forEach((n, i) => (o[n] = r.dimensionValues?.[i]?.value)); mets.forEach((n, i) => { if (i < (r.metricValues?.length ?? 0)) o[n] = toNumber(r.metricValues?.[i]?.value); }); return o; });
+        return { dimensions: dims, metrics: mets, rows };
+      };
+      const table = flatten(res.data.funnelTable) ?? { dimensions: [], metrics: [], rows: [] };
+      // The visualization sub-report only adds something when a date or next-action column was asked for.
+      const wantsVisualization = !!args.nextAction || args.visualization === "TRENDED_FUNNEL";
+      return {
+        property: propertyName(args.propertyId),
+        period: { start: args.startDate, end: args.endDate },
+        openFunnel: !args.closed,
+        steps: args.steps.map((x) => x.name),
+        ...table,
+        visualization: wantsVisualization ? flatten(res.data.funnelVisualization) : undefined,
+        dataQuality: dataQuality(res.data.funnelTable?.metadata),
+        quota: quotaOf(res.data.propertyQuota),
+        note: "activeUsers per step; completion rate and abandonments are relative to the previous step. visualization holds the per-date (TRENDED_FUNNEL) and next-action rows when they were requested.",
+      };
     }),
   );
 
@@ -527,8 +774,8 @@ export function registerAnalyticsTools(server: McpServer) {
     "ga_property_config",
     {
       title: "GA4 property configuration (read-only)",
-      description: "Read a property's setup: details (time zone, currency, industry, created), data retention, data streams (with measurement IDs and enhanced-measurement settings for web streams), custom dimensions and metrics, key events (conversions), Google Ads links and audiences. Choose sections to keep the output small.",
-      inputSchema: { propertyId, sections: z.array(z.enum(["details", "streams", "customDimensions", "customMetrics", "keyEvents", "adsLinks", "audiences", "retention"])).default(["details", "streams", "customDimensions", "customMetrics", "keyEvents", "adsLinks", "audiences", "retention"]) },
+      description: "Read a property's setup: details (time zone, currency, industry, created), data retention, data streams (with measurement IDs and enhanced-measurement settings for web streams), custom dimensions and metrics, key events (conversions), Google Ads links, audiences with the filters that define them, attribution model and lookback windows (why key events disagree with Search Console or Ads) and Google Signals state (what makes reports subject to thresholding). Optional sections: accessBindings (who has access), bigQueryLinks. Choose sections to keep the output small.",
+      inputSchema: { propertyId, sections: z.array(z.enum(["details", "streams", "customDimensions", "customMetrics", "keyEvents", "adsLinks", "audiences", "retention", "attribution", "googleSignals", "accessBindings", "bigQueryLinks"])).default(["details", "streams", "customDimensions", "customMetrics", "keyEvents", "adsLinks", "audiences", "retention", "attribution", "googleSignals"]) },
     },
     tool(async (args) => {
       const name = propertyName(args.propertyId);
@@ -537,6 +784,7 @@ export function registerAnalyticsTools(server: McpServer) {
       const want = new Set(args.sections);
       const out: Record<string, unknown> = { property: name };
       const tasks: Promise<void>[] = [];
+      const failed = (key: string) => (e: unknown) => { out[key] = { error: (e as Error).message.slice(0, 200) }; };
       if (want.has("details")) tasks.push(admin.properties.get({ name }).then((r) => { out.details = { displayName: r.data.displayName, timeZone: r.data.timeZone, currencyCode: r.data.currencyCode, industryCategory: r.data.industryCategory, serviceLevel: r.data.serviceLevel, createTime: r.data.createTime, parent: r.data.parent }; }));
       if (want.has("retention")) tasks.push(admin.properties.getDataRetentionSettings({ name: `${name}/dataRetentionSettings` }).then((r) => { out.dataRetention = { eventDataRetention: r.data.eventDataRetention, resetUserDataOnNewActivity: r.data.resetUserDataOnNewActivity }; }));
       if (want.has("streams")) tasks.push(admin.properties.dataStreams.list({ parent: name }).then(async (r) => {
@@ -551,7 +799,25 @@ export function registerAnalyticsTools(server: McpServer) {
       if (want.has("customMetrics")) tasks.push(admin.properties.customMetrics.list({ parent: name, pageSize: 200 }).then((r) => { out.customMetrics = (r.data.customMetrics ?? []).map((m) => ({ parameterName: m.parameterName, displayName: m.displayName, scope: m.scope, unit: m.measurementUnit })); }));
       if (want.has("keyEvents")) tasks.push(admin.properties.keyEvents.list({ parent: name, pageSize: 200 }).then((r) => { out.keyEvents = (r.data.keyEvents ?? []).map((k) => ({ eventName: k.eventName, countingMethod: k.countingMethod, custom: k.custom, createTime: k.createTime })); }));
       if (want.has("adsLinks")) tasks.push(admin.properties.googleAdsLinks.list({ parent: name }).then((r) => { out.googleAdsLinks = (r.data.googleAdsLinks ?? []).map((l) => ({ customerId: l.customerId, canManageClients: l.canManageClients, adsPersonalizationEnabled: l.adsPersonalizationEnabled, createTime: l.createTime })); }));
-      if (want.has("audiences")) tasks.push(alpha.properties.audiences.list({ parent: name, pageSize: 200 }).then((r) => { out.audiences = (r.data.audiences ?? []).map((a) => ({ displayName: a.displayName, description: a.description, membershipDurationDays: a.membershipDurationDays, adsPersonalizationEnabled: a.adsPersonalizationEnabled })); }).catch((e) => { out.audiences = { error: (e as Error).message.slice(0, 200) }; }));
+      if (want.has("audiences")) tasks.push(alpha.properties.audiences.list({ parent: name, pageSize: 200 }).then((r) => { out.audiences = (r.data.audiences ?? []).map((a) => ({ displayName: a.displayName, description: a.description, membershipDurationDays: a.membershipDurationDays, adsPersonalizationEnabled: a.adsPersonalizationEnabled, filterClauses: compactAudienceClauses(a.filterClauses) })); }).catch(failed("audiences")));
+      if (want.has("attribution")) tasks.push(alpha.properties.getAttributionSettings({ name: `${name}/attributionSettings` }).then((r) => {
+        out.attribution = {
+          reportingAttributionModel: r.data.reportingAttributionModel,
+          acquisitionConversionEventLookbackWindow: r.data.acquisitionConversionEventLookbackWindow,
+          otherConversionEventLookbackWindow: r.data.otherConversionEventLookbackWindow,
+          adsWebConversionDataExportScope: r.data.adsWebConversionDataExportScope,
+          note: "GA4 credits key events with this model and lookback window; Search Console and Ads count with their own rules, which is the usual reason the numbers disagree.",
+        };
+      }).catch(failed("attribution")));
+      if (want.has("googleSignals")) tasks.push(alpha.properties.getGoogleSignalsSettings({ name: `${name}/googleSignalsSettings` }).then((r) => {
+        out.googleSignals = {
+          state: r.data.state,
+          consent: r.data.consent,
+          note: r.data.state === "GOOGLE_SIGNALS_ENABLED" ? "Signals is on, so reports are subject to data thresholding: small rows are hidden (watch dataQuality on report results)." : undefined,
+        };
+      }).catch(failed("googleSignals")));
+      if (want.has("accessBindings")) tasks.push(alpha.properties.accessBindings.list({ parent: name, pageSize: 200 }).then((r) => { out.accessBindings = (r.data.accessBindings ?? []).map((b) => ({ user: b.user, roles: b.roles })); }).catch(failed("accessBindings")));
+      if (want.has("bigQueryLinks")) tasks.push(alpha.properties.bigQueryLinks.list({ parent: name, pageSize: 200 }).then((r) => { out.bigQueryLinks = (r.data.bigqueryLinks ?? []).map((l) => ({ project: l.project, datasetLocation: l.datasetLocation, dailyExportEnabled: l.dailyExportEnabled, streamingExportEnabled: l.streamingExportEnabled, freshDailyExportEnabled: l.freshDailyExportEnabled, includeAdvertisingId: l.includeAdvertisingId, excludedEvents: l.excludedEvents?.length ? l.excludedEvents : undefined, createTime: l.createTime })); }).catch(failed("bigQueryLinks")));
       await Promise.all(tasks);
       return out;
     }),
