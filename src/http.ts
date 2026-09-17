@@ -5,6 +5,7 @@ import { configuredOptions, createServer, SERVER_INFO, TOOLSETS, type ServerOpti
 import { envValue } from "./env.js";
 import { describeCredentialSource, runWithAuth } from "./google.js";
 import { loadHosted } from "./hosted/index.js";
+import { loadOAuth } from "./oauth.js";
 
 const PORT = Number(envValue("MCP_PORT") ?? 8080);
 const HOST = envValue("MCP_HOST") ?? "127.0.0.1";
@@ -46,6 +47,8 @@ function json(res: http.ServerResponse, status: number, body: unknown) {
 
 export function startHttp() {
   const hosted = loadHosted();
+  // Optional OAuth layer (SEO_MCP_OAUTH=1) for clients that cannot send a static bearer token.
+  const oauth = loadOAuth();
   if (!TOKEN && HOST !== "127.0.0.1" && HOST !== "localhost" && HOST !== "::1") {
     console.error("WARNING: MCP_AUTH_TOKEN is not set while binding to a non-loopback host. Anyone reaching this port can query your Google data.");
   }
@@ -59,14 +62,28 @@ export function startHttp() {
       return;
     }
     if (url.pathname !== PATH) {
-      if (hosted && (await hosted.handle(req, res, url))) return;
+      // These handlers read request bodies and talk to Google and GitHub; a throw here must not
+      // become an unhandled rejection, which would take the whole process down.
+      try {
+        if (oauth && (await oauth.handle(req, res, url))) return;
+        if (hosted && (await hosted.handle(req, res, url))) return;
+      } catch (err) {
+        console.error("web request failed:", err);
+        if (!res.headersSent) json(res, 400, { error: "bad request" });
+        return;
+      }
       json(res, 404, { error: "not found" });
       return;
     }
-    // Operator token → full server with the operator's credentials; hosted user token → read-only server on that user's Google grant.
-    const tenant = authorized(req) ? null : hosted?.resolve(bearer(req)) ?? null;
-    if (!authorized(req) && !tenant) {
-      res.setHeader("WWW-Authenticate", "Bearer");
+    // Operator token → full server with the operator's credentials; an OAuth grant is the same
+    // access (the browser form asked for that very token), narrowed to read-only for `mcp:read`;
+    // a hosted user token → read-only server on that user's own Google grant.
+    const operator = authorized(req);
+    const grant = operator ? null : oauth?.resolve(bearer(req)) ?? null;
+    const tenant = operator || grant ? null : hosted?.resolve(bearer(req)) ?? null;
+    if (!operator && !grant && !tenant) {
+      // RFC 9728: point unauthenticated clients at the metadata so they can start the OAuth flow.
+      res.setHeader("WWW-Authenticate", oauth ? `Bearer resource_metadata="${oauth.metadataUrl(req)}"` : "Bearer");
       json(res, 401, { error: "unauthorized" });
       return;
     }
@@ -82,7 +99,8 @@ export function startHttp() {
     // instance was not started with, nor turn a read-only tenant into a writing one.
     let options: ServerOptions;
     try {
-      options = narrowOptions(tenant ? tenant.options : configuredOptions(), url);
+      const base = tenant ? tenant.options : configuredOptions();
+      options = narrowOptions(grant?.readOnly ? { ...base, readOnly: true } : base, url);
     } catch (err) {
       json(res, 400, { error: (err as Error).message });
       return;
@@ -108,7 +126,7 @@ export function startHttp() {
 
   httpServer.keepAliveTimeout = 65_000;
   httpServer.listen(PORT, HOST, () => {
-    console.error(`google-seo-mcp listening on http://${HOST}:${PORT}${PATH} (auth: ${TOKEN ? "bearer token" : "NONE"}, credentials: ${describeCredentialSource()}${hosted ? `, ${hosted.describe()}` : ""})`);
+    console.error(`google-seo-mcp listening on http://${HOST}:${PORT}${PATH} (auth: ${TOKEN ? "bearer token" : "NONE"}, credentials: ${describeCredentialSource()}${oauth ? `, ${oauth.describe()}` : ""}${hosted ? `, ${hosted.describe()}` : ""})`);
   });
 
   const shutdown = () => {
