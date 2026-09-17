@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { toolsetOf, isWriteTool, inferAnnotations } from "../../dist/server.js";
+import { narrowOptions } from "../../dist/http.js";
 import { shq } from "../../dist/tools/wp.js";
 
 test("toolsetOf maps prefixes to toolsets", () => {
@@ -30,4 +31,22 @@ test("shq produces POSIX-safe single-quoted strings", () => {
   assert.equal(shq("plain"), "'plain'");
   assert.equal(shq("it's"), `'it'\\''s'`);
   assert.equal(shq(""), "''");
+});
+
+test("narrowOptions only ever removes access", () => {
+  const u = (q) => new URL(`http://x/mcp${q}`);
+  // No parameter: untouched.
+  assert.deepEqual(narrowOptions({ toolsets: ["gsc", "ga4"] }, u("")), { toolsets: ["gsc", "ga4"] });
+  // Narrowing an unrestricted instance.
+  assert.deepEqual(narrowOptions({}, u("?toolsets=gsc,web")).toolsets, ["gsc", "web"]);
+  // Cannot widen past what the instance allows: wordpress is not in the base set, so it is dropped.
+  assert.deepEqual(narrowOptions({ toolsets: ["gsc", "ga4"] }, u("?toolsets=gsc,wordpress")).toolsets, ["gsc"]);
+  // Cannot turn read-only off, and can turn it on.
+  assert.equal(narrowOptions({ readOnly: true }, u("?readOnly=0")).readOnly, true);
+  assert.equal(narrowOptions({ readOnly: false }, u("?readOnly=1")).readOnly, true);
+  // Other restrictions survive.
+  assert.deepEqual(narrowOptions({ exclude: ["brand_mentions"] }, u("?toolsets=gsc")).exclude, ["brand_mentions"]);
+  // Typos are rejected rather than silently yielding an empty server.
+  assert.throws(() => narrowOptions({}, u("?toolsets=gsc,wordpres")), /unknown toolset/);
+  assert.throws(() => narrowOptions({}, u("?toolsets=")), /at least one/);
 });

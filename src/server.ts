@@ -74,6 +74,14 @@ export interface ServerOptions {
   allowWrite?: string[];
 }
 
+/** Every toolset name toolsetOf() can return; used to reject typos in a request's narrowing parameter. */
+export const TOOLSETS = ["gsc", "ga4", "web", "geo", "analysis", "wordpress", "github", "gmail", "core"] as const;
+
+/** The options this process was started with (CLI flags and environment). Exported so the HTTP layer can narrow them per request without widening them. */
+export function configuredOptions(): ServerOptions {
+  return readOptions();
+}
+
 function readOptions(): ServerOptions {
   const argv = process.argv.slice(2);
   const readOnly = argv.includes("--read-only") || /^(1|true|yes)$/i.test(envValue("SEO_MCP_READ_ONLY") ?? "");

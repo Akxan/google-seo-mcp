@@ -1,7 +1,7 @@
 import http from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createServer, SERVER_INFO } from "./server.js";
+import { configuredOptions, createServer, SERVER_INFO, TOOLSETS, type ServerOptions } from "./server.js";
 import { envValue } from "./env.js";
 import { describeCredentialSource, runWithAuth } from "./google.js";
 import { loadHosted } from "./hosted/index.js";
@@ -9,6 +9,21 @@ import { loadHosted } from "./hosted/index.js";
 const PORT = Number(envValue("MCP_PORT") ?? 8080);
 const HOST = envValue("MCP_HOST") ?? "127.0.0.1";
 const PATH = envValue("MCP_PATH") ?? "/mcp";
+
+/** Apply a request's `?toolsets=` / `?readOnly=` narrowing. Intersects with what the instance already allows, so it can only ever remove access. */
+export function narrowOptions(base: ServerOptions, url: URL): ServerOptions {
+  const out: ServerOptions = { ...base };
+  const raw = url.searchParams.get("toolsets");
+  if (raw !== null) {
+    const asked = raw.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+    const unknown = asked.filter((x) => !(TOOLSETS as readonly string[]).includes(x));
+    if (unknown.length) throw new Error(`unknown toolset(s): ${unknown.join(", ")}. Valid: ${TOOLSETS.join(", ")}`);
+    if (!asked.length) throw new Error(`toolsets must name at least one of: ${TOOLSETS.join(", ")}`);
+    out.toolsets = base.toolsets ? base.toolsets.filter((t) => asked.includes(t)) : asked;
+  }
+  if (/^(1|true|yes)$/i.test(url.searchParams.get("readOnly") ?? "")) out.readOnly = true;
+  return out;
+}
 const TOKEN = envValue("MCP_AUTH_TOKEN");
 
 function bearer(req: http.IncomingMessage): string {
@@ -61,9 +76,21 @@ export function startHttp() {
       return;
     }
 
+    // A request may ask for fewer tools than this instance offers. 96 tool definitions cost
+    // ~35k tokens in every conversation, and a client that only reads analytics has no use for
+    // the WordPress and GitHub write tools. Narrowing only: it can never add a toolset the
+    // instance was not started with, nor turn a read-only tenant into a writing one.
+    let options: ServerOptions;
+    try {
+      options = narrowOptions(tenant ? tenant.options : configuredOptions(), url);
+    } catch (err) {
+      json(res, 400, { error: (err as Error).message });
+      return;
+    }
+
     // Stateless: a fresh server + transport per request, so a crash in one
     // request never affects others and there is nothing to leak over days of uptime.
-    const server = createServer(tenant ? tenant.options : {});
+    const server = createServer(options);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => {
       void transport.close();
