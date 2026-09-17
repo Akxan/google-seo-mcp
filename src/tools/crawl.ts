@@ -10,7 +10,7 @@ import { imageSize, disableTypes } from "image-size";
 disableTypes(["icns", "jxl", "jxl-stream", "heif"]);
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { heartbeat, round, tool } from "../util.js";
-import { auditPage, collectSitemapUrls, fetchWithTimeout, parseRobots, robotsAllows } from "./web.js";
+import { auditPage, collectSitemapUrls, fetchWithTimeout, parseLinkHeader, parseRobots, robotsAllows } from "./web.js";
 
 async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
@@ -27,6 +27,9 @@ export function normalizeUrl(u: string): string {
   return x.toString();
 }
 export function cleanUrl(u: string): string { const x = new URL(u); x.hash = ""; return x.toString(); }
+
+/** One hreflang annotation plus where it was declared: "html", "header", "sitemap", or a "+"-joined combination. */
+interface Alt { lang: string; href: string; source: string }
 
 export function registerCrawlTools(server: McpServer) {
   server.registerTool(
@@ -143,10 +146,10 @@ export function registerCrawlTools(server: McpServer) {
     {
       title: "hreflang / multilingual consistency check",
       description:
-        "For a page (or a sitemap sample), read its hreflang alternates and verify: every alternate URL is reachable, points back (reciprocal) to the source, has a self-referencing entry, uses valid language-region codes, has an x-default, and that canonicals do not contradict the alternates. Also compares <html lang> with the declared hreflang.",
+        "For a page (or a sitemap sample), read its hreflang alternates from all three places the spec allows - HTML <link rel=alternate>, the HTTP Link: header, and xhtml:link entries in the XML sitemap (used by several WordPress multilingual plugins) - and verify: every alternate URL is reachable, points back (reciprocal) to the source, has a self-referencing entry, uses valid language-region codes, has an x-default, and that canonicals do not contradict the alternates. Also compares <html lang> with the declared hreflang and says which source each annotation came from.",
       inputSchema: {
         urls: z.array(z.string().url()).max(30).optional(),
-        sitemapUrl: z.string().url().optional().describe("Sample pages from a sitemap instead."),
+        sitemapUrl: z.string().url().optional().describe("Sitemap to sample pages from when urls[] is omitted; it is always also read for xhtml:link hreflang annotations."),
         sampleSize: z.number().int().min(1).max(30).default(10),
       },
     },
@@ -154,32 +157,56 @@ export function registerCrawlTools(server: McpServer) {
       const stop = heartbeat(extra, "checking hreflang alternates");
       try {
       let urls = a.urls ?? [];
-      if (!urls.length && a.sitemapUrl) { const all = (await collectSitemapUrls(a.sitemapUrl, { maxUrls: 5000 })).urls.map((u) => u.loc); const step = Math.max(1, Math.floor(all.length / a.sampleSize)); urls = all.filter((_, i) => i % step === 0).slice(0, a.sampleSize); }
+      // The sitemap is a first-class hreflang source, so read it whenever it is given, not only for sampling.
+      const sitemapAlternates = new Map<string, Alt[]>();
+      let sitemapEntries = 0;
+      if (a.sitemapUrl) {
+        const all = (await collectSitemapUrls(a.sitemapUrl, { maxUrls: 5000 })).urls;
+        for (const u of all) {
+          if (!u.alternates?.length) continue;
+          sitemapEntries++;
+          try { sitemapAlternates.set(normalizeUrl(u.loc), u.alternates.map((x) => ({ lang: x.hreflang, href: normalizeUrl(new URL(x.href, u.loc).toString()), source: "sitemap" as const }))); } catch { /* skip unparsable href */ }
+        }
+        if (!urls.length) { const locs = all.map((u) => u.loc); const step = Math.max(1, Math.floor(locs.length / a.sampleSize)); urls = locs.filter((_, i) => i % step === 0).slice(0, a.sampleSize); }
+      }
       if (!urls.length) throw new Error("Provide urls[] or sitemapUrl.");
-      const cache = new Map<string, { status: number; alternates: { lang: string; href: string }[]; canonical: string | null; htmlLang: string | null }>();
+      const cache = new Map<string, { status: number; alternates: Alt[]; canonical: string | null; htmlLang: string | null }>();
       const read = async (url: string) => {
         const key = normalizeUrl(url);
+        const fromSitemap = sitemapAlternates.get(key) ?? [];
         if (cache.has(key)) return cache.get(key)!;
+        const abs = (href: string) => { try { return normalizeUrl(new URL(href, url).toString()); } catch { return null; } };
         try {
           const res = await fetchWithTimeout(url);
           const $ = cheerio.load(await res.text());
-          const alternates = $('link[rel="alternate"][hreflang]').map((_, el) => ({ lang: ($(el).attr("hreflang") ?? "").toLowerCase(), href: normalizeUrl(new URL($(el).attr("href")!, url).toString()) })).get();
-          const canonical = $('link[rel="canonical"]').attr("href") ? normalizeUrl(new URL($('link[rel="canonical"]').attr("href")!, url).toString()) : null;
+          const fromHtml = $('link[rel~="alternate"][hreflang]').map((_, el) => ({ lang: ($(el).attr("hreflang") ?? "").trim().toLowerCase(), href: abs($(el).attr("href") ?? "") })).get();
+          // RFC 8288 Link header: <https://example.com/en/>; rel="alternate"; hreflang="en"
+          const fromHeader = parseLinkHeader(res.headers.get("link")).filter((l) => /(^|\s)alternate(\s|$)/i.test(l.params.rel ?? "") && l.params.hreflang).map((l) => ({ lang: l.params.hreflang.trim().toLowerCase(), href: abs(l.url) }));
+          const merge = (list: { lang: string; href: string | null }[], source: string): Alt[] => list.filter((x) => x.href && x.lang).map((x) => ({ lang: x.lang, href: x.href!, source }));
+          const alternates: Alt[] = [];
+          for (const alt of [...merge(fromHtml, "html"), ...merge(fromHeader, "header"), ...fromSitemap]) {
+            const dup = alternates.find((x) => x.lang === alt.lang && x.href === alt.href);
+            if (dup) dup.source = dup.source === alt.source ? dup.source : `${dup.source}+${alt.source}`;
+            else alternates.push({ ...alt });
+          }
+          const canonical = $('link[rel="canonical"]').attr("href") ? abs($('link[rel="canonical"]').attr("href")!) : null;
           const entry = { status: res.status, alternates, canonical, htmlLang: $("html").attr("lang")?.toLowerCase() ?? null };
           cache.set(key, entry);
           return entry;
-        } catch (e) { const entry = { status: 0, alternates: [], canonical: null, htmlLang: null }; cache.set(key, entry); return entry; }
+        } catch { const entry = { status: 0, alternates: fromSitemap, canonical: null, htmlLang: null }; cache.set(key, entry); return entry; }
       };
       const LANG_RE = /^(x-default|[a-z]{2,3}(-[a-z]{2}|-[0-9]{3}|-[a-z]{4})?)$/;
       const results = await mapLimit(urls, 4, async (url) => {
         const src = await read(url);
         const self = normalizeUrl(url);
         const problems: string[] = [];
-        if (!src.alternates.length) return { url, alternates: 0, problems: ["No hreflang annotations (fine for single-language sites)"] };
+        const sources = [...new Set(src.alternates.flatMap((x) => x.source.split("+")))];
+        if (!src.alternates.length) return { url, alternates: 0, sources, problems: ["No hreflang annotations in the HTML, the Link header or the sitemap (fine for single-language sites)"] };
         if (!src.alternates.some((x) => x.href === self || x.href === src.canonical)) problems.push("Missing self-referencing hreflang");
         if (!src.alternates.some((x) => x.lang === "x-default")) problems.push("No x-default entry");
         for (const alt of src.alternates) if (!LANG_RE.test(alt.lang)) problems.push(`Invalid hreflang code '${alt.lang}'`);
         if (src.canonical && src.canonical !== self) problems.push(`Canonical (${src.canonical}) differs from URL; hreflang on a canonicalized page is ignored`);
+        if (sources.length === 1 && sources[0] === "sitemap") problems.push("hreflang only in the XML sitemap: valid for Google, but link tags in the HTML are checked by more tools and survive sitemap regeneration");
         const langs = src.alternates.map((x) => x.lang.split("-")[0]).filter((l) => l !== "x");
         if (src.htmlLang && !langs.includes(src.htmlLang.split("-")[0])) problems.push(`<html lang="${src.htmlLang}"> not among declared hreflang languages`);
         const alternates = await mapLimit(src.alternates, 4, async (alt) => {
@@ -189,14 +216,14 @@ export function registerCrawlTools(server: McpServer) {
           if (t.status !== 200) issues.push(`HTTP ${t.status}`);
           else if (!reciprocal && alt.href !== self) issues.push("does not link back (non-reciprocal)");
           if (t.canonical && t.canonical !== alt.href) issues.push(`alternate canonicalizes elsewhere (${t.canonical})`);
-          return { lang: alt.lang, href: alt.href, status: t.status, reciprocal, issues };
+          return { lang: alt.lang, href: alt.href, source: alt.source, status: t.status, reciprocal, issues };
         });
         const langCount = new Map<string, number>();
         for (const x of src.alternates) langCount.set(x.lang, (langCount.get(x.lang) ?? 0) + 1);
         for (const [l, n] of langCount) if (n > 1) problems.push(`hreflang '${l}' declared ${n} times`);
-        return { url, htmlLang: src.htmlLang, canonical: src.canonical, alternates: alternates.length, problems, alternateDetails: alternates.filter((x) => x.issues.length) };
+        return { url, htmlLang: src.htmlLang, canonical: src.canonical, alternates: alternates.length, sources, problems, alternateDetails: alternates.filter((x) => x.issues.length) };
       });
-      return { checked: results.length, pagesWithProblems: results.filter((r) => r.problems.length || (r.alternateDetails?.length ?? 0) > 0).length, results };
+      return { checked: results.length, sitemapUrlsWithAlternates: a.sitemapUrl ? sitemapEntries : undefined, pagesWithProblems: results.filter((r) => r.problems.length || (r.alternateDetails?.length ?? 0) > 0).length, results };
       } finally { stop(); }
     }),
   );

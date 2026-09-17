@@ -26,9 +26,9 @@ export function toolsetOf(name: string): string {
   if (name.startsWith("wp_")) return "wordpress";
   if (name.startsWith("github_")) return "github";
   if (name.startsWith("gmail_")) return "gmail";
-  if (/^(page_audit|pagespeed|sitemap_check|robots_check|site_crawl|hreflang_check|compare_pages|social_preview_check|keyword_suggest)$/.test(name)) return "web";
-  if (/^(ai_crawler_access|llms_txt_|structured_data_audit|geo_page_score|eeat_audit|indexnow_submit|ai_citation_check|schema_|knowledge_graph_check|brand_mentions)/.test(name)) return "geo";
-  if (/^(migration_check|cross_site_links|content_refresh_candidates|crux_history|reviews_snapshot)$/.test(name)) return "analysis";
+  if (/^(page_audit|pagespeed|sitemap_check|robots_check|canonical_host_check|site_crawl|hreflang_check|compare_pages|social_preview_check|keyword_suggest)$/.test(name)) return "web";
+  if (/^(ai_crawler_access|llms_txt_|structured_data_audit|geo_page_score|eeat_audit|indexnow_submit|ai_citation_check|schema_|knowledge_graph_check|brand_mentions|ai_search_sources)/.test(name)) return "geo";
+  if (/^(migration_check|cross_site_links|content_refresh_candidates|crux_history|crux_snapshot|wikipedia_pageviews|reviews_snapshot)$/.test(name)) return "analysis";
   return "core";
 }
 

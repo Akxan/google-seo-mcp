@@ -30,7 +30,7 @@ export const HOSTED_SCOPES = [
 export const HOSTED_SERVER_OPTIONS: ServerOptions = {
   readOnly: true,
   toolsets: ["gsc", "ga4", "web", "geo", "analysis"],
-  exclude: ["ai_citation_check", "reviews_snapshot", "brand_mentions"],
+  exclude: ["ai_citation_check", "ai_search_sources", "reviews_snapshot", "brand_mentions"],
 };
 
 const REPO = "https://github.com/Akxan/google-seo-mcp";

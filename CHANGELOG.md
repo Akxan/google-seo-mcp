@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Web, GEO and analysis
+- **Fixed a wrong number:** CrUX reports Cumulative Layout Shift as an integer scaled by 100, so `pagespeed` was reporting a CLS of `5` where the real value was `0.05`. Every CLS field-data reading from that tool was wrong by two orders of magnitude.
+- `pagespeed` returns origin-level real-user data (`fieldOrigin`) next to the page-level block, so a low-traffic page no longer reports `field: null` while the data sits unread in the same response. It also returns TTFB, which the API sent and the tool dropped, accepts `locale` so audit titles come back in the site's language, and groups failed audits by whichever categories were requested instead of only the SEO one.
+- New `crux_snapshot`: the latest real-user record with the LCP sub-part breakdown (server response, resource discovery delay, transfer, render-blocking), a named dominant phase with concrete advice, the LCP resource type and the navigation-type mix. Nothing here could previously say *why* LCP was slow for real users.
+- New `ai_search_sources`: Perplexity's search endpoint, up to 10 questions per call, ranking which domains get cited, where you place and which questions never surface you. Cheaper and more deterministic than generating an answer.
+- New `wikipedia_pageviews`: resolves an entity through Wikidata to every language edition at once, then monthly views with year-on-year change and seasonal peaks. Free, no key.
+- `migration_check` accepts `includeWayback`, recovering historical URLs from the Internet Archive that Search Console's 16-month window has forgotten. On a real property it found 124 URLs Search Console no longer knows about.
+- `hreflang_check` reads annotations from the HTTP `Link:` header and from `xhtml:link` in sitemaps as well as from HTML, tagging each alternate with its source. A site annotated only through its sitemap was previously reported as having no hreflang at all.
+- `page_audit` checks the favicon Google needs for the mobile result (reachable, square, at least 48x48, not a `data:` URI, crawlable by Googlebot and Googlebot-Image) plus manifest, apple-touch-icon, theme-color and feed links. Off in the crawl path so `site_crawl` costs nothing extra.
+- `crux_history` returns the needs-improvement share alongside good and poor, and both CrUX tools accept `TABLET`.
+- `brand_mentions` accepts `freshness`, `offset` (raising the reachable results from 20 to about 200) and `extraSnippets`; its description no longer advertises Brave's discontinued free tier.
+- `knowledge_graph_check` accepts `types` and `ids` (the API rejects the `kg:` prefix it prints, so the tool strips it).
+- `indexnow_submit` accepts up to 10000 URLs, matching the protocol, and names the current participants.
+- `toolsetOf()` now classifies `canonical_host_check`, `crux_snapshot`, `wikipedia_pageviews` and `ai_search_sources`; they were falling through to `core` and ignoring `SEO_MCP_TOOLSETS`. `ai_search_sources` is excluded in hosted mode, like the other tools that spend the operator's paid quota.
+
 ### Google Analytics 4
 - Reports no longer hide incomplete data. Every reporting tool now returns a `dataQuality` note when GA4 withheld rows for privacy thresholding, collapsed rows into `(other)`, sampled the data (with the sampling percentage) or returned nothing for a stated reason. Until now the response metadata was discarded, so a materially incomplete report looked identical to a complete one. Results also carry `currencyCode` and `timeZone`.
 - Dimension filters accept a list of values (one filter matching 20 URLs instead of 20 filters) and an `or` mode; `ga_compare_periods` gained the raw `dimensionFilter` escape hatch and `metricFilters`, which `ga_batch_run_reports` also gained.
