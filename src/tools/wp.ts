@@ -261,7 +261,7 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
   const siteParam = z
     .string()
     .optional()
-    .describe(`WordPress site name from configuration. Defaults to '${sites[0].name}'. Configured: ${sites.map((s) => s.name).join(", ")}.`);
+    .describe(`Configured site: ${sites.map((s) => s.name).join(", ")}. Defaults to the first.`);
   const pick = (name?: string): WpSite => {
     const s = sites.find((x) => x.name === (name ?? sites[0].name));
     if (!s) throw new Error(`Unknown WordPress site '${name}'. Configured: ${sites.map((x) => x.name).join(", ")}`);
@@ -373,7 +373,7 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
         status: z.enum(["publish", "draft", "pending", "private", "future"]).optional().describe("'future' = scheduled; it needs a date in the future, here or already on the post."),
         date: z.string().regex(/^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?$/).optional().describe("Publish date in the site's timezone: 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM[:SS]'. Schedules the post with status='future', or changes the published date of a live post (which changes the URL when the permalink structure contains the date)."),
         featuredMediaId: z.number().int().min(0).nullable().optional().describe("Attachment ID to use as the featured image (from wp_list_media or wp_upload_media); 0 or null removes it."),
-        dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."),
+        dryRun: z.boolean().default(false).describe("Preview the change without writing."),
       },
     },
     tool(async (a) => {
@@ -456,7 +456,7 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
         primaryCategory: z.number().int().positive().nullable().optional().describe("Term ID (from wp_list_terms) of the category Yoast treats as primary: it picks the breadcrumb trail and %%primary_category%% in permalinks/templates. Must be a category the post is in; null clears it."),
         breadcrumbTitle: z.string().optional().describe("Shorter title for this page in the Yoast breadcrumb trail (a rich-result surface); empty string falls back to the post title."),
         robotsAdvanced: z.array(z.enum(ROBOTS_ADVANCED)).max(4).optional().describe("Advanced robots directives for this page: noimageindex, noarchive, nosnippet ('none' = explicitly no directives). Empty array restores the site default. Note: Yoast has no per-post max-snippet field."),
-        dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."),
+        dryRun: z.boolean().default(false).describe("Preview the change without writing."),
       },
     },
     tool(async (a) => {
@@ -516,7 +516,7 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
         site: siteParam,
         id: postId,
         edits: z.array(z.object({ uid: z.string(), field: z.string(), value: z.string() })).min(1),
-        dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."),
+        dryRun: z.boolean().default(false).describe("Preview the change without writing."),
       },
     },
     tool(async (a) => {
@@ -594,7 +594,7 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
           canonical: z.string().optional(),
           noindex: z.boolean().nullable().optional(),
         })).min(1).max(100),
-        dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."),
+        dryRun: z.boolean().default(false).describe("Preview the change without writing."),
       },
     },
     tool(async (a) => ({ site: pick(a.site).name, ...(await runHelper<object>(pick(a.site), "wp", "bulk_seo", [], JSON.stringify({ items: a.items, dryRun: a.dryRun }))) })),
@@ -733,7 +733,7 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
         seoTitle: z.string().optional(),
         metaDescription: z.string().optional(),
         noindex: z.boolean().nullable().optional(),
-        dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."),
+        dryRun: z.boolean().default(false).describe("Preview the change without writing."),
       },
     },
     tool(async (a) => {
@@ -788,7 +788,7 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
         target: z.string().default("").describe("Empty is allowed only for 410/451."),
         type: z.enum(["301", "302", "307", "410", "451"]).default("301"),
         format: z.enum(["plain", "regex"]).default("plain"),
-        dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."),
+        dryRun: z.boolean().default(false).describe("Preview the change without writing."),
       },
     },
     tool(async (a) => {
@@ -808,7 +808,7 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
     {
       title: "Delete a Yoast redirect",
       description: "Remove a Yoast SEO Premium redirect by its origin.",
-      inputSchema: { site: siteParam, origin: z.string(), format: z.enum(["plain", "regex"]).default("plain"), dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."), },
+      inputSchema: { site: siteParam, origin: z.string(), format: z.enum(["plain", "regex"]).default("plain"), dryRun: z.boolean().default(false).describe("Preview the change without writing."), },
     },
     tool(async (a) => {
       const s = pick(a.site);
@@ -828,7 +828,7 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
       title: "Publish JSON-LD on a WordPress post",
       description:
         "Store JSON-LD (object or array, e.g. FAQPage from schema_generate) on a post; a tiny mu-plugin (installed automatically on first use) prints it in <head> on that page. Pass null to remove. Validate with schema_validate first. Works alongside Yoast's own graph.",
-      inputSchema: { site: siteParam, id: postId, jsonld: z.union([z.record(z.string(), z.unknown()), z.array(z.record(z.string(), z.unknown())), z.null()]), dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."), },
+      inputSchema: { site: siteParam, id: postId, jsonld: z.union([z.record(z.string(), z.unknown()), z.array(z.record(z.string(), z.unknown())), z.null()]), dryRun: z.boolean().default(false).describe("Preview the change without writing."), },
     },
     tool(async (a) => {
       const s = pick(a.site);
