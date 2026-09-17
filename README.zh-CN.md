@@ -41,6 +41,7 @@
 | `pagespeed` | PageSpeed Insights：性能与 SEO 得分、Core Web Vitals 实验室与真实用户数据、优化建议（需 `PAGESPEED_API_KEY`） |
 | `sitemap_check` | 拉取站点地图（支持索引与 gz），抽样或全量检查状态码 |
 | `robots_check` | 解析 robots.txt，判断 URL 对指定 UA 是否可抓取 |
+| `canonical_host_check` | 检查 http/https、带不带 www、结尾斜杠等写法是否都 301 到同一个地址，避免站点被当成两个 |
 | `ai_crawler_access` | 检查 GPTBot、OAI-SearchBot、ClaudeBot、PerplexityBot、Google-Extended 等 AI 爬虫的 robots 规则和真实 UA 请求是否被拦 |
 | `llms_txt_check` / `llms_txt_generate` | 检查 /llms.txt 的存在与格式、链接是否有效；从站点地图生成草稿 |
 | `structured_data_audit` | 提取 JSON-LD，按类型校验必填/推荐字段，核对全站机构实体信息一致性 |
@@ -317,7 +318,7 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 ### 第三方模型和本地模型
 
 - 桌面端：Cherry Studio、Cline 可以选 DeepSeek、Qwen、GLM、Kimi 或本地 Ollama 模型，把本服务作为 Streamable HTTP 类型的 MCP 服务器加进去，请求头填 Authorization 即可。
-- 工具定义约 2.1 万 token，每一轮对话都要发；86 个工具对小模型来说太多了。给它们单独开一个只读、精简工具集、单独令牌的实例，模型再糊涂也写不了东西，也看不到用不着的工具：
+- 工具定义约 2.1 万 token，每一轮对话都要发；87 个工具对小模型来说太多了。给它们单独开一个只读、精简工具集、单独令牌的实例，模型再糊涂也写不了东西，也看不到用不着的工具：
 
 ```yaml
 # docker-compose.yml：在主服务旁边再加一个
@@ -386,7 +387,7 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 ## 运行模式
 
 - **只读模式**：`--read-only` 或 `SEO_MCP_READ_ONLY=1`，所有写入类工具不注册。
-- **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`、`gmail`。86 个工具的定义约 2.2 万 token，只用部分功能时可以裁剪。
+- **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`、`gmail`。87 个工具的定义约 2.2 万 token，只用部分功能时可以裁剪。
 - 每个工具都带 `readOnlyHint` / `destructiveHint` 注解，服务器在初始化时返回 instructions 说明用法与安全约定。
 - `npm test` 运行单元测试、冒烟测试（含工具清单快照，`UPDATE_SNAPSHOT=1 npm test` 刷新）和 README 计数校验。
 - 所有写入类工具和 `github_commit_*` 支持 `dryRun: true`，只返回当前值与将要做的改动，不落地。

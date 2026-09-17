@@ -2,7 +2,7 @@
 
 # google-seo-mcp
 
-**SEO & GEO MCP server for Claude, Codex, Cursor and any MCP client — Google Search Console, Google Analytics 4, PageSpeed Insights, structured data, llms.txt, WordPress and GitHub as 86 tools, so an assistant can diagnose and fix technical SEO, content and generative-engine-optimization issues in one conversation.**
+**SEO & GEO MCP server for Claude, Codex, Cursor and any MCP client — Google Search Console, Google Analytics 4, PageSpeed Insights, structured data, llms.txt, WordPress and GitHub as 87 tools, so an assistant can diagnose and fix technical SEO, content and generative-engine-optimization issues in one conversation.**
 
 [![GitHub stars](https://img.shields.io/github/stars/Akxan/google-seo-mcp?style=flat&logo=github)](https://github.com/Akxan/google-seo-mcp/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -34,7 +34,7 @@ Most SEO MCP servers wrap one API. Real SEO work crosses several: you find a str
 |---|---|
 | **Search Console** (16) | `gsc_list_sites`, `gsc_search_analytics`, `gsc_site_snapshot`, `gsc_compare_periods`, `gsc_opportunities` (position 8–20 quick wins), `gsc_ctr_opportunities`, `gsc_cannibalization`, `gsc_question_queries`, `gsc_rich_results_report`, `gsc_inspect_url`, `gsc_index_coverage`, `gsc_list_sitemaps` / `gsc_submit_sitemap` / `gsc_delete_sitemap`, `gsc_add_site` / `gsc_delete_site` |
 | **Google Analytics 4** (11) | `ga_list_properties`, `ga_property_config` (streams, custom dimensions/metrics, key events, audiences, Ads links, retention — read-only), `ga_run_report`, `ga_batch_run_reports`, `ga_run_pivot_report`, `ga_run_funnel_report`, `ga_run_realtime_report`, `ga_get_metadata`, `ga_check_compatibility`, `ga_compare_periods`, `ga_landing_page_seo` (organic landing pages merged with Search Console) |
-| **Page & site audits** (9) | `page_audit`, `site_crawl`, `pagespeed`, `sitemap_check`, `robots_check`, `hreflang_check`, `social_preview_check`, `compare_pages`, `keyword_suggest` |
+| **Page & site audits** (9) | `page_audit`, `site_crawl`, `pagespeed`, `sitemap_check`, `robots_check`, `canonical_host_check` (www/https/trailing-slash variants must all land on one address), `hreflang_check`, `social_preview_check`, `compare_pages`, `keyword_suggest` |
 | **GEO** (12) | `ai_crawler_access`, `llms_txt_check`, `llms_txt_generate`, `structured_data_audit`, `schema_generate`, `schema_validate`, `geo_page_score`, `eeat_audit`, `knowledge_graph_check`, `indexnow_submit`, `ai_citation_check`, `brand_mentions` |
 | **Analysis** (5) | `migration_check` (pre-migration URL safety net), `cross_site_links`, `content_refresh_candidates`, `crux_history`, `reviews_snapshot` |
 | **WordPress** (23, optional) | `wp_site_info`, `wp_list_posts`, `wp_get_post`, `wp_update_post`, `wp_seo_status`, `wp_update_seo`, `wp_bulk_update_seo` (Yoast fields), `wp_builder_check`, `wp_builder_list_items`, `wp_builder_update`, `wp_builder_restore` (BeTheme / Muffin Builder content, with snapshot-based undo), `wp_list_media`, `wp_update_media` (alt text), `wp_upload_media` (fetch, convert and resize an image into the media library, optionally as the featured image), `wp_list_terms`, `wp_update_term`, `wp_internal_link_suggestions`, `wp_list_redirects`, `wp_add_redirect`, `wp_delete_redirect` (Yoast Premium), `wp_get_schema`, `wp_set_schema` (JSON-LD injection), `wp_run` (raw WP-CLI) |
@@ -135,7 +135,7 @@ flowchart LR
 
 **Hosted mode.** With the `SEO_MCP_HOSTED_*` variables set, `src/hosted/` adds a landing page, Google OAuth sign-in and a token dashboard. A `seo_…` bearer token on `/mcp` resolves to that user's encrypted refresh token, and the request runs inside an `AsyncLocalStorage` scope so every Google client created by the tools uses that grant instead of the operator's credentials; the server instance for such requests is read-only and limited to own-data toolsets.
 
-**Safety.** Write tools are recognised by name and receive `readOnlyHint:false` (`destructiveHint:true` for deletes, raw WP-CLI and commits). `--read-only` drops them at registration; `--toolsets=gsc,web` trims the tool list (86 definitions ≈ 22k tokens). Server instructions tell the model that fetched page text and CMS content are untrusted data.
+**Safety.** Write tools are recognised by name and receive `readOnlyHint:false` (`destructiveHint:true` for deletes, raw WP-CLI and commits). `--read-only` drops them at registration; `--toolsets=gsc,web` trims the tool list (87 definitions ≈ 22k tokens). Server instructions tell the model that fetched page text and CMS content are untrusted data.
 
 ## Quick start
 
@@ -315,7 +315,7 @@ LangChain (`langchain-mcp-adapters`), Google ADK (`MCPToolset`) and the Vercel A
 ### Third-party and local models
 
 - Desktop: Cherry Studio and Cline let you pick DeepSeek, Qwen, GLM, Kimi or a local Ollama model and add this server as a Streamable HTTP MCP server with the Authorization header.
-- The tool catalogue is about 21k tokens and travels with every turn, and 86 tools are a lot for smaller models. Point them at a second, read-only instance with a trimmed toolset and its own token, so a confused model can neither write nor see what it does not need:
+- The tool catalogue is about 21k tokens and travels with every turn, and 87 tools are a lot for smaller models. Point them at a second, read-only instance with a trimmed toolset and its own token, so a confused model can neither write nor see what it does not need:
 
 ```yaml
 # docker-compose.yml: a second service next to the main one

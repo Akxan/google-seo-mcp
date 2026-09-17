@@ -7,7 +7,7 @@ import { wpPostIndexForHost } from "./wp.js";
 import { collectSitemapUrls, fetchWithTimeout } from "./web.js";
 import * as cheerio from "cheerio";
 
-const DIMENSIONS = ["query", "page", "country", "device", "date", "searchAppearance"] as const;
+const DIMENSIONS = ["query", "page", "country", "device", "date", "hour", "searchAppearance"] as const;
 // The API accepts only these as *filter* dimensions; filtering on "date" is rejected with HTTP 400.
 const FILTER_DIMENSIONS = ["query", "page", "country", "device", "searchAppearance"] as const;
 const SEARCH_TYPES = ["web", "image", "video", "news", "discover", "googleNews"] as const;
@@ -19,6 +19,8 @@ const siteUrl = z
 
 const dateField = (what: string) =>
   z.string().describe(`${what}: YYYY-MM-DD, today, yesterday or NdaysAgo (data lags 2-3 days).`);
+
+const FILTERS_HELP = "Scope the analysis, e.g. [{dimension:'page',operator:'contains',expression:'/es/'}] for one language folder or one section. Operators include includingRegex/excludingRegex. Without this the analysis covers the whole property.";
 
 const filterSchema = z.object({
   dimension: z.enum(FILTER_DIMENSIONS),
@@ -116,11 +118,13 @@ export function registerSearchConsoleTools(server: McpServer) {
         rowLimit: z.number().int().min(1).max(25000).default(100),
         startRow: z.number().int().min(0).default(0).describe("Pagination offset."),
         filters: z.array(filterSchema).optional().describe("All filters are AND-ed."),
-        dataState: z.enum(["final", "all"]).default("final").describe("'all' includes fresh, not yet final, data."),
+        dataState: z.enum(["final", "all", "hourly_all"]).default("final").describe("'all' includes fresh, not yet final, data. 'hourly_all' is required for (and only works with) the 'hour' dimension, which returns up to the last 10 days broken down by hour: use it to confirm within hours that a republished page or a fixed canonical is being picked up, instead of waiting out the usual 2-3 day lag."),
         aggregationType: z.enum(["auto", "byPage", "byProperty"]).optional(),
       },
     },
     tool(async (args) => {
+      if (args.dimensions.includes("hour") && args.dataState !== "hourly_all") throw new Error("The 'hour' dimension requires dataState='hourly_all'.");
+      if (args.dataState === "hourly_all" && !args.dimensions.includes("hour")) throw new Error("dataState='hourly_all' only applies to the 'hour' dimension; use 'all' for fresh daily data.");
       const rows = await query(args);
       const totals = rows.reduce(
         (t, r) => ({ clicks: t.clicks + r.clicks, impressions: t.impressions + r.impressions }),
@@ -259,12 +263,13 @@ export function registerSearchConsoleTools(server: McpServer) {
         minImpressions: z.number().int().min(1).default(20),
         searchType: z.enum(SEARCH_TYPES).default("web"),
         country: z.string().optional().describe("Optional 3-letter country code filter, e.g. 'esp', 'usa'."),
+        filters: z.array(filterSchema).optional().describe(FILTERS_HELP),
         top: z.number().int().min(1).max(500).default(50),
       },
     },
     tool(async (args) => {
-      const filters = args.country ? [{ dimension: "country" as const, operator: "equals" as const, expression: args.country }] : undefined;
-      const rows = await query({ ...args, dimensions: ["query", "page"], rowLimit: 25000, filters });
+      const filters = [...(args.filters ?? []), ...(args.country ? [{ dimension: "country" as const, operator: "equals" as const, expression: args.country }] : [])];
+      const rows = await query({ ...args, dimensions: ["query", "page"], rowLimit: 25000, filters: filters.length ? filters : undefined });
       const hits = rows.filter((r) => r.position != null && r.position >= args.minPosition && r.position <= args.maxPosition && r.impressions >= args.minImpressions);
       hits.sort((a, b) => b.impressions - a.impressions);
       let host: string | undefined;
@@ -304,6 +309,7 @@ export function registerSearchConsoleTools(server: McpServer) {
         minImpressionsPerPage: z.number().int().min(1).default(10),
         searchType: z.enum(SEARCH_TYPES).default("web"),
         top: z.number().int().min(1).max(500).default(50),
+        filters: z.array(filterSchema).optional().describe(FILTERS_HELP),
       },
     },
     tool(async (args) => {
@@ -405,6 +411,7 @@ export function registerSearchConsoleTools(server: McpServer) {
         minImpressions: z.number().int().min(1).default(5),
         checkPages: z.number().int().min(0).max(30).default(15).describe("How many of the top pages to fetch and check for matching headings / FAQ schema (0 = skip)."),
         top: z.number().int().min(1).max(500).default(100),
+        filters: z.array(filterSchema).optional().describe(FILTERS_HELP),
       },
     },
     tool(async (args) => {
@@ -473,14 +480,14 @@ export function registerSearchConsoleTools(server: McpServer) {
       title: "Site snapshot (one-call overview)",
       description:
         "One call that answers 'how is the site doing': totals for the period and the previous period of equal length (clicks, impressions, CTR, position with deltas), top queries, top pages, device and country split, and the biggest winners/losers by page. Use this first when asked for an overview or a report.",
-      inputSchema: { siteUrl, days: z.number().int().min(7).max(180).default(28), top: z.number().int().min(3).max(50).default(10), searchType: z.enum(SEARCH_TYPES).default("web") },
+      inputSchema: { siteUrl, days: z.number().int().min(7).max(180).default(28), top: z.number().int().min(3).max(50).default(10), searchType: z.enum(SEARCH_TYPES).default("web"), filters: z.array(filterSchema).optional().describe(FILTERS_HELP) },
     },
     tool(async (args) => {
       const end = resolveDate("3daysAgo");
       const start = resolveDate(`${args.days + 2}daysAgo`);
       const prevEnd = resolveDate(`${args.days + 3}daysAgo`);
       const prevStart = resolveDate(`${2 * args.days + 2}daysAgo`);
-      const base = { siteUrl: args.siteUrl, searchType: args.searchType };
+      const base = { siteUrl: args.siteUrl, searchType: args.searchType, filters: args.filters };
       const [tot, prevTot, queries, pages, prevPages, devices, countries, daily] = await Promise.all([
         query({ ...base, startDate: start, endDate: end, dimensions: [], rowLimit: 1 }),
         query({ ...base, startDate: prevStart, endDate: prevEnd, dimensions: [], rowLimit: 1 }),
@@ -521,7 +528,7 @@ export function registerSearchConsoleTools(server: McpServer) {
       title: "CTR opportunities (page-1 rankings with weak CTR)",
       description:
         "Queries already ranking in the top positions whose CTR is far below the typical CTR for that position, weighted by impressions: the fastest wins from rewriting titles and meta descriptions. Benchmark CTR by position: 1: 28%, 2: 15%, 3: 11%, 4: 8%, 5: 7%, 6-10: 5-3%.",
-      inputSchema: { siteUrl, startDate: dateField("Start").default("28daysAgo"), endDate: dateField("End").default("3daysAgo"), maxPosition: z.number().min(1).max(20).default(10), minImpressions: z.number().int().min(1).default(30), dimension: z.enum(["query", "page"]).default("page"), top: z.number().int().min(1).max(200).default(30), searchType: z.enum(SEARCH_TYPES).default("web") },
+      inputSchema: { siteUrl, startDate: dateField("Start").default("28daysAgo"), endDate: dateField("End").default("3daysAgo"), maxPosition: z.number().min(1).max(20).default(10), minImpressions: z.number().int().min(1).default(30), dimension: z.enum(["query", "page"]).default("page"), top: z.number().int().min(1).max(200).default(30), searchType: z.enum(SEARCH_TYPES).default("web"), filters: z.array(filterSchema).optional().describe(FILTERS_HELP) },
     },
     tool(async (args) => {
       const bench = (pos: number) => (pos <= 1 ? 0.28 : pos <= 2 ? 0.15 : pos <= 3 ? 0.11 : pos <= 4 ? 0.08 : pos <= 5 ? 0.07 : pos <= 7 ? 0.05 : pos <= 10 ? 0.03 : 0.015);
