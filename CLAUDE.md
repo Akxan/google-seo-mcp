@@ -110,6 +110,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 - `.env`、`service-account.json`、`credentials.json`、`client_secret*.json` 已在 `.gitignore`，秘密不进仓库，也不要出现在工具描述里。
 - 80 多个工具的定义约 2.2 万 token，每次对话都会加载：描述写得准确但不要啰嗦，新工具优先合并进现有模块而不是再拆文件；`SEO_MCP_TOOLSETS` 可按需裁剪。
 - `buildInstructions()` 里点名了推荐先用的工具（snapshot、opportunities 等），新增重要的分析类工具时把它加进去。
+- **README 正文里不要写「数字 + tools」**：`scripts/sync-readme.mjs` 用 `/\b\d+ tools\b/g` 全局替换成工具总数，所以任何提到别的数量（例如裁剪后的子集）的句子都会被悄悄改成总数，变成错的。要写子集数量就改写措辞（「58 of them」「a 58-tool subset」）或放进表格用纯数字。2026-09-17 因此在 README 里留下过一句错误描述。
 - 密钥扫描器误报时，在 `scripts/check-secrets.sh` 的 `BENIGN`（合法占位值）或 `ALLOW`（合法文件）里加豁免，不要绕过钩子提交。
 - Search Console 数据延迟 2 到 3 天；URL 检查每个资源每天约 2000 次配额，不要对整站循环调用。
 - **图片二进制绝不能经过模型的文字输出**：2026-09-14 App 端会话把一张 67 KB 的 WebP 以 base64 `content` 通过 `github_commit_files` 提交，头部合法、像素全是噪声（模型自己「写」出来的 base64）。加图只能走 `github_commit_image`（URL）或 `github_commit_attachment`（邮件附件），在服务器上转换后提交。给 `github_commit_files` 加拦截（base64 图片超过几 KB 就拒绝）是待办，还没做。
