@@ -75,21 +75,46 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 2. 需要新密钥的：`.env` 与 `.env.example` 各加一行带用途注释的条目；密钥缺失时抛出带申请路径的错误。
 3. `npm run build`，用临时客户端脚本对真实数据验证（写入只用临时对象），删掉脚本。
 4. `UPDATE_SNAPSHOT=1 npm test` 刷新工具清单快照，然后 `npm run docs:sync` 让两份 README 和 `package.json` 里的工具总数、分组计数自动对齐，并检查每个工具名都出现在两份 README 里，缺一个就失败（`npm test` 会跑同样的检查），再 `npm test` 确认通过。
-5. 手动更新 `README.md` 的工具表内容（新工具名和一句话说明）和配置表，`README.zh-CN.md` 同步；必要时更新 `buildInstructions()`。在 `CHANGELOG.md` 的 Unreleased 下加一条。
+5. 手动更新两份 README 的工具表（新工具名和一句话说明）与配置表，必要时更新 `buildInstructions()`；在 `CHANGELOG.md` 的 Unreleased 下加一条。**照「对外形象的维护」的第二张表逐条核对**，尤其是工具总数变化时 GitHub 仓库描述要单独更新（`docs:sync` 会打印命令）。
 6. 中文提交信息，`git push`；推送会自动部署，用 `gh run watch` 看到成功后，用线上地址调一次新工具确认（`/healthz` 先通）。
 7. 涉及服务器 `.env` 的变更（新密钥、`WP_SITES`）要在服务器上同步并重启容器。
 8. 一批功能完成后发版：`npm pkg set version=x.y.z`（服务器上报的版本号从 `package.json` 读取），把 CHANGELOG 的 Unreleased 改成版本段落并更新底部链接，提交后 `git tag -a vx.y.z -m '...'`、`git push origin vx.y.z`、`gh release create vx.y.z --title ... --notes-file <(从 CHANGELOG 摘出该段)`。版本号规则：新增工具或集成升次版本号（0.x.0），只修 bug 升补丁号（0.x.y），纯文档不发版。**发版前对照下面「对外形象的维护」逐条核对**，2026-09-11 的 0.7.0 就漏了架构图、关键词和仓库描述，事后才补。
 
 ## 对外形象的维护（README、徽章、仓库元数据）
 
-自动的：工具数徽章是 shields 动态徽章，直接读 `test/tools.snap.json`；发行版徽章读 GitHub Releases；部署徽章读 Actions；README、README.zh-CN、package.json 里的工具总数与分组计数由 `npm run docs:sync` 生成，`npm test` 会校验。这些不用手改。
+仓库是公开的，README 和仓库元数据就是产品页面。按「谁来维护」分三类，**改动前先确认自己属于哪一类**。
 
-按需的，触发条件明确：
-- **新增了集成领域或依赖**（接入新的外部服务、换了库）：更新 README 的「Tech stack」表和架构图/说明、「Keywords」段；`package.json` 的 `description`/`keywords`；用 `gh repo edit --description ... --add-topic ...` 同步仓库描述和主题（主题上限 20 个，加新的要先删旧的）。
-- **新增或改动工具**：README 两份的工具表、示例提示（如果新工具值得展示）、配置表（新密钥）、CHANGELOG；仓库描述里写死的工具总数要同步（`gh repo edit --description`，README 的计数是脚本自动同步的，描述不是）。
-- **发版**：版本号、CHANGELOG 段落、tag、GitHub Release（见上面第 8 步）。发行说明用英文、按领域分组，和 README 口径一致。
-- **不要做的**：不为纯文档或重构提交改版本号；不手改徽章数字；不在描述里写无法验证的形容词。
-- **发版后看一眼 GitHub 的 Security 页**：新依赖可能立刻带来 Dependabot 告警（sharp 0.34 在 0.7.0 发布几分钟后就报了两个高危，随即升级到 0.35）。
+### 一、自动维护，不要手改
+
+| 内容 | 由什么生成 | 校验 |
+|---|---|---|
+| 两份 README 与 `package.json` 的工具总数、分组计数 | `npm run docs:sync` | `npm test` 跑 `sync-readme.mjs --check` |
+| 两份 README 正文里的 token 估算（`34k tokens`、`约 3.4 万 token`） | 同上，数据来自 `test/tools.size.json`（`test/smoke.mjs` 每次跑时写出，已 gitignore） | 同上 |
+| 工具数徽章 | shields 动态徽章直读 `test/tools.snap.json` | 无需 |
+| 发行版徽章、部署徽章 | GitHub Releases / Actions | 无需 |
+
+两个陷阱：
+
+- **README 正文里不能出现「数字 + tools」**：`sync-readme.mjs` 用 `/\b\d+ tools\b/g` 全局替换成总数，写别的数量（例如裁剪后的子集）会被悄悄改错。要提子集数量就改措辞（`58 of them`、`a 58-tool subset`）或放进表格用纯数字。
+- **token 估算只认两种写法**：英文 `34k tokens`、中文 `约 3.4 万 token`。写成别的格式就不会被同步，会慢慢过期。
+
+### 二、有明确触发条件，必须手动更新
+
+| 触发条件 | 要改什么 |
+|---|---|
+| 新增或改动工具 | 两份 README 的工具表（名字 + 一句话说明）、配置表（新密钥）、`CHANGELOG.md`；值得展示的新工具加进示例提示 |
+| 接入新的外部服务或数据源 | README 的 **Tech stack** 表、**Architecture** 的 mermaid 图（External 节点）、**Keywords** 段；`package.json` 的 `description` 与 `keywords` |
+| 工具总数变化 | **GitHub 仓库描述**：`npm run docs:sync` 会在 `package.json` 描述变动时打印现成的 `gh repo edit --description ...` 命令，照抄执行即可。描述不在仓库里，没有任何自动校验，只能靠这一步 |
+| 运行环境要求变化 | `package.json` 的 `engines`、README 的 Tech stack 的 Runtime 行、`Dockerfile`、CI 的 `node-version`，四处必须一致 |
+| 新增集成领域 | 仓库主题：`gh repo edit --add-topic x --remove-topic y`。**上限 20 个且已用满**，加新的必须先删旧的；优先删含义模糊或过于宽泛的（2026-09-17 删掉 `geo`（易被理解成地理）与 `seo-tools`（太泛），换成 `github` 与 `indexnow`） |
+| 发版 | 版本号、CHANGELOG 段落、tag、GitHub Release（见「新增或修改工具的完整流程」第 8 步）。发行说明用英文、按领域分组，口径与 README 一致 |
+| 发版之后 | 看一眼 GitHub 的 Security 页：新依赖可能立刻带来 Dependabot 告警（sharp 0.34 在 0.7.0 发布几分钟后就报了两个高危） |
+
+### 三、明确不做
+
+- 不为纯文档或重构提交改版本号。
+- 不手改徽章数字，不手改由脚本同步的计数。
+- 描述和 README 里不写无法验证的形容词（「最强」「最全」之类），只写能对照工具清单核实的事实。
 - **不发布到 npm 或 MCP 注册中心**（用户决定，2026-09-09）：`package.json` 标了 `private: true`，安装方式只有 clone 加构建。
 
 ## 配置与密钥
@@ -110,7 +135,6 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 - `.env`、`service-account.json`、`credentials.json`、`client_secret*.json` 已在 `.gitignore`，秘密不进仓库，也不要出现在工具描述里。
 - 80 多个工具的定义约 2.2 万 token，每次对话都会加载：描述写得准确但不要啰嗦，新工具优先合并进现有模块而不是再拆文件；`SEO_MCP_TOOLSETS` 可按需裁剪。
 - `buildInstructions()` 里点名了推荐先用的工具（snapshot、opportunities 等），新增重要的分析类工具时把它加进去。
-- **README 正文里不要写「数字 + tools」**：`scripts/sync-readme.mjs` 用 `/\b\d+ tools\b/g` 全局替换成工具总数，所以任何提到别的数量（例如裁剪后的子集）的句子都会被悄悄改成总数，变成错的。要写子集数量就改写措辞（「58 of them」「a 58-tool subset」）或放进表格用纯数字。2026-09-17 因此在 README 里留下过一句错误描述。
 - 密钥扫描器误报时，在 `scripts/check-secrets.sh` 的 `BENIGN`（合法占位值）或 `ALLOW`（合法文件）里加豁免，不要绕过钩子提交。
 - Search Console 数据延迟 2 到 3 天；URL 检查每个资源每天约 2000 次配额，不要对整站循环调用。
 - **图片二进制绝不能经过模型的文字输出**：2026-09-14 App 端会话把一张 67 KB 的 WebP 以 base64 `content` 通过 `github_commit_files` 提交，头部合法、像素全是噪声（模型自己「写」出来的 base64）。加图只能走 `github_commit_image`（URL）或 `github_commit_attachment`（邮件附件），在服务器上转换后提交。给 `github_commit_files` 加拦截（base64 图片超过几 KB 就拒绝）是待办，还没做。

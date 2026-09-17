@@ -33,6 +33,9 @@ else if (fs.existsSync(SNAP)) {
 const r = await client.callTool({ name: "schema_validate", arguments: { jsonld: { "@context": "https://schema.org", "@type": "WebSite", name: "x", url: "https://x.test" } } });
 if (r.isError) failures.push("schema_validate call failed");
 await client.close();
-console.log(`${names.length} tools, ${Math.round(bytes / 1024)} KB of definitions (~${Math.round(bytes / 4)} tokens)`);
+const size = { tools: names.length, kb: Math.round(bytes / 1024), tokens: Math.round(bytes / 4) };
+// Written for scripts/sync-readme.mjs, so the token figures quoted in the READMEs cannot drift from reality.
+fs.writeFileSync(new URL("./tools.size.json", import.meta.url), JSON.stringify(size) + "\n");
+console.log(`${size.tools} tools, ${size.kb} KB of definitions (~${size.tokens} tokens)`);
 if (failures.length) { console.error("FAILURES:\n- " + failures.join("\n- ")); process.exit(1); }
 console.log("smoke test passed");

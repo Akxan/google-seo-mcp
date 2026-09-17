@@ -23,3 +23,4 @@ data/
 
 # Subagent git worktrees (never committed)
 .claude/worktrees/
+test/tools.size.json
