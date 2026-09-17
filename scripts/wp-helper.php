@@ -3,7 +3,8 @@
  * General WordPress/Yoast helper executed via `wp eval-file`. Input JSON on STDIN, output JSON on STDOUT.
  *   wp eval-file wp-helper.php <action>
  * Actions: post_index, seo_status, bulk_seo, media_list, media_update, terms_list, term_update,
- *          internal_links, redirects_list, redirect_add, redirect_delete
+ *          internal_links, redirects_list, redirect_add, redirect_delete, schema_get, schema_set,
+ *          seo_settings_get, seo_settings_set, revisions_list, revision_restore, purge_site
  */
 $action = $args[0] ?? '';
 $in = json_decode(stream_get_contents(STDIN) ?: '{}', true) ?: [];
@@ -28,6 +29,62 @@ function h_purge($id) {
   if (function_exists('w3tc_flush_post')) { w3tc_flush_post($id); $done[] = 'w3tc'; }
   do_action('litespeed_purge_post', $id);
   return $done;
+}
+
+/** Clear every cached page on the site (not just one post), whichever cache plugin is installed. */
+function h_purge_site() {
+  $done = [];
+  if (function_exists('rocket_clean_domain')) { rocket_clean_domain(); $done[] = 'wp-rocket'; }
+  if (function_exists('rocket_clean_minify')) { rocket_clean_minify(); $done[] = 'wp-rocket-minify'; }
+  if (function_exists('wp_cache_clear_cache')) { wp_cache_clear_cache(); $done[] = 'wp-super-cache'; }
+  if (function_exists('w3tc_flush_all')) { w3tc_flush_all(); $done[] = 'w3tc'; }
+  do_action('litespeed_purge_all');
+  return $done ?: ['none'];
+}
+
+/** Drop Yoast's cached XML sitemaps so the next fetch is built from current data. */
+function h_flush_yoast_sitemap() {
+  $done = [];
+  if (class_exists('WPSEO_Sitemaps_Cache')) {
+    try {
+      WPSEO_Sitemaps_Cache::clear();
+      if (method_exists('WPSEO_Sitemaps_Cache', 'clear_queued')) WPSEO_Sitemaps_Cache::clear_queued();
+      $done[] = 'wpseo-sitemaps-cache';
+    } catch (Throwable $e) { $done[] = 'cache class failed: ' . $e->getMessage(); }
+  }
+  $wpdb = $GLOBALS['wpdb'] ?? null;
+  if ($wpdb) {
+    // The cache class only queues what it knows about; the transients themselves are the source of truth.
+    $n = $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '\\_transient\\_yst\\_sm%' OR option_name LIKE '\\_transient\\_timeout\\_yst\\_sm%' OR option_name LIKE '\\_transient\\_wpseo\\_sitemap%' OR option_name LIKE '\\_transient\\_timeout\\_wpseo\\_sitemap%'");
+    $done[] = "transients deleted: " . (int) $n;
+  }
+  return $done;
+}
+
+/** One Yoast setting with its default applied, whichever option group it lives in. */
+function h_yo($key, $default = '') {
+  static $all = null;
+  if ($all === null) {
+    $all = [];
+    if (class_exists('WPSEO_Options')) { try { $all = WPSEO_Options::get_all(); } catch (Throwable $e) { $all = []; } }
+    if (!$all) $all = array_merge(get_option('wpseo') ?: [], get_option('wpseo_titles') ?: [], get_option('wpseo_social') ?: []);
+  }
+  return array_key_exists($key, $all) ? $all[$key] : $default;
+}
+
+/** Line-level difference between two texts: counts plus a bounded sample, so a diff cannot flood the result. */
+function h_diff_lines($before, $after, $max = 15) {
+  $a = preg_split("/\r\n|\n|\r/", (string) $before);
+  $b = preg_split("/\r\n|\n|\r/", (string) $after);
+  $removed = array_values(array_diff($a, $b));
+  $added = array_values(array_diff($b, $a));
+  $cut = fn($lines) => array_values(array_map(fn($l) => mb_substr(trim($l), 0, 160), array_slice($lines, 0, $max)));
+  return [
+    'identical' => (string) $before === (string) $after,
+    'charsFrom' => mb_strlen((string) $before), 'charsTo' => mb_strlen((string) $after),
+    'linesRemoved' => count($removed), 'linesAdded' => count($added),
+    'sampleRemoved' => $cut($removed), 'sampleAdded' => $cut($added),
+  ];
 }
 
 function h_post_text($id) {
@@ -99,7 +156,9 @@ switch ($action) {
   }
 
   case 'media_list': {
-    $q = ['post_type' => 'attachment', 'post_status' => 'inherit', 'post_mime_type' => 'image', 'posts_per_page' => (int) ($in['perPage'] ?? 50), 'paged' => (int) ($in['page'] ?? 1), 'orderby' => 'date', 'order' => 'DESC'];
+    $q = ['post_type' => 'attachment', 'post_status' => 'inherit', 'posts_per_page' => (int) ($in['perPage'] ?? 50), 'paged' => (int) ($in['page'] ?? 1), 'orderby' => 'date', 'order' => 'DESC'];
+    $mime = trim((string) ($in['mimeType'] ?? 'image'));
+    if ($mime !== '' && strtolower($mime) !== 'any') $q['post_mime_type'] = $mime;
     if (!empty($in['search'])) $q['s'] = $in['search'];
     if (!empty($in['attachedTo'])) $q['post_parent'] = (int) $in['attachedTo'];
     $perPage = max(1, (int) ($in['perPage'] ?? 50));
@@ -121,9 +180,9 @@ switch ($action) {
       $meta = wp_get_attachment_metadata($m->ID);
       $bytes = $meta['filesize'] ?? null;
       if ($bytes === null) { $f = get_attached_file($m->ID); if ($f && file_exists($f)) $bytes = filesize($f); }
-      $out[] = ['ID' => $m->ID, 'title' => $m->post_title, 'alt' => $alt, 'caption' => $m->post_excerpt, 'url' => wp_get_attachment_url($m->ID), 'width' => $meta['width'] ?? null, 'height' => $meta['height'] ?? null, 'sizeKB' => $bytes ? round($bytes / 1024) : null, 'attachedTo' => $m->post_parent ?: null, 'attachedTitle' => $m->post_parent ? get_the_title($m->post_parent) : null, 'date' => $m->post_date];
+      $out[] = ['ID' => $m->ID, 'title' => $m->post_title, 'mime' => $m->post_mime_type, 'alt' => $alt, 'caption' => $m->post_excerpt, 'url' => wp_get_attachment_url($m->ID), 'width' => $meta['width'] ?? null, 'height' => $meta['height'] ?? null, 'sizeKB' => $bytes ? round($bytes / 1024) : null, 'attachedTo' => $m->post_parent ?: null, 'attachedTitle' => $m->post_parent ? get_the_title($m->post_parent) : null, 'date' => $m->post_date];
     }
-    $res = ['count' => count($out), 'page' => $page, 'perPage' => $perPage, 'media' => $out];
+    $res = ['count' => count($out), 'page' => $page, 'perPage' => $perPage, 'mimeType' => $mime, 'media' => $out];
     if ($missingOnly) {
       $res['totalMissingAlt'] = $matched;
       $res['pages'] = (int) ceil($matched / $perPage);
@@ -261,6 +320,211 @@ switch ($action) {
     if (empty($in['jsonld'])) { delete_post_meta($id, '_seo_mcp_schema'); $stored = null; }
     else { $stored = json_encode($in['jsonld'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); update_post_meta($id, '_seo_mcp_schema', wp_slash($stored)); }
     h_out(['id' => $id, 'url' => get_permalink($id), 'stored' => $stored ? json_decode($stored, true) : null, 'bytes' => $stored ? strlen($stored) : 0, 'muPlugin' => $plugin, 'purged' => h_purge($id)]);
+  }
+
+  case 'seo_settings_get': {
+    if (!defined('WPSEO_VERSION')) h_fail('Yoast SEO is not active on this site');
+    $types = [];
+    foreach (get_post_types(['public' => true], 'objects') as $pt) {
+      $counts = wp_count_posts($pt->name);
+      $types[] = [
+        'for' => $pt->name, 'label' => $pt->label, 'published' => (int) ($counts->publish ?? 0),
+        'title' => h_yo('title-' . $pt->name), 'metaDescription' => h_yo('metadesc-' . $pt->name),
+        'noindex' => (bool) h_yo('noindex-' . $pt->name, false), 'inSitemap' => !h_yo('noindex-' . $pt->name, false),
+        'schemaPageType' => h_yo('schema-page-type-' . $pt->name, null), 'schemaArticleType' => h_yo('schema-article-type-' . $pt->name, null),
+      ];
+    }
+    $taxes = [];
+    foreach (get_taxonomies(['public' => true], 'objects') as $tx) {
+      $ids = get_terms(['taxonomy' => $tx->name, 'hide_empty' => false, 'fields' => 'ids']);
+      $taxes[] = [
+        'for' => 'tax-' . $tx->name, 'label' => $tx->label, 'terms' => is_array($ids) ? count($ids) : 0,
+        'title' => h_yo('title-tax-' . $tx->name), 'metaDescription' => h_yo('metadesc-tax-' . $tx->name),
+        'noindex' => (bool) h_yo('noindex-tax-' . $tx->name, false), 'inSitemap' => !h_yo('noindex-tax-' . $tx->name, false),
+      ];
+    }
+    $archives = [
+      'author' => ['for' => 'author-wpseo', 'disabled' => (bool) h_yo('disable-author', false), 'noindex' => (bool) h_yo('noindex-author-wpseo', false), 'noindexWithoutPosts' => (bool) h_yo('noindex-author-noposts-wpseo', false), 'title' => h_yo('title-author-wpseo'), 'metaDescription' => h_yo('metadesc-author-wpseo')],
+      'date' => ['for' => 'archive-wpseo', 'disabled' => (bool) h_yo('disable-date', false), 'noindex' => (bool) h_yo('noindex-archive-wpseo', false), 'title' => h_yo('title-archive-wpseo'), 'metaDescription' => h_yo('metadesc-archive-wpseo')],
+      'postFormat' => ['disabled' => (bool) h_yo('disable-post_format', false)],
+      'attachmentPagesRedirected' => (bool) h_yo('disable-attachment', true),
+      'search' => ['for' => 'search-wpseo', 'title' => h_yo('title-search-wpseo')],
+      'notFound' => ['for' => '404-wpseo', 'title' => h_yo('title-404-wpseo')],
+    ];
+    $breadcrumbs = [
+      'enabled' => (bool) h_yo('breadcrumbs-enable', false), 'separator' => h_yo('breadcrumbs-sep'), 'homeText' => h_yo('breadcrumbs-home'),
+      'prefix' => h_yo('breadcrumbs-prefix'), 'archivePrefix' => h_yo('breadcrumbs-archiveprefix'), 'searchPrefix' => h_yo('breadcrumbs-searchprefix'),
+      'notFoundText' => h_yo('breadcrumbs-404crumb'), 'boldLast' => (bool) h_yo('breadcrumbs-boldlast', false), 'taxonomyForPosts' => h_yo('breadcrumbs-taxonomy-post'),
+    ];
+    $personId = (int) h_yo('company_or_person_user_id', 0);
+    $organization = [
+      'type' => h_yo('company_or_person'), 'name' => h_yo('company_name'), 'alternateName' => h_yo('company_alternate_name'),
+      'logoId' => ((int) h_yo('company_logo_id', 0)) ?: null, 'logo' => h_yo('company_logo'),
+      'personUserId' => $personId ?: null, 'personName' => $personId ? get_the_author_meta('display_name', $personId) : null,
+      'websiteName' => h_yo('website_name'), 'alternateWebsiteName' => h_yo('alternate_website_name'),
+    ];
+    $social = [
+      'facebook' => h_yo('facebook_site'), 'twitter' => h_yo('twitter_site'), 'instagram' => h_yo('instagram_url'),
+      'linkedin' => h_yo('linkedin_url'), 'youtube' => h_yo('youtube_url'), 'pinterest' => h_yo('pinterest_url'),
+      'wikipedia' => h_yo('wikipedia_url'), 'other' => (array) h_yo('other_social_urls', []),
+    ];
+    $excluded = array_values(array_merge(
+      array_map(fn($x) => $x['for'], array_filter($types, fn($x) => $x['noindex'])),
+      array_map(fn($x) => $x['for'], array_filter($taxes, fn($x) => $x['noindex']))
+    ));
+    $res = [
+      'yoastVersion' => WPSEO_VERSION, 'separator' => h_yo('separator'),
+      'postTypes' => $types, 'taxonomies' => $taxes, 'archives' => $archives, 'breadcrumbs' => $breadcrumbs,
+      'organization' => $organization, 'socialProfiles' => $social,
+      'sitemap' => ['enabled' => (bool) h_yo('enable_xml_sitemap', true), 'url' => rtrim(get_option('home'), '/') . '/sitemap_index.xml', 'excludedTypes' => $excluded],
+    ];
+    if (!empty($in['raw'])) { $res['rawTitles'] = get_option('wpseo_titles') ?: []; $res['rawSocial'] = get_option('wpseo_social') ?: []; $res['rawGeneral'] = get_option('wpseo') ?: []; }
+    h_out($res);
+  }
+
+  case 'seo_settings_set': {
+    if (!defined('WPSEO_VERSION')) h_fail('Yoast SEO is not active on this site');
+    $dry = array_key_exists('dryRun', $in) ? (bool) $in['dryRun'] : true;
+    $titles = get_option('wpseo_titles') ?: [];
+    $social = get_option('wpseo_social') ?: [];
+    $general = get_option('wpseo') ?: [];
+    $titles0 = $titles; $social0 = $social; $general0 = $general;
+    $changes = [];
+    $same = function ($a, $b) {
+      if (is_bool($a) || is_bool($b)) return (bool) $a === (bool) $b;
+      if (is_array($a) || is_array($b)) return $a === $b;
+      return (string) $a === (string) $b;
+    };
+    $set = function (&$opt, $key, $value, $label) use (&$changes, $same) {
+      $from = h_yo($key, null);
+      if ($same($from, $value)) return;
+      $changes[] = ['setting' => $label, 'key' => $key, 'from' => $from, 'to' => $value];
+      $opt[$key] = $value;
+    };
+
+    $allowed = [];
+    foreach (get_post_types(['public' => true], 'objects') as $pt) $allowed[] = $pt->name;
+    foreach (get_taxonomies(['public' => true], 'objects') as $tx) $allowed[] = 'tax-' . $tx->name;
+    foreach (['author-wpseo', 'archive-wpseo', 'search-wpseo', '404-wpseo'] as $k) $allowed[] = $k;
+    foreach ($in['templates'] ?? [] as $tpl) {
+      $for = (string) ($tpl['for'] ?? '');
+      if (!in_array($for, $allowed, true)) h_fail("unknown template target '{$for}'; valid targets: " . implode(', ', $allowed));
+      if (array_key_exists('title', $tpl)) $set($titles, 'title-' . $for, (string) $tpl['title'], "title template of {$for}");
+      if (array_key_exists('metaDescription', $tpl)) $set($titles, 'metadesc-' . $for, (string) $tpl['metaDescription'], "meta description template of {$for}");
+      if (array_key_exists('noindex', $tpl)) {
+        if (in_array($for, ['search-wpseo', '404-wpseo'], true)) h_fail("'{$for}' has no noindex switch: Yoast always noindexes it");
+        $set($titles, 'noindex-' . $for, (bool) $tpl['noindex'], "noindex of {$for} (also removes it from the XML sitemap)");
+      }
+    }
+
+    $arch = $in['archives'] ?? [];
+    if (array_key_exists('disableAuthor', $arch)) $set($titles, 'disable-author', (bool) $arch['disableAuthor'], 'author archives disabled');
+    if (array_key_exists('disableDate', $arch)) $set($titles, 'disable-date', (bool) $arch['disableDate'], 'date archives disabled');
+    if (array_key_exists('disableFormat', $arch)) $set($titles, 'disable-post_format', (bool) $arch['disableFormat'], 'post format archives disabled');
+    if (array_key_exists('disableAttachmentPages', $arch)) $set($titles, 'disable-attachment', (bool) $arch['disableAttachmentPages'], 'attachment pages redirected to the file');
+    if (array_key_exists('separator', $in)) $set($titles, 'separator', (string) $in['separator'], 'title separator');
+
+    $bcMap = ['enabled' => ['breadcrumbs-enable', 'bool'], 'separator' => ['breadcrumbs-sep', 'str'], 'homeText' => ['breadcrumbs-home', 'str'], 'prefix' => ['breadcrumbs-prefix', 'str'], 'archivePrefix' => ['breadcrumbs-archiveprefix', 'str'], 'searchPrefix' => ['breadcrumbs-searchprefix', 'str'], 'notFoundText' => ['breadcrumbs-404crumb', 'str'], 'boldLast' => ['breadcrumbs-boldlast', 'bool'], 'taxonomyForPosts' => ['breadcrumbs-taxonomy-post', 'str']];
+    $bc = $in['breadcrumbs'] ?? [];
+    foreach ($bcMap as $field => $spec) {
+      if (!array_key_exists($field, $bc)) continue;
+      $set($titles, $spec[0], $spec[1] === 'bool' ? (bool) $bc[$field] : (string) $bc[$field], "breadcrumbs {$field}");
+    }
+
+    $org = $in['organization'] ?? [];
+    if (array_key_exists('type', $org)) $set($titles, 'company_or_person', $org['type'] === 'person' ? 'person' : 'company', 'knowledge graph entity type');
+    if (array_key_exists('name', $org)) $set($titles, 'company_name', (string) $org['name'], 'organization name');
+    if (array_key_exists('alternateName', $org)) $set($titles, 'company_alternate_name', (string) $org['alternateName'], 'organization alternate name');
+    if (array_key_exists('logoId', $org)) {
+      $lid = (int) $org['logoId'];
+      if (get_post_type($lid) !== 'attachment') h_fail("logoId {$lid} is not an attachment");
+      $set($titles, 'company_logo_id', $lid, 'organization logo id');
+      $set($titles, 'company_logo', (string) wp_get_attachment_url($lid), 'organization logo url');
+    }
+    if (array_key_exists('personUserId', $org)) {
+      $uid = (int) $org['personUserId'];
+      if (!get_userdata($uid)) h_fail("personUserId {$uid} is not a WordPress user");
+      $set($titles, 'company_or_person_user_id', $uid, 'person behind the site');
+    }
+    if (array_key_exists('websiteName', $org)) $set($titles, 'website_name', (string) $org['websiteName'], 'website name in schema');
+    if (array_key_exists('alternateWebsiteName', $org)) $set($titles, 'alternate_website_name', (string) $org['alternateWebsiteName'], 'alternate website name in schema');
+
+    $socMap = ['facebook' => 'facebook_site', 'twitter' => 'twitter_site', 'instagram' => 'instagram_url', 'linkedin' => 'linkedin_url', 'youtube' => 'youtube_url', 'pinterest' => 'pinterest_url', 'wikipedia' => 'wikipedia_url'];
+    $prof = $in['socialProfiles'] ?? [];
+    foreach ($socMap as $field => $key) if (array_key_exists($field, $prof)) $set($social, $key, (string) $prof[$field], "social profile {$field}");
+    if (array_key_exists('other', $prof)) $set($social, 'other_social_urls', array_values(array_filter(array_map('esc_url_raw', (array) $prof['other']))), 'other social profiles (sameAs)');
+
+    if (array_key_exists('xmlSitemap', $in)) $set($general, 'enable_xml_sitemap', (bool) $in['xmlSitemap'], 'XML sitemap enabled');
+
+    if (!$changes) h_out(['dryRun' => $dry, 'changes' => [], 'note' => 'Every value already matches the current settings; nothing to write.']);
+    if ($dry) h_out(['dryRun' => true, 'changes' => $changes, 'note' => 'Nothing was written. Call again with dryRun=false to apply.']);
+    if ($titles !== $titles0) update_option('wpseo_titles', $titles);
+    if ($social !== $social0) update_option('wpseo_social', $social);
+    if ($general !== $general0) update_option('wpseo', $general);
+    h_out(['dryRun' => false, 'changes' => $changes, 'flushed' => ['yoastSitemap' => h_flush_yoast_sitemap(), 'pageCache' => h_purge_site()], 'note' => 'Yoast validates and normalises these options on save; re-read with wp_get_seo_settings to confirm what was stored.']);
+  }
+
+  case 'revisions_list': {
+    $id = (int) ($in['id'] ?? 0);
+    $post = get_post($id);
+    if (!$post) h_fail("post {$id} not found");
+    $limit = max(1, min(50, (int) ($in['limit'] ?? 20)));
+    $revs = wp_get_post_revisions($id, ['posts_per_page' => $limit, 'orderby' => 'date', 'order' => 'DESC']);
+    $out = [];
+    foreach ($revs as $r) {
+      $out[] = [
+        'revisionId' => $r->ID, 'date' => $r->post_date, 'author' => get_the_author_meta('display_name', $r->post_author),
+        'autosave' => (bool) wp_is_post_autosave($r->ID), 'title' => $r->post_title,
+        'titleDiffers' => (string) $r->post_title !== (string) $post->post_title,
+        'contentChars' => mb_strlen((string) $r->post_content),
+        'contentCharsDelta' => mb_strlen((string) $r->post_content) - mb_strlen((string) $post->post_content),
+        'excerptDiffers' => (string) $r->post_excerpt !== (string) $post->post_excerpt,
+      ];
+    }
+    $builder = get_post_meta($id, 'mfn-page-items', true);
+    h_out([
+      'id' => $id, 'title' => $post->post_title, 'url' => get_permalink($id), 'status' => $post->post_status,
+      'modified' => $post->post_modified, 'currentContentChars' => mb_strlen((string) $post->post_content),
+      'revisionsEnabled' => (bool) wp_revisions_enabled($post), 'revisionsKept' => wp_revisions_to_keep($post),
+      'builderPost' => !empty($builder), 'count' => count($out), 'revisions' => $out,
+      'note' => !empty($builder) ? 'This post keeps its text in builder meta, which WordPress does not version: revisions only cover post_content. Use wp_builder_check / wp_builder_restore instead.' : null,
+    ]);
+  }
+
+  case 'revision_restore': {
+    $id = (int) ($in['id'] ?? 0);
+    $rid = (int) ($in['revisionId'] ?? 0);
+    $post = get_post($id);
+    if (!$post) h_fail("post {$id} not found");
+    $rev = wp_get_post_revision($rid);
+    if (!$rev) h_fail("revision {$rid} not found");
+    if ((int) $rev->post_parent !== $id) h_fail("revision {$rid} belongs to post {$rev->post_parent}, not {$id}");
+    $builder = get_post_meta($id, 'mfn-page-items', true);
+    $diff = [
+      'title' => ['from' => $post->post_title, 'to' => $rev->post_title],
+      'excerpt' => ['from' => mb_substr((string) $post->post_excerpt, 0, 300), 'to' => mb_substr((string) $rev->post_excerpt, 0, 300)],
+      'content' => h_diff_lines($post->post_content, $rev->post_content),
+    ];
+    if (!empty($in['dryRun'])) {
+      h_out(['dryRun' => true, 'id' => $id, 'revisionId' => $rid, 'revisionDate' => $rev->post_date, 'diff' => $diff, 'builderPost' => !empty($builder), 'note' => 'Nothing was written. Call again with dryRun=false to restore; the current state is kept as a new revision.']);
+    }
+    $res = wp_restore_post_revision($rid);
+    if (!$res) h_fail('WordPress refused the restore (revisions may be disabled for this post type, or the revision is identical)');
+    $after = get_post($id);
+    h_out([
+      'restored' => true, 'id' => $id, 'revisionId' => $rid, 'revisionDate' => $rev->post_date,
+      'title' => $after->post_title, 'contentChars' => mb_strlen((string) $after->post_content), 'url' => get_permalink($id),
+      'diff' => $diff, 'builderPost' => !empty($builder), 'indexable' => h_yoast_rebuild($id), 'purged' => h_purge($id),
+      'note' => !empty($builder) ? 'This is a builder post: its visible text lives in meta and was NOT restored. Use wp_builder_restore for that.' : null,
+    ]);
+  }
+
+  case 'purge_site': {
+    $done = [];
+    if (!empty($in['pageCache'])) $done['pageCache'] = h_purge_site();
+    if (!empty($in['objectCache'])) { wp_cache_flush(); $done['objectCache'] = 'flushed'; }
+    if (!empty($in['yoastSitemap'])) $done['yoastSitemap'] = h_flush_yoast_sitemap();
+    h_out(['purged' => $done]);
   }
 
   default:
