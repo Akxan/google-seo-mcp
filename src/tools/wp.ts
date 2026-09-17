@@ -12,6 +12,8 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { tool } from "../util.js";
+import { imageOptionShape, renderImageOutputs, type ImageOptions } from "./github.js";
+import { fetchWithTimeout } from "./web.js";
 
 export interface WpSite {
   name: string;
@@ -101,6 +103,15 @@ const YOAST_KEYS = {
   focusKeyword: "_yoast_wpseo_focuskw",
   canonical: "_yoast_wpseo_canonical",
   noindex: "_yoast_wpseo_meta-robots-noindex",
+  ogTitle: "_yoast_wpseo_opengraph-title",
+  ogDescription: "_yoast_wpseo_opengraph-description",
+  ogImage: "_yoast_wpseo_opengraph-image",
+  twitterTitle: "_yoast_wpseo_twitter-title",
+  twitterDescription: "_yoast_wpseo_twitter-description",
+  twitterImage: "_yoast_wpseo_twitter-image",
+  schemaPageType: "_yoast_wpseo_schema_page_type",
+  schemaArticleType: "_yoast_wpseo_schema_article_type",
+  cornerstone: "_yoast_wpseo_is_cornerstone",
 } as const;
 
 async function getYoastMeta(site: WpSite, id: number) {
@@ -115,6 +126,15 @@ async function getYoastMeta(site: WpSite, id: number) {
     focusKeyword: byKey.get(YOAST_KEYS.focusKeyword) ?? "",
     canonical: byKey.get(YOAST_KEYS.canonical) ?? "",
     noindex: noindexRaw === "1" ? true : noindexRaw === "2" ? false : null,
+    ogTitle: byKey.get(YOAST_KEYS.ogTitle) ?? "",
+    ogDescription: byKey.get(YOAST_KEYS.ogDescription) ?? "",
+    ogImage: byKey.get(YOAST_KEYS.ogImage) ?? "",
+    twitterTitle: byKey.get(YOAST_KEYS.twitterTitle) ?? "",
+    twitterDescription: byKey.get(YOAST_KEYS.twitterDescription) ?? "",
+    twitterImage: byKey.get(YOAST_KEYS.twitterImage) ?? "",
+    schemaPageType: byKey.get(YOAST_KEYS.schemaPageType) ?? "",
+    schemaArticleType: byKey.get(YOAST_KEYS.schemaArticleType) ?? "",
+    cornerstone: byKey.get(YOAST_KEYS.cornerstone) === "1",
   };
 }
 
@@ -330,7 +350,7 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
     {
       title: "Update Yoast SEO meta",
       description:
-        "Set Yoast SEO fields on a post/page: SEO title (<title> tag, supports Yoast variables like %%sep%% %%sitename%%), meta description, focus keyword, canonical URL, noindex. Only passed fields change; pass an empty string to reset a field to Yoast's default. Rebuilds the Yoast indexable so the change is live immediately.",
+        "Set Yoast SEO fields on a post/page: SEO title (<title> tag, supports Yoast variables like %%sep%% %%sitename%%), meta description, focus keyword, canonical URL, noindex, the social sharing overrides that social_preview_check reports on (Open Graph and Twitter title/description/image), the Yoast schema page/article type, and the cornerstone flag. Only passed fields change; pass an empty string to reset a field to Yoast's default. Rebuilds the Yoast indexable so the change is live immediately.",
       inputSchema: {
         site: siteParam,
         id: postId,
@@ -339,6 +359,15 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
         focusKeyword: z.string().optional(),
         canonical: z.string().optional().describe("Absolute URL, or empty string to clear."),
         noindex: z.boolean().nullable().optional().describe("true = noindex, false = force index, null = Yoast default."),
+        ogTitle: z.string().optional().describe("Open Graph title override (Facebook, WhatsApp, LinkedIn); empty string clears it."),
+        ogDescription: z.string().optional().describe("Open Graph description override."),
+        ogImage: z.string().optional().describe("Absolute URL of the sharing image; >=1200x630 and under 5 MB. Fixes what social_preview_check flags."),
+        twitterTitle: z.string().optional().describe("Twitter/X title override; falls back to the Open Graph one when empty."),
+        twitterDescription: z.string().optional().describe("Twitter/X description override."),
+        twitterImage: z.string().optional().describe("Absolute URL of the Twitter/X card image."),
+        schemaPageType: z.enum(["WebPage", "ItemPage", "AboutPage", "FAQPage", "QAPage", "ProfilePage", "ContactPage", "MedicalWebPage", "CollectionPage", "CheckoutPage", "RealEstateListing", "SearchResultsPage"]).optional().describe("Yoast's own schema page type. Prefer this over wp_set_schema for page type: wp_set_schema adds a second JSON-LD block that can contradict Yoast's graph."),
+        schemaArticleType: z.enum(["None", "Article", "BlogPosting", "SocialMediaPosting", "NewsArticle", "AdvertiserContentArticle", "SatiricalArticle", "ScholarlyArticle", "TechArticle", "Report"]).optional().describe("Yoast's schema article type for posts."),
+        cornerstone: z.boolean().optional().describe("Mark as cornerstone content (affects Yoast's internal-linking suggestions and its own analysis)."),
         dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."),
       },
     },
@@ -346,7 +375,7 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
       const s = pick(a.site);
       if (a.dryRun) {
         const cur = await getYoastMeta(s, a.id);
-        const changes = (["seoTitle", "metaDescription", "focusKeyword", "canonical", "noindex"] as const).filter((k) => a[k] !== undefined).map((k) => ({ field: k, from: cur[k], to: a[k] }));
+        const changes = (["seoTitle", "metaDescription", "focusKeyword", "canonical", "noindex", "ogTitle", "ogDescription", "ogImage", "twitterTitle", "twitterDescription", "twitterImage", "schemaPageType", "schemaArticleType", "cornerstone"] as const).filter((k) => a[k] !== undefined).map((k) => ({ field: k, from: cur[k], to: a[k] }));
         return { site: s.name, id: a.id, dryRun: true, changes };
       }
       const updates: [string, string][] = [];
@@ -355,6 +384,10 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
       if (a.focusKeyword !== undefined) updates.push([YOAST_KEYS.focusKeyword, a.focusKeyword]);
       if (a.canonical !== undefined) updates.push([YOAST_KEYS.canonical, a.canonical]);
       if (a.noindex !== undefined) updates.push([YOAST_KEYS.noindex, a.noindex === true ? "1" : a.noindex === false ? "2" : ""]);
+      for (const k of ["ogTitle", "ogDescription", "ogImage", "twitterTitle", "twitterDescription", "twitterImage", "schemaPageType", "schemaArticleType"] as const) {
+        if (a[k] !== undefined) updates.push([YOAST_KEYS[k], a[k] as string]);
+      }
+      if (a.cornerstone !== undefined) updates.push([YOAST_KEYS.cornerstone, a.cornerstone ? "1" : ""]);
       if (!updates.length) throw new Error("Nothing to update: pass at least one SEO field.");
       const remote = updates
         .map(([k, v]) => (v === "" ? `(wp post meta delete ${a.id} ${shq(k)} || true)` : `wp post meta update ${a.id} ${shq(k)} ${shq(v)}`))
@@ -487,6 +520,51 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
       },
     },
     tool(async (a) => ({ site: pick(a.site).name, ...(await runHelper<object>(pick(a.site), "wp", "media_list", [], JSON.stringify(a))) })),
+  );
+
+  server.registerTool(
+    "wp_upload_media",
+    {
+      title: "Add an image to the WordPress media library",
+      description:
+        "Fetch an image from a URL, convert and resize it on the server (webp by default, same pipeline as github_commit_image), upload it into the media library with alt text, and optionally set it as a post's featured image. This is the fix path for the oversized hero images that pagespeed and crux_history report on a BeTheme site: nothing else here can put an optimised image into WordPress. Use dryRun to see the resulting dimensions and bytes before uploading.",
+      inputSchema: {
+        site: siteParam,
+        sourceUrl: z.string().url().describe("Public URL of the source image."),
+        filename: z.string().regex(/^[\w.-]+$/).describe("File name to store it under, without a path, e.g. 'juderia-sevilla-noche.webp'."),
+        alt: z.string().describe("Alt text. Describe the picture; leave empty only for purely decorative images."),
+        title: z.string().optional(),
+        caption: z.string().optional(),
+        attachToPost: z.number().int().positive().optional().describe("Post ID to attach the image to."),
+        setFeatured: z.boolean().default(false).describe("Also set it as that post's featured image (needs attachToPost). This is the thumbnail Yoast falls back to for social sharing."),
+        width: imageOptionShape.width,
+        height: imageOptionShape.height,
+        focus: imageOptionShape.focus,
+        format: imageOptionShape.format,
+        quality: imageOptionShape.quality,
+        dryRun: z.boolean().default(false).describe("Fetch and convert, report dimensions and bytes, upload nothing."),
+      },
+    },
+    tool(async (a) => {
+      const site = pick(a.site);
+      if (a.setFeatured && !a.attachToPost) throw new Error("setFeatured needs attachToPost: say which post the image belongs to.");
+      const res = await fetchWithTimeout(a.sourceUrl, { headers: { "User-Agent": "google-seo-mcp image fetch" } }, 60_000);
+      if (!res.ok) throw new Error(`Could not fetch ${a.sourceUrl}: HTTP ${res.status}`);
+      const src = Buffer.from(await res.arrayBuffer());
+      const opts: ImageOptions = { path: a.filename, width: a.width, height: a.height, focus: a.focus, format: a.format, quality: a.quality };
+      const { source, outputs, notes } = await renderImageOutputs(src, opts);
+      const out = outputs[0];
+      if (a.dryRun) return { site: site.name, dryRun: true, source, wouldUpload: { filename: a.filename, width: out.width, height: out.height, bytes: out.bytes }, notes };
+      // Pipe the bytes over stdin: base64 on the command line would blow the argv limit.
+      const php = `$raw = file_get_contents('php://stdin'); $bytes = base64_decode($raw); $tmp = wp_tempnam(${shq(a.filename)}); file_put_contents($tmp, $bytes); $file = ['name' => ${shq(a.filename)}, 'tmp_name' => $tmp]; require_once ABSPATH . 'wp-admin/includes/media.php'; require_once ABSPATH . 'wp-admin/includes/file.php'; require_once ABSPATH . 'wp-admin/includes/image.php'; $id = media_handle_sideload($file, ${a.attachToPost ?? 0}); if (is_wp_error($id)) { echo json_encode(['error' => $id->get_error_message()]); exit(1); } update_post_meta($id, '_wp_attachment_image_alt', ${shq(a.alt)}); $post = ['ID' => $id]; ${a.title ? `$post['post_title'] = ${shq(a.title)};` : ""} ${a.caption ? `$post['post_excerpt'] = ${shq(a.caption)};` : ""} if (count($post) > 1) wp_update_post($post); ${a.setFeatured && a.attachToPost ? `set_post_thumbnail(${a.attachToPost}, $id);` : ""} echo json_encode(['id' => $id, 'url' => wp_get_attachment_url($id), 'file' => get_attached_file($id)]);`;
+      const r = await ssh(site, `cd ${shq(site.path)} && wp eval ${shq(php)}`, out.base64);
+      const text = r.stdout.trim();
+      let parsed: { id?: number; url?: string; file?: string; error?: string } | null = null;
+      try { parsed = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
+      if (r.code !== 0 || parsed?.error) throw new Error(`upload failed: ${parsed?.error ?? (r.stderr || text).slice(0, 800)}`);
+      const purged = a.attachToPost ? await purgeCache(site, a.attachToPost) : "n/a";
+      return { site: site.name, id: parsed?.id, url: parsed?.url, width: out.width, height: out.height, bytes: out.bytes, source, alt: a.alt, attachedTo: a.attachToPost ?? null, featured: !!(a.setFeatured && a.attachToPost), cachePurged: purged, notes };
+    }),
   );
 
   server.registerTool(

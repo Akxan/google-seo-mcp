@@ -19,6 +19,7 @@
   "ga_run_realtime_report",
   "ga_run_report",
   "geo_page_score",
+  "github_build_status",
   "github_commit_attachment",
   "github_commit_files",
   "github_commit_image",
@@ -82,5 +83,6 @@
   "wp_update_media",
   "wp_update_post",
   "wp_update_seo",
-  "wp_update_term"
+  "wp_update_term",
+  "wp_upload_media"
 ]
