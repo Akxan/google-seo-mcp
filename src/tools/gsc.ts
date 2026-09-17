@@ -15,12 +15,12 @@ const OPERATORS = ["equals", "notEquals", "contains", "notContains", "includingR
 
 const siteUrl = z
   .string()
-  .describe("Search Console property, e.g. 'sc-domain:example.com' or 'https://example.com/' (see gsc_list_sites).");
+  .describe("Search Console property, e.g. 'sc-domain:example.com' (see gsc_list_sites).");
 
 const dateField = (what: string) =>
   z.string().describe(`${what}: YYYY-MM-DD, today, yesterday or NdaysAgo (data lags 2-3 days).`);
 
-const FILTERS_HELP = "Scope the analysis, e.g. [{dimension:'page',operator:'contains',expression:'/es/'}] for one language folder or one section. Operators include includingRegex/excludingRegex. Without this the analysis covers the whole property.";
+const FILTERS_HELP = "Scope the analysis, e.g. page contains '/es/' for one language folder. Defaults to the whole property.";
 
 const filterSchema = z.object({
   dimension: z.enum(FILTER_DIMENSIONS),
