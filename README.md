@@ -248,7 +248,7 @@ curl -s https://mcp.example.com/mcp -H "Authorization: Bearer <token>" -H "Conte
   -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-Two things to know: `pagespeed`, `site_crawl` and `gsc_index_coverage` stream progress notifications but can run for minutes, so raise the client's per-tool timeout if it defaults to 60 s; and ChatGPT's custom connectors accept only OAuth, so they cannot use a static token yet.
+Two things to know: `pagespeed`, `site_crawl` and `gsc_index_coverage` stream progress notifications but can run for minutes, so raise the client's per-tool timeout if it defaults to 60 s; and ChatGPT needs Developer Mode switched on (Settings, Advanced settings) before a custom connector can use all the tools - without it ChatGPT treats the server as a Deep Research source and only looks for `search` and `fetch`.
 
 ## Works with any agent
 
@@ -340,7 +340,7 @@ LangChain (`langchain-mcp-adapters`), Google ADK (`MCPToolset`) and the Vercel A
 
 ### Known limits
 
-- ChatGPT's custom connectors accept only OAuth, so a static token does not work there yet; an OAuth layer in front of the server would fix it.
+- ChatGPT: create a custom connector with Developer Mode enabled, pointing at the same `/mcp` URL, and pick the *Access token / API key* authentication option with `MCP_AUTH_TOKEN`. Reported working by OpenAI's documentation; not verified against this server.
 - Clients that only implement the legacy HTTP+SSE transport: this server speaks Streamable HTTP only (stateless, one `POST` per call). Open an issue if you need SSE.
 - Codex custom model providers must implement the Responses API, so Codex cannot drive a Chat-Completions-only provider such as DeepSeek; use an SDK or Cherry Studio for those.
 

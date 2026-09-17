@@ -255,7 +255,7 @@ curl -s https://mcp.example.com/mcp -H "Authorization: Bearer <MCP_AUTH_TOKEN>" 
   -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-两点注意：`pagespeed`、`site_crawl`、`gsc_index_coverage` 这类工具会跑几分钟（期间有进度通知），客户端的单工具超时若默认 60 秒要调大；ChatGPT 的自定义连接器目前只接受 OAuth，填不了固定令牌，暂时接不上。
+两点注意：`pagespeed`、`site_crawl`、`gsc_index_coverage` 这类工具会跑几分钟（期间有进度通知），客户端的单工具超时若默认 60 秒要调大；ChatGPT 必须先在设置的高级选项里打开开发者模式，自定义连接器才能用到全部工具；不打开的话它会把服务当成深度研究数据源，只找 `search` 和 `fetch` 两个工具。
 
 ## 接入任何 agent、SDK 和第三方模型
 
@@ -347,7 +347,7 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 
 ### 已知限制
 
-- ChatGPT 的自定义连接器只接受 OAuth，固定令牌填不进去，暂时接不上；在服务前面加一层 OAuth 就能解决。
+- ChatGPT：在设置里打开开发者模式后新建自定义连接器，地址同样填 `/mcp`，认证方式选「Access token / API key」，填 `MCP_AUTH_TOKEN`。依据是 OpenAI 的官方说明，尚未对本服务实测。
 - 只实现了旧版 HTTP+SSE 传输的客户端：本服务只开了 Streamable HTTP（无状态，每次调用一个 `POST`）。需要 SSE 的话开个 issue。
 - Codex 的自定义模型提供方必须实现 Responses API，所以 Codex 带不动 DeepSeek 这类只有 Chat Completions 接口的厂商；这类模型走 SDK 或 Cherry Studio。
 
