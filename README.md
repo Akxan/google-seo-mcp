@@ -62,10 +62,10 @@ Plus `google_auth_status` for diagnostics. Every tool carries MCP annotations (`
 
 | Layer | Choice | Notes |
 |---|---|---|
-| Runtime | Node.js ≥ 18, TypeScript 5, ES modules | no build-time codegen, `tsc` only |
+| Runtime | Node.js ≥ 22, TypeScript 5, ES modules | no build-time codegen, `tsc` only; `googleapis` requires Node 22 |
 | Protocol | `@modelcontextprotocol/sdk` | stdio for local clients, stateless Streamable HTTP for servers |
 | Google | `googleapis` (Search Console v1, Analytics Data v1beta, Analytics Admin v1beta, Gmail v1 read-only, optional) + `google-auth-library` | REST clients, no gRPC; service account or OAuth |
-| Web audits | `cheerio`, `image-size`, `sharp`, native `fetch` | PageSpeed Insights, CrUX, Knowledge Graph, Wikidata, Google Autocomplete, IndexNow, Perplexity, Brave, Places APIs over HTTPS |
+| Web audits | `cheerio`, `image-size`, `sharp`, native `fetch` | PageSpeed Insights, CrUX (history and latest record with the LCP sub-part breakdown), Knowledge Graph, Wikidata, Wikimedia pageviews, Internet Archive CDX, Google Autocomplete, IndexNow, Perplexity, Brave, Places APIs over HTTPS |
 | WordPress | `ssh` + WP-CLI, two PHP helpers uploaded on first use | Yoast indexable rebuild, cache purge (WP Rocket / Super Cache / W3TC / LiteSpeed), mu-plugin for JSON-LD |
 | GitHub | REST + Git Data API, `sharp` for images | token from `GITHUB_TOKEN` or `gh auth token`; edits are validated to match exactly once before anything is committed |
 | Hosted mode | `node:sqlite`, `google-auth-library` OAuth2, GitHub App (RS256 JWT → installation tokens), server-rendered HTML | optional multi-tenant web UI: Google sign-in, encrypted refresh tokens, per-user bearer tokens, per-user GitHub access |
@@ -109,7 +109,7 @@ flowchart LR
         WPH[(WordPress host<br/>WP-CLI over SSH)]
         GHA[(GitHub)]
         GMA[(Gmail<br/>read-only)]
-        X[(Wikidata · IndexNow<br/>Perplexity · Brave · Places)]
+        X[(Wikidata · Wikimedia<br/>Internet Archive · IndexNow<br/>Perplexity · Brave · Places)]
     end
 
     CC --> T1
@@ -135,7 +135,7 @@ flowchart LR
 
 **Hosted mode.** With the `SEO_MCP_HOSTED_*` variables set, `src/hosted/` adds a landing page, Google OAuth sign-in and a token dashboard. A `seo_…` bearer token on `/mcp` resolves to that user's encrypted refresh token, and the request runs inside an `AsyncLocalStorage` scope so every Google client created by the tools uses that grant instead of the operator's credentials; the server instance for such requests is read-only and limited to own-data toolsets.
 
-**Safety.** Write tools are recognised by name and receive `readOnlyHint:false` (`destructiveHint:true` for deletes, raw WP-CLI and commits). `--read-only` drops them at registration; `--toolsets=gsc,web` trims the tool list (96 definitions ≈ 22k tokens). Server instructions tell the model that fetched page text and CMS content are untrusted data.
+**Safety.** Write tools are recognised by name and receive `readOnlyHint:false` (`destructiveHint:true` for deletes, raw WP-CLI and commits). `--read-only` drops them at registration; `--toolsets=gsc,web` trims the tool list (96 definitions ≈ 34k tokens). Server instructions tell the model that fetched page text and CMS content are untrusted data.
 
 ## Quick start
 
@@ -315,7 +315,7 @@ LangChain (`langchain-mcp-adapters`), Google ADK (`MCPToolset`) and the Vercel A
 ### Third-party and local models
 
 - Desktop: Cherry Studio and Cline let you pick DeepSeek, Qwen, GLM, Kimi or a local Ollama model and add this server as a Streamable HTTP MCP server with the Authorization header.
-- The tool catalogue is about 21k tokens and travels with every turn, and 96 tools are a lot for smaller models. Point them at a second, read-only instance with a trimmed toolset and its own token, so a confused model can neither write nor see what it does not need:
+- The tool catalogue is about 34k tokens and travels with every turn, and 96 tools are a lot for smaller models. Point them at a second, read-only instance with a trimmed toolset and its own token, so a confused model can neither write nor see what it does not need:
 
 ```yaml
 # docker-compose.yml: a second service next to the main one
@@ -363,7 +363,7 @@ All settings live in `.env` (see [`.env.example`](.env.example), which documents
 
 In HTTP mode a single instance can also be narrowed **per connection**, without changing the server's configuration or affecting other clients: append `?toolsets=gsc,ga4,web,geo,analysis` to the endpoint URL, and `?readOnly=1` to make that entry point unable to write. Both parameters only ever remove access — a request cannot reach a toolset the instance was not started with, and cannot turn a read-only tenant into a writing one. An unknown toolset name returns 400 rather than silently yielding an empty server.
 
-The full set of tool definitions costs roughly 35k tokens in every conversation. Pointing a day-to-day client at `/mcp?toolsets=gsc,ga4,web,geo,analysis` cuts that to about 21k, and `?toolsets=gsc,ga4` to about 12k; keep the full URL for the connection you use to edit sites.
+The full set of tool definitions costs roughly 34k tokens in every conversation. Pointing a day-to-day client at `/mcp?toolsets=gsc,ga4,web,geo,analysis` cuts that to about 21k, and `?toolsets=gsc,ga4` to about 12k; keep the full URL for the connection you use to edit sites.
 | `SEO_MCP_MAX_RESULT_CHARS` | cap on a single tool result (default 120000); oversized arrays are trimmed with a note on how to narrow the query |
 | `MCP_TRANSPORT=http`, `MCP_HOST`, `MCP_PORT`, `MCP_PATH`, `MCP_AUTH_TOKEN` | HTTP mode |
 | `SEO_MCP_HOSTED_CLIENT_ID`, `SEO_MCP_HOSTED_CLIENT_SECRET`, `SEO_MCP_HOSTED_SECRET`, `SEO_MCP_PUBLIC_URL` (+ optional `SEO_MCP_DATA_DIR`, `SEO_MCP_HOSTED_CONTACT`, `SEO_MCP_HOSTED_VERIFIED`) | [Hosted mode](#hosted-mode-let-other-people-sign-in-with-google): Google sign-in for other users, per-user read-only tokens |
@@ -441,7 +441,7 @@ Issues and pull requests are welcome. CI runs build, tests and the secret scan o
 
 ## Keywords
 
-MCP server · Model Context Protocol · SEO MCP · GEO · generative engine optimization · AI SEO agent · Claude MCP · Claude Code · OpenAI Codex MCP · Cursor MCP · Gemini CLI MCP · Claude Agent SDK · OpenAI Agents SDK · LangChain MCP · n8n · Dify · DeepSeek · Google Search Console API · Google Analytics 4 API · GA4 Data API · PageSpeed Insights API · Core Web Vitals · CrUX · technical SEO audit · site crawler · static site publishing · Astro · Cloudflare Pages · webp image pipeline · Gmail attachments · structured data · schema.org · JSON-LD · FAQPage · llms.txt · AI crawlers · GPTBot · ClaudeBot · PerplexityBot · robots.txt · sitemap · hreflang · keyword cannibalization · striking distance keywords · content decay · E-E-A-T · Knowledge Graph · IndexNow · WordPress SEO automation · Yoast SEO · WP-CLI · TypeScript
+MCP server · Model Context Protocol · SEO MCP · GEO · generative engine optimization · AI SEO agent · Claude MCP · Claude Code · OpenAI Codex MCP · Cursor MCP · Gemini CLI MCP · Claude Agent SDK · OpenAI Agents SDK · LangChain MCP · n8n · Dify · DeepSeek · Google Search Console API · Google Analytics 4 API · GA4 Data API · PageSpeed Insights API · Core Web Vitals · CrUX · technical SEO audit · site crawler · static site publishing · Astro · Cloudflare Pages · webp image pipeline · Gmail attachments · structured data · schema.org · JSON-LD · FAQPage · llms.txt · AI crawlers · GPTBot · ClaudeBot · PerplexityBot · robots.txt · sitemap · hreflang · keyword cannibalization · striking distance keywords · content decay · E-E-A-T · Knowledge Graph · Wikipedia pageviews · Wayback Machine · IndexNow · LCP breakdown · canonical host check · redirect chain · index bloat · WordPress SEO automation · Yoast SEO · WP-CLI · post scheduling · TypeScript
 
 ## Star history
 

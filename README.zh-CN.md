@@ -322,7 +322,7 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 ### 第三方模型和本地模型
 
 - 桌面端：Cherry Studio、Cline 可以选 DeepSeek、Qwen、GLM、Kimi 或本地 Ollama 模型，把本服务作为 Streamable HTTP 类型的 MCP 服务器加进去，请求头填 Authorization 即可。
-- 工具定义约 2.1 万 token，每一轮对话都要发；96 个工具对小模型来说太多了。给它们单独开一个只读、精简工具集、单独令牌的实例，模型再糊涂也写不了东西，也看不到用不着的工具：
+- 工具定义约 3.4 万 token，每一轮对话都要发；96 个工具对小模型来说太多了。给它们单独开一个只读、精简工具集、单独令牌的实例，模型再糊涂也写不了东西，也看不到用不着的工具：
 
 ```yaml
 # docker-compose.yml：在主服务旁边再加一个
@@ -394,7 +394,7 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 ## 运行模式
 
 - **只读模式**：`--read-only` 或 `SEO_MCP_READ_ONLY=1`，所有写入类工具不注册。
-- **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`、`gmail`。96 个工具的定义约 3.5 万 token，每次对话都会完整加载，只用部分功能时应当裁剪。
+- **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`、`gmail`。96 个工具的定义约 3.4 万 token，每次对话都会完整加载，只用部分功能时应当裁剪。
 - **按连接裁剪（HTTP 模式）**：在 URL 后面加 `?toolsets=...` 就能让某一个客户端只加载它需要的工具，服务端不用改配置，也不影响其他客户端。加 `?readOnly=1` 可以让这个入口完全不能写。两个参数**只能收窄权限**：请求不到实例本身没开的工具集，也无法把只读实例变成可写。工具集名字拼错会直接返回 400，而不是静默给你一个空服务器。
 
   | 连接 URL | 工具数 | 约耗 token |
