@@ -363,7 +363,7 @@ All settings live in `.env` (see [`.env.example`](.env.example), which documents
 
 In HTTP mode a single instance can also be narrowed **per connection**, without changing the server's configuration or affecting other clients: append `?toolsets=gsc,ga4,web,geo,analysis` to the endpoint URL, and `?readOnly=1` to make that entry point unable to write. Both parameters only ever remove access — a request cannot reach a toolset the instance was not started with, and cannot turn a read-only tenant into a writing one. An unknown toolset name returns 400 rather than silently yielding an empty server.
 
-All 96 tool definitions cost roughly 35k tokens in every conversation, so pointing a day-to-day client at `/mcp?toolsets=gsc,ga4,web,geo,analysis` (58 tools, ~21k) and keeping the full URL for site edits is usually worth it.
+All 96 tool definitions cost roughly 35k tokens in every conversation, so pointing a day-to-day client at `/mcp?toolsets=gsc,ga4,web,geo,analysis` (96 tools, ~21k) and keeping the full URL for site edits is usually worth it.
 | `SEO_MCP_MAX_RESULT_CHARS` | cap on a single tool result (default 120000); oversized arrays are trimmed with a note on how to narrow the query |
 | `MCP_TRANSPORT=http`, `MCP_HOST`, `MCP_PORT`, `MCP_PATH`, `MCP_AUTH_TOKEN` | HTTP mode |
 | `SEO_MCP_HOSTED_CLIENT_ID`, `SEO_MCP_HOSTED_CLIENT_SECRET`, `SEO_MCP_HOSTED_SECRET`, `SEO_MCP_PUBLIC_URL` (+ optional `SEO_MCP_DATA_DIR`, `SEO_MCP_HOSTED_CONTACT`, `SEO_MCP_HOSTED_VERIFIED`) | [Hosted mode](#hosted-mode-let-other-people-sign-in-with-google): Google sign-in for other users, per-user read-only tokens |
