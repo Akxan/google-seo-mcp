@@ -4,6 +4,9 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+- `wp_builder_restore`: undo for `wp_builder_update`. Every builder write now snapshots the post's raw `mfn-page-items` first (last 3 kept) and a restore can roll back to any of them; restoring snapshots the current state too, so it is itself reversible. WordPress does not version postmeta, so before this a builder edit could not be undone by a revision restore. `wp_builder_check` lists the snapshots.
+
 ### Fixed
 - `ai_citation_check` now calls Perplexity's Agent API (`POST /v1/agent`). The Sonar chat-completions endpoint it used is retired on 2026-09-27, which would have broken the tool outright. Web search is opt-in on the new API, so the request declares the `web_search` tool explicitly; in-text citations are reported ahead of the plain search results. `model` becomes `effort` (fast/low/medium).
 - GA4 reports asked for no aggregation, so `totals` was always empty. `ga_run_report`, `ga_run_realtime_report`, `ga_batch_run_reports` and `ga_compare_periods` now send `metricAggregations: ["TOTAL"]`.

@@ -6,6 +6,8 @@
  *   wp eval-file mfn-builder.php get   <post_id> <uid>
  *   wp eval-file mfn-builder.php check <post_id>            # round-trip test, no write
  *   wp eval-file mfn-builder.php set   <post_id>            # STDIN: JSON [{"uid":..,"field":..,"value":..}, ...]
+ *   wp eval-file mfn-builder.php backups <post_id>          # list the snapshots taken before each write
+ *   wp eval-file mfn-builder.php restore <post_id> <index>  # 0 = most recent snapshot
  *
  * Output is always a single JSON document on STDOUT.
  */
@@ -40,6 +42,29 @@ function mfn_seo_copy($sections) {
       }
     }
   }
+  return $out;
+}
+
+define('MFN_BACKUP_KEY', '_seo_mcp_mfn_backups');
+define('MFN_BACKUP_KEEP', 3);
+
+/** Snapshot the raw meta before it is overwritten. WordPress does not version postmeta, so without this a builder edit is unrecoverable. */
+function mfn_backup($id, $note) {
+  $raw = get_post_meta($id, 'mfn-page-items', true);
+  if (!is_string($raw) || $raw === '') return 0;
+  $all = get_post_meta($id, MFN_BACKUP_KEY, true);
+  if (!is_array($all)) $all = [];
+  array_unshift($all, ['at' => current_time('mysql'), 'note' => (string) $note, 'raw' => $raw]);
+  $all = array_slice($all, 0, MFN_BACKUP_KEEP);
+  update_post_meta($id, MFN_BACKUP_KEY, $all);
+  return count($all);
+}
+
+function mfn_backup_list($id) {
+  $all = get_post_meta($id, MFN_BACKUP_KEY, true);
+  if (!is_array($all)) return [];
+  $out = [];
+  foreach ($all as $i => $b) $out[] = ['index' => $i, 'at' => $b['at'] ?? null, 'note' => $b['note'] ?? '', 'bytes' => strlen($b['raw'] ?? '')];
   return $out;
 }
 
@@ -100,7 +125,7 @@ switch ($action) {
     mfn_out(['post_id' => $postId, 'item' => $item]);
   case 'check':
     $raw = get_post_meta($postId, 'mfn-page-items', true);
-    mfn_out(['post_id' => $postId, 'roundtrip_lossless' => (is_string($raw) && mfn_encode($sections) === $raw), 'items' => count(mfn_summarize($sections))]);
+    mfn_out(['post_id' => $postId, 'roundtrip_lossless' => (is_string($raw) && mfn_encode($sections) === $raw), 'items' => count(mfn_summarize($sections)), 'backups' => mfn_backup_list($postId)]);
   case 'set':
     $edits = json_decode(stream_get_contents(STDIN), true);
     if (!is_array($edits) || !count($edits)) mfn_fail('STDIN must be a JSON array of {uid, field, value}');
@@ -114,8 +139,23 @@ switch ($action) {
       $applied[] = ['uid' => $e['uid'], 'field' => $e['field'], 'old_length' => is_string($old) ? strlen($old) : null, 'new_length' => strlen($e['value'])];
       unset($item);
     }
+    $kept = mfn_backup($postId, count($applied) . ' field(s) edited');
     $seoLen = mfn_save($postId, $sections);
-    mfn_out(['post_id' => $postId, 'applied' => $applied, 'seo_copy_length' => $seoLen, 'post_modified' => get_post_field('post_modified', $postId)]);
+    mfn_out(['post_id' => $postId, 'applied' => $applied, 'seo_copy_length' => $seoLen, 'post_modified' => get_post_field('post_modified', $postId), 'backups_kept' => $kept]);
+  case 'backups':
+    mfn_out(['post_id' => $postId, 'backups' => mfn_backup_list($postId), 'keeps' => MFN_BACKUP_KEEP]);
+  case 'restore':
+    $idx = (int) ($args[2] ?? 0);
+    $dry = ($args[3] ?? '') === 'dry';
+    $all = get_post_meta($postId, MFN_BACKUP_KEY, true);
+    if (!is_array($all) || !isset($all[$idx])) mfn_fail("no snapshot at index {$idx}; run action 'backups' to list them");
+    $snap = $all[$idx];
+    $restored = unserialize(base64_decode($snap['raw']), ['allowed_classes' => false]);
+    if (!is_array($restored)) mfn_fail('snapshot is corrupt and cannot be decoded; nothing was changed');
+    if ($dry) mfn_out(['post_id' => $postId, 'dryRun' => true, 'wouldRestore' => ['index' => $idx, 'at' => $snap['at'] ?? null, 'note' => $snap['note'] ?? '', 'sections' => count($restored), 'items' => count(mfn_summarize($restored))], 'current' => ['sections' => count($sections), 'items' => count(mfn_summarize($sections))]]);
+    mfn_backup($postId, "before restoring snapshot {$idx}");
+    $seoLen = mfn_save($postId, $restored);
+    mfn_out(['post_id' => $postId, 'restored' => ['index' => $idx, 'at' => $snap['at'] ?? null, 'note' => $snap['note'] ?? ''], 'items' => count(mfn_summarize($restored)), 'seo_copy_length' => $seoLen, 'post_modified' => get_post_field('post_modified', $postId)]);
   default:
     mfn_fail("unknown action '{$action}'");
 }

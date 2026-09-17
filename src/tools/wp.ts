@@ -408,10 +408,33 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
     "wp_builder_check",
     {
       title: "Verify builder round-trip",
-      description: "Read-only check that a post's Muffin Builder data can be decoded and re-encoded losslessly before editing it.",
+      description: "Read-only check that a post's Muffin Builder data can be decoded and re-encoded losslessly before editing it. Also lists the snapshots kept for wp_builder_restore.",
       inputSchema: { site: siteParam, id: postId },
     },
     tool(async (a) => ({ site: pick(a.site).name, ...(await builder<object>(pick(a.site), "check", a.id)) })),
+  );
+
+  server.registerTool(
+    "wp_builder_restore",
+    {
+      title: "Restore builder content from a snapshot",
+      description:
+        "Undo a wp_builder_update. Every builder write first snapshots the post's raw builder data (the last 3 are kept), because WordPress does not version postmeta and a normal revision restore will not bring builder content back. index 0 is the most recent snapshot; list them with wp_builder_check. Restoring itself takes a snapshot first, so it can be undone too. Always run with dryRun first to see which snapshot you would go back to.",
+      inputSchema: {
+        site: siteParam,
+        id: postId,
+        index: z.number().int().min(0).max(2).default(0).describe("Which snapshot to restore: 0 = the state just before the most recent write."),
+        dryRun: z.boolean().default(true).describe("Preview the snapshot and the current state without writing."),
+      },
+    },
+    tool(async (a) => {
+      const site = pick(a.site);
+      const res = await builder<Record<string, unknown>>(site, "restore", a.id, [String(a.index), a.dryRun ? "dry" : "live"]);
+      if (a.dryRun) return { site: site.name, ...res };
+      await rebuildYoastIndexable(site, a.id);
+      const purged = await purgeCache(site, a.id);
+      return { site: site.name, ...res, cachePurged: purged };
+    }),
   );
 
   server.registerTool(

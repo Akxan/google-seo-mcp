@@ -32,8 +32,8 @@ export function toolsetOf(name: string): string {
   return "core";
 }
 
-const WRITE_TOOLS = /^(wp_update_|wp_bulk_|wp_set_|wp_add_|wp_delete_|wp_builder_update|wp_run|gsc_submit_sitemap|gsc_delete_|gsc_add_|github_commit_|indexnow_submit)/;
-const DESTRUCTIVE_TOOLS = /^(wp_delete_|wp_run|wp_update_post|wp_builder_update|wp_bulk_update_seo|github_commit_|gsc_delete_)/;
+const WRITE_TOOLS = /^(wp_update_|wp_bulk_|wp_set_|wp_add_|wp_delete_|wp_builder_update|wp_builder_restore|wp_run|gsc_submit_sitemap|gsc_delete_|gsc_add_|github_commit_|indexnow_submit)/;
+const DESTRUCTIVE_TOOLS = /^(wp_delete_|wp_run|wp_update_post|wp_builder_update|wp_builder_restore|wp_bulk_update_seo|github_commit_|gsc_delete_)/;
 
 export function isWriteTool(name: string) { return WRITE_TOOLS.test(name); }
 

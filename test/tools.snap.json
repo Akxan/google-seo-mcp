@@ -64,6 +64,7 @@
   "wp_add_redirect",
   "wp_builder_check",
   "wp_builder_list_items",
+  "wp_builder_restore",
   "wp_builder_update",
   "wp_bulk_update_seo",
   "wp_delete_redirect",
