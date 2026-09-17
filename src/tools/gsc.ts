@@ -325,7 +325,7 @@ export function registerSearchConsoleTools(server: McpServer) {
     {
       title: "Find quick-win keywords (striking distance)",
       description:
-        "Striking-distance keywords: high impressions at position 8-20 (configurable), grouped by page and mapped to WordPress post IDs when a site is configured.",
+        "Ranks near the first page but not on it. Striking-distance keywords: high impressions at position 8-20 (configurable), grouped by page and mapped to WordPress post IDs when a site is configured. Already in the top 10 but under-clicked is gsc_ctr_opportunities instead.",
       inputSchema: {
         siteUrl,
         startDate: dateField("Start").default("28daysAgo"),
@@ -374,7 +374,7 @@ export function registerSearchConsoleTools(server: McpServer) {
     {
       title: "Keyword cannibalization",
       description:
-        "Find queries for which two or more pages of the site receive impressions, i.e. pages competing against each other for the same keyword. Each result lists the competing pages with clicks, impressions and position so you can consolidate or differentiate them.",
+        "Run this when rankings look stuck despite good content. Finds queries for which two or more pages receive impressions, i.e. pages competing against each other for the same keyword. Each result lists the competing pages with clicks, impressions and position so you can consolidate or differentiate them.",
       inputSchema: {
         siteUrl,
         startDate: dateField("Start").default("90daysAgo"),
@@ -413,7 +413,7 @@ export function registerSearchConsoleTools(server: McpServer) {
     {
       title: "Batch index coverage check",
       description:
-        "URL Inspection over a list of URLs or the first N sitemap URLs: verdict, coverage state, robots, last crawl, canonical mismatch, the sitemaps listing the URL, its referring URLs (first 5, referringUrlsTotal when more) and rich-result issues with severity. orphan=true means indexed but in no sitemap and with no known links to it; it is only set when the inspection came back complete, because Google omits both lists on partial results. One quota call (~2000/day) per URL, keep batches small.",
+        "Use this for a batch; gsc_inspect_url returns the full raw result for a single URL. URL Inspection over a list of URLs or the first N sitemap URLs: verdict, coverage state, robots, last crawl, canonical mismatch, the sitemaps listing the URL, its referring URLs (first 5, referringUrlsTotal when more) and rich-result issues with severity. orphan=true means indexed but in no sitemap and with no known links to it; it is only set when the inspection came back complete, because Google omits both lists on partial results. One quota call (~2000/day) per URL, keep batches small.",
       inputSchema: {
         siteUrl,
         urls: z.array(z.string().url()).max(100).optional().describe("Explicit URLs to inspect."),
@@ -459,7 +459,7 @@ export function registerSearchConsoleTools(server: McpServer) {
     {
       title: "Question queries (AI Overview / featured snippet targets)",
       description:
-        "Question-style queries (how/what/why/best, cómo/qué/cuánto...) the site gets impressions for, grouped by page; optionally checks whether each page has a matching heading and FAQPage schema. Targets for FAQ sections and AI Overviews.",
+        "What to add to a page, not which page to fix. Question-style queries (how/what/why/best, cómo/qué/cuánto...) the site gets impressions for, grouped by page; optionally checks whether each page has a matching heading and FAQPage schema. Targets for FAQ sections and AI Overviews.",
       inputSchema: {
         siteUrl,
         startDate: dateField("Start").default("90daysAgo"),
@@ -594,7 +594,7 @@ export function registerSearchConsoleTools(server: McpServer) {
     {
       title: "CTR opportunities (page-1 rankings with weak CTR)",
       description:
-        "Queries already ranking in the top positions whose CTR is far below the typical CTR for that position, weighted by impressions: the fastest wins from rewriting titles and meta descriptions. Benchmark CTR by position: 1: 28%, 2: 15%, 3: 11%, 4: 8%, 5: 7%, 6-10: 5-3%.",
+        "Ranks well but is not clicked. Queries already in the top positions whose CTR is far below the typical CTR for that position, weighted by impressions: the fastest wins from rewriting titles and meta descriptions. Not yet in the top 10 is gsc_opportunities instead. Benchmark CTR by position: 1: 28%, 2: 15%, 3: 11%, 4: 8%, 5: 7%, 6-10: 5-3%.",
       inputSchema: { siteUrl, startDate: dateField("Start").default("28daysAgo"), endDate: dateField("End").default("3daysAgo"), maxPosition: z.number().min(1).max(20).default(10), minImpressions: z.number().int().min(1).default(30), dimension: z.enum(["query", "page"]).default("page"), top: z.number().int().min(1).max(200).default(30), searchType: z.enum(SEARCH_TYPES).default("web"), filters: z.array(filterSchema).optional().describe(FILTERS_HELP) },
     },
     tool(async (args) => {

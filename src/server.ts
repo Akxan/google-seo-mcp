@@ -4,6 +4,7 @@ import path from "node:path";
 import { envValue } from "./env.js";
 import { z } from "zod";
 import { currentRequest, currentScopes, describeCredentialSource, getAuth } from "./google.js";
+import { registerPrompts } from "./prompts.js";
 import { registerSearchConsoleTools } from "./tools/gsc.js";
 import { registerAnalyticsTools } from "./tools/ga.js";
 import { loadWpSites, registerWordPressTools } from "./tools/wp.js";
@@ -162,5 +163,9 @@ export function createServer(overrides: ServerOptions = {}): McpServer {
   registerGitHubTools(server);
   registerGmailTools(server);
   if (wpSites.length) registerWordPressTools(server, wpSites);
+  // Prompts are the reliable path to the right tool: the sequence is written down instead of
+  // inferred. Only register one whose toolsets are actually enabled here, so a narrowed
+  // instance never offers a workflow it cannot run.
+  registerPrompts(server, (toolset) => !opts.toolsets || opts.toolsets.includes(toolset));
   return server;
 }

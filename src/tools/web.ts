@@ -453,7 +453,7 @@ export function registerWebTools(server: McpServer) {
     {
       title: "On-page SEO audit of a URL",
       description:
-        "Fetch a page like a crawler and report: final URL and redirect chain, status, title, meta description, robots (meta + X-Robots-Tag), canonical, lang/hreflang, Open Graph, RSS/Atom feeds, favicon (declared icons, apple-touch-icon, manifest, theme-color, and a live check that it is square, >=48x48 and crawlable by Googlebot/Googlebot-Image, which is what the mobile result icon needs), H1/H2/H3 outline, images missing alt, internal/external/nofollow link counts, word count, JSON-LD schema types, HTML size and fetch time, plus a list of flagged issues. Works for any site, no authorization needed.",
+        "The general on-page check; pair it with structured_data_audit for schema, geo_page_score for AI-answer readiness and eeat_audit for trust signals. Fetch a page like a crawler and report: final URL and redirect chain, status, title, meta description, robots (meta + X-Robots-Tag), canonical, lang/hreflang, Open Graph, RSS/Atom feeds, favicon (declared icons, apple-touch-icon, manifest, theme-color, and a live check that it is square, >=48x48 and crawlable by Googlebot/Googlebot-Image, which is what the mobile result icon needs), H1/H2/H3 outline, images missing alt, internal/external/nofollow link counts, word count, JSON-LD schema types, HTML size and fetch time, plus a list of flagged issues. Works for any site, no authorization needed.",
       inputSchema: {
         url: z.string().url(),
         maxHeadings: z.number().int().min(0).max(200).default(60).describe("How many H1-H3 headings to include in the outline."),

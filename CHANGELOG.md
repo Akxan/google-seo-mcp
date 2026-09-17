@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+- **Prompts.** Six workflows are registered as MCP prompts, so clients show them as slash commands and the model follows a written sequence instead of inferring which tool fits: `/traffic_drop`, `/quick_wins`, `/publish_check`, `/site_health`, `/monthly_report`, `/index_bloat`. Each declares the toolsets it needs, so an instance narrowed with `?toolsets=` or `SEO_MCP_TOOLSETS` only advertises workflows it can run (a `gsc,ga4` instance offers four of the six). A unit test asserts every tool named inside a prompt body actually exists, so the guidance cannot drift from the tool list.
+- **Disambiguation between adjacent tools.** The five tools that all answer some version of "which keywords should I work on" now open by saying when to use them and which sibling to use instead: `gsc_opportunities` (ranks near the first page), `gsc_ctr_opportunities` (ranks well but is not clicked), `gsc_question_queries` (what to add to a page rather than which page to fix), `gsc_cannibalization` (rankings stuck despite good content), `content_refresh_candidates` (used to perform and no longer does). `page_audit`, `gsc_index_coverage` and `gsc_inspect_url` got the same treatment.
+
 ### WordPress, GitHub and Gmail
 - **Fixed a bug found while building scheduling:** sending only `post_date` to WP-CLI leaves `post_date_gmt` at its old value, and the cron event that publishes a scheduled post is timed from `post_date_gmt`. Worse, `wp_update_post`'s "drafts shouldn't be assigned a date" rule silently resets a draft's date to now and flips `future` to `publish`. The first test scheduled a draft for 2030 and it published immediately. `wp_update_post` now sends `post_date`, a remotely computed `post_date_gmt` and `edit_date`, and gained `future` in its status enum plus a `date` parameter.
 - `wp_update_post` sets the featured image (`featuredMediaId`), which was previously unreachable except through raw WP-CLI; `wp_get_post` returns it.
