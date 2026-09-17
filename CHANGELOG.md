@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+- `ai_citation_check` now calls Perplexity's Agent API (`POST /v1/agent`). The Sonar chat-completions endpoint it used is retired on 2026-09-27, which would have broken the tool outright. Web search is opt-in on the new API, so the request declares the `web_search` tool explicitly; in-text citations are reported ahead of the plain search results. `model` becomes `effort` (fast/low/medium).
+- GA4 reports asked for no aggregation, so `totals` was always empty. `ga_run_report`, `ga_run_realtime_report`, `ga_batch_run_reports` and `ga_compare_periods` now send `metricAggregations: ["TOTAL"]`.
+- `ga_compare_periods` summed every metric across dimension rows, which is meaningless for rates (`engagementRate`, `bounceRate`) and averages. It now uses the API's own per-period totals and, when the API returns none, reports a non-additive metric as `null` with a note instead of a wrong number.
+- Search Console filters accepted `date` as a filter dimension, which the API rejects with HTTP 400. The filter schema is now limited to the five dimensions the API actually accepts.
+- `crux_history` never sent `collectionPeriodCount`, so the API returned its default of 25 collection periods and any `weeks` above 25 was silently capped. It now requests the number asked for (up to 40) and also returns `poorShareSeries` alongside the good share.
+
+### Changed
+- `reviews_snapshot` no longer emits a ready-to-paste `AggregateRating` block and no longer suggests using Google Maps ratings as a schema source. Google prohibits aggregating ratings from other sites, and a business marking up reviews about itself makes the page ineligible for review stars; the tool now returns an explicit warning instead.
+
 ### Known issues
 - Binary files must never travel through the model as base64 `content` in `github_commit_files`: on 2026-09-14 a client session (claude.ai app) emailed a photo, ran `github_commit_attachment` only as a dry run, then committed a ~67 KB WebP whose base64 it had written out itself. The RIFF/VP8 header was plausible, so the file decoded without errors, but the pixel data was noise. A guard that rejects base64 image content above a few KB (pointing to `github_commit_image` / `github_commit_attachment`) is planned but not implemented yet.
 

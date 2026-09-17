@@ -210,6 +210,7 @@ export function registerAnalysisTools(server: McpServer) {
       const body: Record<string, unknown> = a.scope === "origin" ? { origin: new URL(a.target).origin } : { url: a.target };
       if (a.formFactor !== "ALL") body.formFactor = a.formFactor;
       body.metrics = ["largest_contentful_paint", "interaction_to_next_paint", "cumulative_layout_shift", "first_contentful_paint", "experimental_time_to_first_byte"];
+      body.collectionPeriodCount = a.weeks; // without this the API returns its default of 25, so weeks > 25 was silently capped
       const res = await fetchWithTimeout(`https://chromeuxreport.googleapis.com/v1/records:queryHistoryRecord?key=${key}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }, 30_000);
       const data = (await res.json()) as { error?: { message?: string; status?: string }; record?: { collectionPeriods?: { lastDate: { year: number; month: number; day: number } }[]; metrics?: Record<string, { histogramTimeseries?: { start: number; end?: number; densities: (number | null)[] }[]; percentilesTimeseries?: { p75s: (number | null)[] } }> } };
       if (!res.ok || data.error) throw new Error(`CrUX API: ${data.error?.message ?? `HTTP ${res.status}`}${data.error?.status === "NOT_FOUND" ? " (not enough Chrome traffic for this target; try scope=origin)" : ""}${/not been used|disabled/i.test(data.error?.message ?? "") ? " Hint: enable 'Chrome UX Report API' in the GCP project and allow it on the API key." : ""}`);
@@ -223,9 +224,10 @@ export function registerAnalysisTools(server: McpServer) {
         const label = names[k] ?? k;
         const p75 = (m.percentilesTimeseries?.p75s ?? []).slice(from).map((v) => (v == null ? null : typeof v === "string" ? Number(v) : v));
         const good = (m.histogramTimeseries?.[0]?.densities ?? []).slice(from).map((v) => (v == null ? null : round(v, 3)));
+        const poor = (m.histogramTimeseries?.[2]?.densities ?? []).slice(from).map((v) => (v == null ? null : round(v, 3)));
         const latest = p75[p75.length - 1];
         const [g, p] = thresholds[label] ?? [0, 0];
-        metrics[label] = { latestP75: latest, rating: latest == null ? null : latest <= g ? "good" : latest <= p ? "needs-improvement" : "poor", p75Series: p75, goodShareSeries: good };
+        metrics[label] = { latestP75: latest, rating: latest == null ? null : latest <= g ? "good" : latest <= p ? "needs-improvement" : "poor", p75Series: p75, goodShareSeries: good, poorShareSeries: poor };
       }
       return { target: body.origin ?? body.url, formFactor: a.formFactor, weeksEnding: periods.slice(from), metrics };
     }),
@@ -265,7 +267,7 @@ export function registerAnalysisTools(server: McpServer) {
     {
       title: "Google Business reviews snapshot (Places API)",
       description:
-        "Fetch rating, review count and the latest reviews of a Google Business Profile via the Places API (New). Use it as the source for AggregateRating schema and to monitor reputation. Requires GOOGLE_PLACES_API_KEY with 'Places API (New)' enabled (billing must be enabled on the project; Google grants a monthly free allowance).",
+        "Fetch rating, review count and the latest reviews of a Google Business Profile via the Places API (New), to monitor reputation and spot what visitors praise or complain about. Do NOT copy these numbers into AggregateRating schema: Google forbids aggregating ratings from another site, and a business marking up reviews about itself makes the page ineligible for review stars. Requires GOOGLE_PLACES_API_KEY with 'Places API (New)' enabled (billing must be enabled on the project; Google grants a monthly free allowance).",
       inputSchema: { query: z.string().optional().describe("Business name + city to search, e.g. 'Altai Turismo Sevilla'."), placeId: z.string().optional().describe("Google Place ID if known (skips the search)."), language: z.string().default("en") },
     },
     tool(async (a) => {
@@ -285,7 +287,7 @@ export function registerAnalysisTools(server: McpServer) {
       const dr = await fetchWithTimeout(`https://places.googleapis.com/v1/places/${placeId}?languageCode=${a.language}`, { headers: { "X-Goog-Api-Key": key, "X-Goog-FieldMask": "id,displayName,formattedAddress,rating,userRatingCount,googleMapsUri,websiteUri,internationalPhoneNumber,reviews,businessStatus,regularOpeningHours" } }, 20_000);
       const d = (await dr.json()) as { error?: { message?: string }; displayName?: { text: string }; formattedAddress?: string; rating?: number; userRatingCount?: number; googleMapsUri?: string; websiteUri?: string; internationalPhoneNumber?: string; businessStatus?: string; reviews?: { rating?: number; relativePublishTimeDescription?: string; publishTime?: string; text?: { text: string }; authorAttribution?: { displayName?: string } }[] };
       if (!dr.ok) throw new Error(`Places API: ${d.error?.message ?? `HTTP ${dr.status}`}`);
-      return { placeId, name: d.displayName?.text, address: d.formattedAddress, phone: d.internationalPhoneNumber, website: d.websiteUri, mapsUrl: d.googleMapsUri, status: d.businessStatus, rating: d.rating, reviewCount: d.userRatingCount, latestReviews: (d.reviews ?? []).map((r) => ({ rating: r.rating, when: r.relativePublishTimeDescription, date: r.publishTime, author: r.authorAttribution?.displayName, text: r.text?.text?.slice(0, 500) })), aggregateRatingSchema: d.rating ? { "@type": "AggregateRating", ratingValue: d.rating, reviewCount: d.userRatingCount, bestRating: 5 } : null, otherCandidates: candidates.slice(1) };
+      return { placeId, name: d.displayName?.text, address: d.formattedAddress, phone: d.internationalPhoneNumber, website: d.websiteUri, mapsUrl: d.googleMapsUri, status: d.businessStatus, rating: d.rating, reviewCount: d.userRatingCount, latestReviews: (d.reviews ?? []).map((r) => ({ rating: r.rating, when: r.relativePublishTimeDescription, date: r.publishTime, author: r.authorAttribution?.displayName, text: r.text?.text?.slice(0, 500) })), schemaWarning: "Do not publish these values as AggregateRating: Google prohibits aggregating ratings from other sites, and self-serving reviews on your own LocalBusiness/Organization page are ineligible for the star feature. Collect reviews on your own site instead.", otherCandidates: candidates.slice(1) };
     }),
   );
 }

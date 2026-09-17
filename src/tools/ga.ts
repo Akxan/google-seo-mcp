@@ -66,6 +66,27 @@ function tabulate(res: analyticsdata_v1beta.Schema$RunReportResponse | analytics
   return { dimensions: dimNames, metrics: metNames, rowCount: res.rowCount ?? rows.length, returnedRows: rows.length, totals, rows };
 }
 
+/** Ratios and averages cannot be summed across dimension rows; only counts can. */
+export function isAdditive(metric: string): boolean {
+  return !/rate$|^average|^bounce|perUser$|perSession$|percent/i.test(metric);
+}
+
+/** Totals the API itself computed, split by date-range name, for a report with named dateRanges. */
+export function periodTotals(data: { dimensionHeaders?: { name?: string | null }[] | null; metricHeaders?: { name?: string | null }[] | null; totals?: { dimensionValues?: { value?: string | null }[] | null; metricValues?: { value?: string | null }[] | null }[] | null }): Record<string, Record<string, number>> {
+  const dimNames = (data.dimensionHeaders ?? []).map((d) => d?.name ?? "");
+  const metNames = (data.metricHeaders ?? []).map((m) => m?.name ?? "");
+  const rangeIdx = dimNames.indexOf("dateRange");
+  const out: Record<string, Record<string, number>> = {};
+  for (const row of data.totals ?? []) {
+    const period = rangeIdx >= 0 ? row.dimensionValues?.[rangeIdx]?.value ?? "" : "";
+    if (!period) continue;
+    const bucket: Record<string, number> = {};
+    metNames.forEach((n, i) => { const v = Number(row.metricValues?.[i]?.value); if (Number.isFinite(v)) bucket[n] = v; });
+    out[period] = bucket;
+  }
+  return out;
+}
+
 export function registerAnalyticsTools(server: McpServer) {
   server.registerTool(
     "ga_list_properties",
@@ -146,6 +167,7 @@ export function registerAnalyticsTools(server: McpServer) {
           limit: String(args.limit),
           offset: String(args.offset),
           keepEmptyRows: args.keepEmptyRows,
+          metricAggregations: ["TOTAL"],
           returnPropertyQuota: true,
         },
       });
@@ -175,6 +197,7 @@ export function registerAnalyticsTools(server: McpServer) {
           dimensions: args.dimensions.map((name) => ({ name })),
           metrics: args.metrics.map((name) => ({ name })),
           limit: String(args.limit),
+          metricAggregations: ["TOTAL"],
         },
       });
       return { property: propertyName(args.propertyId), ...tabulate(res.data) };
@@ -236,9 +259,11 @@ export function registerAnalyticsTools(server: McpServer) {
           metrics: args.metrics.map((name) => ({ name })),
           dimensionFilter: buildDimensionFilter(args.dimensionFilters),
           limit: "100000",
+          metricAggregations: ["TOTAL"],
         },
       });
       const t = tabulate(res.data);
+      const apiTotals = periodTotals(res.data);
       const keyOf = (row: Record<string, unknown>) => args.dimensions.map((d) => String(row[d])).join(" | ");
       const merged = new Map<string, Record<string, unknown>>();
       const totals = { current: {} as Record<string, number>, previous: {} as Record<string, number> };
@@ -249,7 +274,7 @@ export function registerAnalyticsTools(server: McpServer) {
         for (const m of args.metrics) {
           const v = typeof row[m] === "number" ? (row[m] as number) : 0;
           entry[`${m}_${period}`] = v;
-          totals[period][m] = (totals[period][m] ?? 0) + v;
+          if (isAdditive(m)) totals[period][m] = (totals[period][m] ?? 0) + v;
         }
         merged.set(k, entry);
       }
@@ -266,8 +291,12 @@ export function registerAnalyticsTools(server: McpServer) {
       });
       const first = args.metrics[0];
       rows.sort((a, b) => Math.abs(b[`${first}_delta`] as number) - Math.abs(a[`${first}_delta`] as number));
+      // Prefer the API's own aggregation: summing rows is only valid for additive metrics
+      // (summing engagementRate or bounceRate across dimension values is meaningless).
       const totalRows = Object.fromEntries(args.metrics.map((m) => {
-        const c = totals.current[m] ?? 0, p = totals.previous[m] ?? 0;
+        const c = apiTotals.current?.[m] ?? (isAdditive(m) ? totals.current[m] ?? 0 : null);
+        const p = apiTotals.previous?.[m] ?? (isAdditive(m) ? totals.previous[m] ?? 0 : null);
+        if (c === null || p === null) return [m, { current: null, previous: null, delta: null, pct: null, note: "not aggregatable: the API returned no total and this metric cannot be summed across rows" }];
         return [m, { current: round(c, 4), previous: round(p, 4), delta: round(c - p, 4), pct: p === 0 ? null : round(((c - p) / p) * 100, 1) }];
       }));
       return {
@@ -425,7 +454,7 @@ export function registerAnalyticsTools(server: McpServer) {
     tool(async (args) => {
       const res = await analyticsData().properties.batchRunReports({
         property: propertyName(args.propertyId),
-        requestBody: { requests: args.reports.map((r) => ({ dateRanges: [{ startDate: r.startDate, endDate: r.endDate }], dimensions: r.dimensions.map((name) => ({ name })), metrics: r.metrics.map((name) => ({ name })), dimensionFilter: buildDimensionFilter(r.dimensionFilters), limit: String(r.limit), orderBys: [{ metric: { metricName: r.metrics[0] }, desc: true }] })) },
+        requestBody: { requests: args.reports.map((r) => ({ dateRanges: [{ startDate: r.startDate, endDate: r.endDate }], dimensions: r.dimensions.map((name) => ({ name })), metrics: r.metrics.map((name) => ({ name })), dimensionFilter: buildDimensionFilter(r.dimensionFilters), limit: String(r.limit), orderBys: [{ metric: { metricName: r.metrics[0] }, desc: true }], metricAggregations: ["TOTAL"] })) },
       });
       return { property: propertyName(args.propertyId), reports: (res.data.reports ?? []).map((rep, i) => ({ name: args.reports[i].name ?? `report ${i + 1}`, period: { start: args.reports[i].startDate, end: args.reports[i].endDate }, ...tabulate(rep) })) };
     }),
