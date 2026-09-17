@@ -267,6 +267,24 @@ export async function auditPage(url: string, opts: AuditOptions = {}) {
 
 /* ---------- registration ---------- */
 
+/** One host/scheme variant: follow redirects manually so the whole chain is visible. */
+export async function traceRedirects(url: string, maxHops = 6): Promise<{ start: string; hops: { url: string; status: number; location?: string }[]; final: string; finalStatus: number; error?: string }> {
+  const hops: { url: string; status: number; location?: string }[] = [];
+  let current = url;
+  try {
+    for (let i = 0; i < maxHops; i++) {
+      const res = await fetchWithTimeout(current, { method: "GET", redirect: "manual", headers: { "User-Agent": "Mozilla/5.0 (compatible; google-seo-mcp canonical check)" } }, 15_000);
+      const location = res.headers.get("location") ?? undefined;
+      hops.push({ url: current, status: res.status, location });
+      if (res.status >= 300 && res.status < 400 && location) { current = new URL(location, current).toString(); continue; }
+      return { start: url, hops, final: current, finalStatus: res.status };
+    }
+    return { start: url, hops, final: current, finalStatus: 0, error: `more than ${maxHops} redirects` };
+  } catch (e) {
+    return { start: url, hops, final: current, finalStatus: 0, error: (e as Error).message };
+  }
+}
+
 export function registerWebTools(server: McpServer) {
   server.registerTool(
     "page_audit",
@@ -400,6 +418,38 @@ export function registerWebTools(server: McpServer) {
         problems,
         urls: a.listUrls ? urls.map((x) => x.loc) : undefined,
       };
+    }),
+  );
+
+  server.registerTool(
+    "canonical_host_check",
+    {
+      title: "Canonical host check (www, https, trailing slash)",
+      description:
+        "Check that every way of typing the home page ends at one single address: http and https, www and bare domain, and the trailing-slash variants. When two of them both answer 200, Google sees duplicate sites and splits the ranking signals between them. This is a common silent failure on Cloudflare Pages and after a WordPress migration. Returns the full redirect chain for each variant and says which ones are wrong. No key needed.",
+      inputSchema: {
+        domain: z.string().describe("Bare domain, e.g. 'example.com' (do not include a scheme)."),
+        path: z.string().default("/").describe("Path to test, default the home page."),
+      },
+    },
+    tool(async (a) => {
+      const host = a.domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/^www\./, "");
+      const path = a.path.startsWith("/") ? a.path : `/${a.path}`;
+      const variants = [`http://${host}${path}`, `http://www.${host}${path}`, `https://${host}${path}`, `https://www.${host}${path}`];
+      const traced = await Promise.all(variants.map((u) => traceRedirects(u)));
+      const live = traced.filter((t) => t.finalStatus >= 200 && t.finalStatus < 300);
+      const finals = [...new Set(live.map((t) => t.final))];
+      const canonical = finals.length === 1 ? finals[0] : null;
+      const problems: string[] = [];
+      if (finals.length > 1) problems.push(`${finals.length} different addresses serve content: ${finals.join(" , ")}. Redirect all of them to one with a 301.`);
+      for (const t of traced) {
+        if (t.error) problems.push(`${t.start}: ${t.error}`);
+        else if (t.finalStatus === 0) problems.push(`${t.start}: no response`);
+        else if (t.finalStatus >= 400) problems.push(`${t.start}: ends at HTTP ${t.finalStatus}`);
+        else if (t.start.startsWith("http://") && t.final.startsWith("http://")) problems.push(`${t.start} never upgrades to https`);
+        else if (t.hops.filter((h) => h.status >= 300 && h.status < 400).length > 1) problems.push(`${t.start}: ${t.hops.length - 1} redirects before landing (each hop loses a little link equity; redirect straight to the final URL)`);
+      }
+      return { domain: host, path, canonical, ok: problems.length === 0, problems, variants: traced.map((t) => ({ from: t.start, chain: t.hops.map((h) => `${h.status}${h.location ? ` -> ${h.location}` : ""}`), final: t.final, finalStatus: t.finalStatus, error: t.error })) };
     }),
   );
 
