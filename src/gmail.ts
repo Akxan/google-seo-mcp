@@ -42,3 +42,53 @@ export function collectAttachments(payload: gmail_v1.Schema$MessagePart | undefi
 export function header(m: gmail_v1.Schema$Message, name: string): string | undefined {
   return m.payload?.headers?.find((h) => h.name?.toLowerCase() === name)?.value ?? undefined;
 }
+
+export interface BodyPartRef { mimeType: string; size: number; data?: string; attachmentId?: string }
+
+/**
+ * The readable body parts (text/plain and text/html) of a message payload, attachments excluded.
+ * Same nested-multipart walk as collectAttachments. Pure, for tests.
+ */
+export function collectBodyParts(payload: gmail_v1.Schema$MessagePart | undefined): BodyPartRef[] {
+  const out: BodyPartRef[] = [];
+  const walk = (p?: gmail_v1.Schema$MessagePart | null) => {
+    if (!p) return;
+    const mime = (p.mimeType ?? "").toLowerCase();
+    // A part with a filename is an attachment, even when it is text/plain.
+    if (!p.filename && /^text\/(plain|html)$/.test(mime) && (p.body?.data || p.body?.attachmentId)) {
+      out.push({ mimeType: mime, size: p.body?.size ?? 0, data: p.body?.data ?? undefined, attachmentId: p.body?.attachmentId ?? undefined });
+    }
+    p.parts?.forEach(walk);
+  };
+  walk(payload);
+  return out;
+}
+
+// Named entities worth decoding: the structural ones plus what Spanish and French copy actually uses.
+const ENTITIES: Record<string, string> = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", ndash: "–", mdash: "—", hellip: "…",
+  rsquo: "’", lsquo: "‘", ldquo: "“", rdquo: "”", laquo: "«", raquo: "»", bull: "•",
+  middot: "·", deg: "°", euro: "€", copy: "©", reg: "®", trade: "™", iexcl: "¡", iquest: "¿",
+  aacute: "á", eacute: "é", iacute: "í", oacute: "ó", uacute: "ú", ntilde: "ñ", uuml: "ü",
+  Aacute: "Á", Eacute: "É", Iacute: "Í", Oacute: "Ó", Uacute: "Ú", Ntilde: "Ñ", Uuml: "Ü",
+  agrave: "à", egrave: "è", ccedil: "ç", ouml: "ö", auml: "ä",
+};
+
+/** Turn an HTML mail body into readable plain text (block tags become newlines, markup and entities go). Pure, for tests. */
+export function htmlToText(html: string): string {
+  return html
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<(script|style|head|title)\b[\s\S]*?<\/\1>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|tr|li|h[1-6]|blockquote|section|article|table)>/gi, "\n")
+    .replace(/<li\b[^>]*>/gi, "- ")
+    .replace(/<\/(td|th)>/gi, "\t")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&#x([0-9a-f]+);/gi, (_m, h: string) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_m, d: string) => String.fromCodePoint(Number(d)))
+    .replace(/&([a-zA-Z]+);/g, (m, name: string) => ENTITIES[name] ?? ENTITIES[name.toLowerCase()] ?? m)
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}

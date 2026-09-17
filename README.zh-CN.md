@@ -70,6 +70,7 @@
 | `brand_mentions` | 全网品牌提及及是否已链接（需 `BRAVE_API_KEY`，免费额度） |
 | `reviews_snapshot` | Google 商家评分与最新评论（需 `GOOGLE_PLACES_API_KEY`，需开结算） |
 | `github_get_file` / `github_list_dir` / `github_search_code` / `github_list_commits` / `github_build_status` / `github_commit_files` / `github_commit_image` | 读写 GitHub 仓库：一次提交多个文件（整文件、对大文件做局部 find/replace、base64 二进制），从网址取图在服务器上转 webp、裁剪、生成变体后提交；静态站可从任何客户端修改（用 `GITHUB_TOKEN` 或本机 `gh` 登录）；`github_build_status` 查提交后站点是否真的构建成功并上线（检查项、部署记录，或对不回报状态的托管商直接抓页面验证） |
+| `gmail_get_message` | 读取一封邮件的正文（纯文本或 HTML 转文本，支持分页），用于接收别人邮件发来的文章草稿或修改意见 |
 | `gmail_find_attachments` / `github_commit_attachment` | 只读搜索已授权的 Gmail 邮箱并列出每封邮件的附件；把邮件里的照片在服务器上转 webp、裁剪、生成变体后直接提交进仓库，全程不经过客户端 |
 
 日期参数支持 `YYYY-MM-DD`、`today`、`yesterday`、`28daysAgo` 这类写法。
@@ -321,7 +322,7 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 ### 第三方模型和本地模型
 
 - 桌面端：Cherry Studio、Cline 可以选 DeepSeek、Qwen、GLM、Kimi 或本地 Ollama 模型，把本服务作为 Streamable HTTP 类型的 MCP 服务器加进去，请求头填 Authorization 即可。
-- 工具定义约 2.1 万 token，每一轮对话都要发；90 个工具对小模型来说太多了。给它们单独开一个只读、精简工具集、单独令牌的实例，模型再糊涂也写不了东西，也看不到用不着的工具：
+- 工具定义约 2.1 万 token，每一轮对话都要发；96 个工具对小模型来说太多了。给它们单独开一个只读、精简工具集、单独令牌的实例，模型再糊涂也写不了东西，也看不到用不着的工具：
 
 ```yaml
 # docker-compose.yml：在主服务旁边再加一个
@@ -370,6 +371,9 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 | `wp_get_post` | 读单篇：正文、摘要、URL，以及 Yoast 的 SEO 标题、描述、焦点关键词、canonical、noindex |
 | `wp_update_post` | 改标题、slug、摘要、正文、状态 |
 | `wp_update_seo` | 改 Yoast SEO 字段，改完自动重建 Yoast 索引并清页面缓存 |
+| `wp_get_seo_settings` / `wp_update_seo_settings` | Yoast 全站设置：各类型的标题模板、归档页是否 noindex、面包屑、机构身份与社交主页、站点地图开关（写入默认预演） |
+| `wp_list_revisions` / `wp_update_post_from_revision` | 普通文章的历史版本列表与回滚，回滚前给出逐行差异预览（构建器文章请用 wp_builder_restore） |
+| `wp_delete_cache` | 全站清缓存：页面缓存、关键 CSS 重建、对象缓存、Yoast 站点地图缓存（批量改完 SEO 后用） |
 | `wp_builder_list_items` | BeTheme（Muffin Builder）站点：列出页面构建器里的标题、正文块、图片等可编辑项 |
 | `wp_builder_update` | 改构建器项的文本字段，自动重新生成 SEO 副本、重建 Yoast 索引、清缓存 |
 | `wp_builder_check` | 只读检查构建器数据能否无损往返，并列出可回滚的快照 |
@@ -390,7 +394,7 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 ## 运行模式
 
 - **只读模式**：`--read-only` 或 `SEO_MCP_READ_ONLY=1`，所有写入类工具不注册。
-- **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`、`gmail`。90 个工具的定义约 2.2 万 token，只用部分功能时可以裁剪。
+- **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`、`gmail`。96 个工具的定义约 2.2 万 token，只用部分功能时可以裁剪。
 - 每个工具都带 `readOnlyHint` / `destructiveHint` 注解，服务器在初始化时返回 instructions 说明用法与安全约定。
 - `npm test` 运行单元测试、冒烟测试（含工具清单快照，`UPDATE_SNAPSHOT=1 npm test` 刷新）和 README 计数校验。
 - 所有写入类工具和 `github_commit_*` 支持 `dryRun: true`，只返回当前值与将要做的改动，不落地。

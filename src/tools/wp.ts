@@ -11,7 +11,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { tool } from "../util.js";
+import { heartbeat, tool } from "../util.js";
 import { imageOptionShape, renderImageOutputs, type ImageOptions } from "./github.js";
 import { fetchWithTimeout } from "./web.js";
 
@@ -83,8 +83,8 @@ function wpCmd(site: WpSite, args: string[]): string {
   return `cd ${shq(site.path)} && wp ${args.map(shq).join(" ")}`;
 }
 
-async function wp(site: WpSite, args: string[], stdin?: string): Promise<string> {
-  const r = await ssh(site, wpCmd(site, args), stdin);
+async function wp(site: WpSite, args: string[], stdin?: string, timeoutMs?: number): Promise<string> {
+  const r = await ssh(site, wpCmd(site, args), stdin, timeoutMs);
   if (r.code !== 0) {
     throw new Error(`wp ${args.slice(0, 3).join(" ")} failed (exit ${r.code}): ${(r.stderr || r.stdout).trim().slice(0, 2000)}`);
   }
@@ -95,6 +95,24 @@ async function wpJson<T = unknown>(site: WpSite, args: string[]): Promise<T> {
   const out = await wp(site, [...args, "--format=json"]);
   const trimmed = out.trim();
   return (trimmed ? JSON.parse(trimmed) : null) as T;
+}
+
+/** Run a PHP snippet that echoes JSON through `wp eval`; an {error} payload or a non-zero exit throws. */
+async function evalJson<T = unknown>(site: WpSite, php: string, timeoutMs?: number): Promise<T> {
+  const r = await ssh(site, `cd ${shq(site.path)} && wp eval ${shq(php)}`, undefined, timeoutMs);
+  const text = r.stdout.trim();
+  let parsed: unknown = null;
+  try { parsed = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
+  const err = (parsed as { error?: string } | null)?.error;
+  if (r.code !== 0 || err) throw new Error(`wp eval failed: ${err ?? (r.stderr || text).trim().slice(0, 800)}`);
+  return parsed as T;
+}
+
+/** 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM[:SS]' (site timezone) to the MySQL datetime WordPress stores. */
+function normalizeWpDate(input: string): string {
+  const m = /^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(input.trim());
+  if (!m) throw new Error(`Invalid date "${input}": use 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM[:SS]' in the site's timezone.`);
+  return `${m[1]} ${m[2] ?? "00"}:${m[3] ?? "00"}:${m[4] ?? "00"}`;
 }
 
 const YOAST_KEYS = {
@@ -112,13 +130,26 @@ const YOAST_KEYS = {
   schemaPageType: "_yoast_wpseo_schema_page_type",
   schemaArticleType: "_yoast_wpseo_schema_article_type",
   cornerstone: "_yoast_wpseo_is_cornerstone",
+  primaryCategory: "_yoast_wpseo_primary_category",
+  robotsAdvanced: "_yoast_wpseo_meta-robots-adv",
+  breadcrumbTitle: "_yoast_wpseo_bctitle",
 } as const;
 
-async function getYoastMeta(site: WpSite, id: number) {
+/** Yoast's advanced robots directives, stored comma-separated in one meta value. */
+export const ROBOTS_ADVANCED = ["noimageindex", "noarchive", "nosnippet", "none"] as const;
+const THUMBNAIL_KEY = "_thumbnail_id";
+
+/** Yoast meta plus the featured image id of one post, in a single WP-CLI call. */
+async function getPostMeta(site: WpSite, id: number) {
   const rows = await wpJson<{ meta_key: string; meta_value: string }[]>(site, [
-    "post", "meta", "list", String(id), `--keys=${Object.values(YOAST_KEYS).join(",")}`, "--fields=meta_key,meta_value",
+    "post", "meta", "list", String(id), `--keys=${[...Object.values(YOAST_KEYS), THUMBNAIL_KEY].join(",")}`, "--fields=meta_key,meta_value",
   ]);
   const byKey = new Map((rows ?? []).map((r) => [r.meta_key, r.meta_value]));
+  const num = (key: string) => { const n = Number(byKey.get(key)); return Number.isFinite(n) && n > 0 ? n : null; };
+  return { yoast: { ...yoastFrom(byKey), primaryCategory: num(YOAST_KEYS.primaryCategory), robotsAdvanced: (byKey.get(YOAST_KEYS.robotsAdvanced) ?? "").split(",").map((s) => s.trim()).filter(Boolean), breadcrumbTitle: byKey.get(YOAST_KEYS.breadcrumbTitle) ?? "" }, featuredMediaId: num(THUMBNAIL_KEY) };
+}
+
+function yoastFrom(byKey: Map<string, string>) {
   const noindexRaw = byKey.get(YOAST_KEYS.noindex);
   return {
     seoTitle: byKey.get(YOAST_KEYS.seoTitle) ?? "",
@@ -242,14 +273,33 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
     "wp_site_info",
     {
       title: "WordPress site info",
-      description: "Show WordPress core version, site URL, permalink structure, active plugins and Yoast title settings for a configured site.",
-      inputSchema: { site: siteParam },
+      description: "Show WordPress core version, site URL, permalink structure, active plugins and Yoast title settings for a configured site. With checkUpdates it also asks WordPress.org what is out of date. For the site-wide Yoast configuration (title templates, archive noindex, breadcrumbs, knowledge-graph identity) use wp_get_seo_settings.",
+      inputSchema: {
+        site: siteParam,
+        checkUpdates: z.boolean().default(false).describe("Also report available core, plugin and theme updates (a few seconds slower, calls WordPress.org). An outdated Yoast quietly stops emitting parts of its schema graph, so check this when structured data looks wrong."),
+      },
     },
-    tool(async ({ site }) => {
+    tool(async ({ site, checkUpdates }, extra) => {
       const s = pick(site);
       const raw = await wp(s, ["eval", `echo json_encode(['version'=>get_bloginfo('version'),'siteurl'=>get_option('siteurl'),'home'=>get_option('home'),'blogname'=>get_option('blogname'),'blogdescription'=>get_option('blogdescription'),'permalink'=>get_option('permalink_structure'),'language'=>get_locale(),'timezone'=>wp_timezone_string(),'yoast_separator'=>get_option('wpseo_titles')['separator'] ?? null,'post_counts'=>['post'=>(array)wp_count_posts('post'),'page'=>(array)wp_count_posts('page')]]);`]);
       const plugins = await wpJson<{ name: string; version: string }[]>(s, ["plugin", "list", "--status=active", "--fields=name,version"]);
-      return { site: s.name, host: `${s.user}@${s.host}:${s.port ?? 22}`, path: s.path, ...JSON.parse(raw), activePlugins: plugins };
+      let updates: Record<string, unknown> | undefined;
+      if (checkUpdates) {
+        const stop = heartbeat(extra, "asking WordPress.org for available updates");
+        try {
+          // These commands print a "Success:" line instead of JSON when nothing is available.
+          const lenient = async (args: string[]) => {
+            try { const out = (await wp(s, [...args, "--format=json"], undefined, 180_000)).trim(); return out.startsWith("[") ? (JSON.parse(out) as unknown[]) : []; } catch (e) { return { error: (e as Error).message.slice(0, 200) }; }
+          };
+          const [core, plug, themes] = await Promise.all([
+            lenient(["core", "check-update"]),
+            lenient(["plugin", "list", "--update=available", "--fields=name,version,update_version"]),
+            lenient(["theme", "list", "--update=available", "--fields=name,version,update_version"]),
+          ]);
+          updates = { core, plugins: plug, themes, yoastOutdated: Array.isArray(plug) && plug.some((p) => /^(wordpress-seo|wordpress-seo-premium)$/.test(String((p as { name?: string }).name))) };
+        } finally { stop(); }
+      }
+      return { site: s.name, host: `${s.user}@${s.host}:${s.port ?? 22}`, path: s.path, ...JSON.parse(raw), activePlugins: plugins, updates };
     }),
   );
 
@@ -294,14 +344,15 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
     tool(async (a) => {
       const s = pick(a.site);
       const post = await wpJson<Record<string, unknown>>(s, ["post", "get", String(a.id)]);
-      const [url, yoast] = await Promise.all([wp(s, ["post", "url", String(a.id)]), getYoastMeta(s, a.id)]);
+      const [url, meta] = await Promise.all([wp(s, ["post", "url", String(a.id)]), getPostMeta(s, a.id)]);
       const { post_content, post_content_filtered, ...rest } = post;
       return {
         site: s.name,
         url: url.trim(),
         ...rest,
         post_content: a.includeContent ? post_content : `(omitted, ${String(post_content ?? "").length} chars)`,
-        yoast,
+        featuredMediaId: meta.featuredMediaId,
+        yoast: meta.yoast,
       };
     }),
   );
@@ -311,37 +362,71 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
     {
       title: "Update a WordPress post",
       description:
-        "Update title, slug, excerpt, content and/or status of a post or page. Only the fields you pass are changed. Changing the slug changes the URL: WordPress keeps a redirect from the old slug automatically (Yoast Premium also records it), but check internal links afterwards.",
+        "Update title, slug, excerpt, content, status, publish date and/or featured image of a post or page. Only the fields you pass are changed. Changing the slug changes the URL: WordPress keeps a redirect from the old slug automatically (Yoast Premium also records it), but check internal links afterwards. To schedule a post, pass status='future' together with a date in the future (WP-Cron publishes it); to move a scheduled post, pass the new date. featuredMediaId sets the thumbnail Yoast falls back to for social sharing.",
       inputSchema: {
         site: siteParam,
         id: postId,
-        title: z.string().optional(),
+        title: z.string().optional().describe("New post title (the H1 and Yoast's %%title%%)."),
         slug: z.string().optional().describe("New post_name (URL slug), lowercase-hyphenated."),
-        excerpt: z.string().optional(),
+        excerpt: z.string().optional().describe("New excerpt; themes and archives use it as the summary."),
         content: z.string().optional().describe("Full replacement post_content (HTML or block markup). Fetch the current content with wp_get_post first and edit it; partial updates are not supported."),
-        status: z.enum(["publish", "draft", "pending", "private"]).optional(),
+        status: z.enum(["publish", "draft", "pending", "private", "future"]).optional().describe("'future' = scheduled; it needs a date in the future, here or already on the post."),
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?$/).optional().describe("Publish date in the site's timezone: 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM[:SS]'. Schedules the post with status='future', or changes the published date of a live post (which changes the URL when the permalink structure contains the date)."),
+        featuredMediaId: z.number().int().min(0).nullable().optional().describe("Attachment ID to use as the featured image (from wp_list_media or wp_upload_media); 0 or null removes it."),
         dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."),
       },
     },
     tool(async (a) => {
       const s = pick(a.site);
+      const date = a.date !== undefined ? normalizeWpDate(a.date) : undefined;
       if (a.dryRun) {
-        const cur = await wpJson<Record<string, unknown>>(s, ["post", "get", String(a.id), "--fields=post_title,post_name,post_excerpt,post_status"]);
-        const changes = [["title", "post_title", a.title], ["slug", "post_name", a.slug], ["excerpt", "post_excerpt", a.excerpt], ["status", "post_status", a.status]].filter(([, , v]) => v !== undefined).map(([field, key, to]) => ({ field, from: cur[key as string], to }));
+        const cur = await wpJson<Record<string, unknown>>(s, ["post", "get", String(a.id), "--fields=post_title,post_name,post_excerpt,post_status,post_date"]);
+        const changes = [["title", "post_title", a.title], ["slug", "post_name", a.slug], ["excerpt", "post_excerpt", a.excerpt], ["status", "post_status", a.status], ["date", "post_date", date]].filter(([, , v]) => v !== undefined).map(([field, key, to]) => ({ field, from: cur[key as string], to }));
         if (a.content !== undefined) changes.push({ field: "content", from: `(current content, use wp_get_post to view)`, to: `${a.content.length} chars` });
-        return { site: s.name, id: a.id, dryRun: true, changes };
+        let featured: unknown;
+        if (a.featuredMediaId !== undefined) {
+          const want = a.featuredMediaId ?? 0;
+          featured = await evalJson(s, `$c=get_post_thumbnail_id(${a.id}); $o=['from'=>$c?(int)$c:null,'fromUrl'=>$c?wp_get_attachment_url($c):null,'to'=>${want} ?: null]; ${want > 0 ? `$o['toIsAttachment']=get_post_type(${want})==='attachment'; $o['toUrl']=wp_get_attachment_url(${want}) ?: null;` : ""} echo json_encode($o);`);
+        }
+        return { site: s.name, id: a.id, dryRun: true, changes, featuredImage: featured };
       }
-      const args = ["post", "update", String(a.id)];
-      if (a.content !== undefined) args.push("-");
-      if (a.title !== undefined) args.push(`--post_title=${a.title}`);
-      if (a.slug !== undefined) args.push(`--post_name=${a.slug}`);
-      if (a.excerpt !== undefined) args.push(`--post_excerpt=${a.excerpt}`);
-      if (a.status !== undefined) args.push(`--post_status=${a.status}`);
-      if (args.length === 3) throw new Error("Nothing to update: pass at least one of title, slug, excerpt, content, status.");
-      const out = await wp(s, args, a.content);
+      const wantsPostUpdate = [a.title, a.slug, a.excerpt, a.content, a.status, date].some((v) => v !== undefined);
+      if (!wantsPostUpdate && a.featuredMediaId === undefined) throw new Error("Nothing to update: pass at least one of title, slug, excerpt, content, status, date, featuredMediaId.");
+      let result = "";
+      if (wantsPostUpdate) {
+        const args = ["post", "update", String(a.id)];
+        if (a.content !== undefined) args.push("-");
+        if (a.title !== undefined) args.push(`--post_title=${a.title}`);
+        if (a.slug !== undefined) args.push(`--post_name=${a.slug}`);
+        if (a.excerpt !== undefined) args.push(`--post_excerpt=${a.excerpt}`);
+        if (a.status !== undefined) args.push(`--post_status=${a.status}`);
+        if (date !== undefined) {
+          // post_date_gmt must be sent too: wp_update_post keeps the old GMT value otherwise, and the
+          // cron event that publishes a scheduled post is timed from post_date_gmt. edit_date is required
+          // as well, or wp_update_post silently resets a draft's date to "now" (its "drafts shouldn't be
+          // assigned a date" rule), which turns a scheduled post into an immediately published one.
+          const gmt = (await wp(s, ["eval", `echo get_gmt_from_date(${shq(date)});`])).trim();
+          args.push(`--post_date=${date}`, `--post_date_gmt=${gmt}`, "--edit_date=1");
+        }
+        result = (await wp(s, args, a.content)).trim();
+      }
+      let featured: unknown;
+      if (a.featuredMediaId !== undefined) {
+        const want = a.featuredMediaId ?? 0;
+        featured = await evalJson(s, want > 0
+          ? `if (get_post_type(${want}) !== 'attachment') { echo json_encode(['error'=>'media ${want} is not an attachment']); exit(1); } set_post_thumbnail(${a.id}, ${want}); echo json_encode(['featuredMediaId'=>(int) get_post_thumbnail_id(${a.id}),'url'=>wp_get_attachment_url(${want})]);`
+          : `delete_post_thumbnail(${a.id}); echo json_encode(['featuredMediaId'=>null]);`);
+      }
       const cachePurged = await purgeCache(s, a.id);
-      const rows = await wpJson<Record<string, unknown>[]>(s, ["post", "list", `--post__in=${a.id}`, "--post_type=any", "--post_status=any", `--fields=${POST_FIELDS}`]);
-      return { site: s.name, result: out.trim(), cachePurged, post: rows?.[0] ?? null };
+      const rows = await wpJson<Record<string, unknown>[]>(s, ["post", "list", `--post__in=${a.id}`, "--post_type=any", "--post_status=any", `--fields=${POST_FIELDS},post_date_gmt`]);
+      const row = rows?.[0];
+      const ts = Date.parse(String(row?.post_date_gmt ?? "").replace(" ", "T") + "Z");
+      const inFuture = Number.isFinite(ts) && ts > Date.now();
+      const notes: string[] = [];
+      if (row?.post_status === "future") notes.push(inFuture ? `Scheduled: WordPress publishes it at ${row.post_date} site time, as long as WP-Cron runs (a page view triggers it).` : "Status is 'future' but the date is in the past: WordPress will publish it on the next cron run.");
+      else if (a.status === "future") notes.push(`WordPress published it straight away instead of scheduling it: the date (${row?.post_date}) is not in the future. Pass a later date.`);
+      else if (date !== undefined && inFuture) notes.push(`post_date is in the future but the status is '${row?.post_status}': pass status='future' to actually schedule it.`);
+      return { site: s.name, result, featuredImage: featured, cachePurged, post: row ?? null, notes: notes.length ? notes : undefined };
     }),
   );
 
@@ -350,13 +435,13 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
     {
       title: "Update Yoast SEO meta",
       description:
-        "Set Yoast SEO fields on a post/page: SEO title (<title> tag, supports Yoast variables like %%sep%% %%sitename%%), meta description, focus keyword, canonical URL, noindex, the social sharing overrides that social_preview_check reports on (Open Graph and Twitter title/description/image), the Yoast schema page/article type, and the cornerstone flag. Only passed fields change; pass an empty string to reset a field to Yoast's default. Rebuilds the Yoast indexable so the change is live immediately.",
+        "Set Yoast SEO fields on a post/page: SEO title (<title> tag, supports Yoast variables like %%sep%% %%sitename%%), meta description, focus keyword, canonical URL, noindex, the social sharing overrides that social_preview_check reports on (Open Graph and Twitter title/description/image), the Yoast schema page/article type, the cornerstone flag, the primary category (which drives the breadcrumb trail and %%primary_category%%), the breadcrumb title, and the advanced robots directives. Only passed fields change; pass an empty string to reset a field to Yoast's default. Rebuilds the Yoast indexable so the change is live immediately.",
       inputSchema: {
         site: siteParam,
         id: postId,
         seoTitle: z.string().optional().describe("Aim for <= 60 characters."),
         metaDescription: z.string().optional().describe("Aim for 120-155 characters."),
-        focusKeyword: z.string().optional(),
+        focusKeyword: z.string().optional().describe("Yoast's focus keyphrase for this page (drives its own analysis, not Google)."),
         canonical: z.string().optional().describe("Absolute URL, or empty string to clear."),
         noindex: z.boolean().nullable().optional().describe("true = noindex, false = force index, null = Yoast default."),
         ogTitle: z.string().optional().describe("Open Graph title override (Facebook, WhatsApp, LinkedIn); empty string clears it."),
@@ -368,15 +453,22 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
         schemaPageType: z.enum(["WebPage", "ItemPage", "AboutPage", "FAQPage", "QAPage", "ProfilePage", "ContactPage", "MedicalWebPage", "CollectionPage", "CheckoutPage", "RealEstateListing", "SearchResultsPage"]).optional().describe("Yoast's own schema page type. Prefer this over wp_set_schema for page type: wp_set_schema adds a second JSON-LD block that can contradict Yoast's graph."),
         schemaArticleType: z.enum(["None", "Article", "BlogPosting", "SocialMediaPosting", "NewsArticle", "AdvertiserContentArticle", "SatiricalArticle", "ScholarlyArticle", "TechArticle", "Report"]).optional().describe("Yoast's schema article type for posts."),
         cornerstone: z.boolean().optional().describe("Mark as cornerstone content (affects Yoast's internal-linking suggestions and its own analysis)."),
+        primaryCategory: z.number().int().positive().nullable().optional().describe("Term ID (from wp_list_terms) of the category Yoast treats as primary: it picks the breadcrumb trail and %%primary_category%% in permalinks/templates. Must be a category the post is in; null clears it."),
+        breadcrumbTitle: z.string().optional().describe("Shorter title for this page in the Yoast breadcrumb trail (a rich-result surface); empty string falls back to the post title."),
+        robotsAdvanced: z.array(z.enum(ROBOTS_ADVANCED)).max(4).optional().describe("Advanced robots directives for this page: noimageindex, noarchive, nosnippet ('none' = explicitly no directives). Empty array restores the site default. Note: Yoast has no per-post max-snippet field."),
         dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."),
       },
     },
     tool(async (a) => {
       const s = pick(a.site);
       if (a.dryRun) {
-        const cur = await getYoastMeta(s, a.id);
-        const changes = (["seoTitle", "metaDescription", "focusKeyword", "canonical", "noindex", "ogTitle", "ogDescription", "ogImage", "twitterTitle", "twitterDescription", "twitterImage", "schemaPageType", "schemaArticleType", "cornerstone"] as const).filter((k) => a[k] !== undefined).map((k) => ({ field: k, from: cur[k], to: a[k] }));
+        const cur = (await getPostMeta(s, a.id)).yoast;
+        const changes = (["seoTitle", "metaDescription", "focusKeyword", "canonical", "noindex", "ogTitle", "ogDescription", "ogImage", "twitterTitle", "twitterDescription", "twitterImage", "schemaPageType", "schemaArticleType", "cornerstone", "primaryCategory", "breadcrumbTitle", "robotsAdvanced"] as const).filter((k) => a[k] !== undefined).map((k) => ({ field: k, from: cur[k], to: a[k] }));
         return { site: s.name, id: a.id, dryRun: true, changes };
+      }
+      if (a.primaryCategory) {
+        const terms = await wpJson<number[]>(s, ["post", "term", "list", String(a.id), "category", "--field=term_id"]);
+        if (!(terms ?? []).map(Number).includes(a.primaryCategory)) throw new Error(`Post ${a.id} is not in category ${a.primaryCategory} (it is in ${(terms ?? []).join(", ") || "none"}); assign the category first, Yoast ignores a primary category the post does not have.`);
       }
       const updates: [string, string][] = [];
       if (a.seoTitle !== undefined) updates.push([YOAST_KEYS.seoTitle, a.seoTitle]);
@@ -388,6 +480,9 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
         if (a[k] !== undefined) updates.push([YOAST_KEYS[k], a[k] as string]);
       }
       if (a.cornerstone !== undefined) updates.push([YOAST_KEYS.cornerstone, a.cornerstone ? "1" : ""]);
+      if (a.primaryCategory !== undefined) updates.push([YOAST_KEYS.primaryCategory, a.primaryCategory === null ? "" : String(a.primaryCategory)]);
+      if (a.breadcrumbTitle !== undefined) updates.push([YOAST_KEYS.breadcrumbTitle, a.breadcrumbTitle]);
+      if (a.robotsAdvanced !== undefined) updates.push([YOAST_KEYS.robotsAdvanced, a.robotsAdvanced.join(",")]);
       if (!updates.length) throw new Error("Nothing to update: pass at least one SEO field.");
       const remote = updates
         .map(([k, v]) => (v === "" ? `(wp post meta delete ${a.id} ${shq(k)} || true)` : `wp post meta update ${a.id} ${shq(k)} ${shq(v)}`))
@@ -395,8 +490,8 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
       const r = await ssh(s, `cd ${shq(s.path)} && ${remote}`);
       if (r.code !== 0) throw new Error(`meta update failed: ${(r.stderr || r.stdout).trim().slice(0, 1000)}`);
       const indexable = await rebuildYoastIndexable(s, a.id);
-      const [yoast, cachePurged] = await Promise.all([getYoastMeta(s, a.id), purgeCache(s, a.id)]);
-      return { site: s.name, id: a.id, updated: updates.map(([k]) => k), indexable, cachePurged, yoast };
+      const [meta, cachePurged] = await Promise.all([getPostMeta(s, a.id), purgeCache(s, a.id)]);
+      return { site: s.name, id: a.id, updated: updates.map(([k]) => k), indexable, cachePurged, yoast: meta.yoast };
     }),
   );
 
@@ -508,15 +603,16 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
   server.registerTool(
     "wp_list_media",
     {
-      title: "List media images",
-      description: "List images in the media library with alt text, caption, dimensions, file size and the post they are attached to. Use missingAltOnly to find images without alt text; with it the result also carries totalMissingAlt, pages and hasMore so you can work through a backlog page by page.",
+      title: "List media files",
+      description: "List media-library files with alt text, caption, dimensions, mime type, file size and the post they are attached to. Defaults to images; set mimeType to 'application/pdf' for brochures and itineraries (they are indexable and can rank) or 'any' for everything. Use missingAltOnly to find images without alt text; with it the result also carries totalMissingAlt, pages and hasMore so you can work through a backlog page by page.",
       inputSchema: {
         site: siteParam,
-        missingAltOnly: z.boolean().default(false),
-        search: z.string().optional(),
-        attachedTo: z.number().int().positive().optional().describe("Only images uploaded to this post ID."),
-        perPage: z.number().int().min(1).max(200).default(50),
-        page: z.number().int().min(1).default(1),
+        missingAltOnly: z.boolean().default(false).describe("Only files whose alt text is empty (images that need one)."),
+        mimeType: z.string().default("image").describe("Mime filter: a prefix like 'image', 'video', 'audio', 'application', an exact type like 'application/pdf', or 'any' for every attachment."),
+        search: z.string().optional().describe("Free-text search on file name, title and caption."),
+        attachedTo: z.number().int().positive().optional().describe("Only files uploaded to this post ID."),
+        perPage: z.number().int().min(1).max(200).default(50).describe("Files per page."),
+        page: z.number().int().min(1).default(1).describe("Page number, 1-based."),
       },
     },
     tool(async (a) => ({ site: pick(a.site).name, ...(await runHelper<object>(pick(a.site), "wp", "media_list", [], JSON.stringify(a))) })),
@@ -570,22 +666,45 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
   server.registerTool(
     "wp_update_media",
     {
-      title: "Update media alt/title/caption",
-      description: "Set alt text, title, caption and/or description on one or more media items.",
+      title: "Update media alt/title/caption, regenerate thumbnails",
+      description: "Set alt text, title, caption and/or description on one or more media items, and/or run `wp media regenerate` so WordPress rebuilds the intermediate image sizes. Regenerate after the theme's registered image sizes change or srcset markup points at sizes that no longer exist; regenerateAll walks the whole library and takes minutes.",
       inputSchema: {
         site: siteParam,
-        items: z.array(z.object({ id: z.number().int().positive(), alt: z.string().optional(), title: z.string().optional(), caption: z.string().optional(), description: z.string().optional() })).min(1).max(100),
-        dryRun: z.boolean().default(false).describe("Preview only: return current values and the intended changes without writing."),
+        items: z.array(z.object({ id: z.number().int().positive(), alt: z.string().optional(), title: z.string().optional(), caption: z.string().optional(), description: z.string().optional() })).min(1).max(100).optional().describe("Media items to edit (attachment IDs from wp_list_media); omit to only regenerate."),
+        regenerateThumbnails: z.boolean().default(false).describe("Regenerate the image sizes of the listed items (needs items, or use regenerateAll)."),
+        regenerateAll: z.boolean().default(false).describe("Regenerate every image in the library instead. Slow: minutes on a large library, and it rewrites files on disk."),
+        onlyMissing: z.boolean().default(true).describe("When regenerating, skip sizes that already exist (much faster; set false to force a rebuild of every size)."),
+        dryRun: z.boolean().default(false).describe("Preview only: return current values and what would be regenerated, without writing."),
       },
     },
-    tool(async (a) => {
+    tool(async (a, extra) => {
       const s = pick(a.site);
+      const regenerate = a.regenerateAll || a.regenerateThumbnails;
+      if (!a.items?.length && !regenerate) throw new Error("Nothing to do: pass items to edit, or regenerateThumbnails/regenerateAll.");
+      if (a.regenerateThumbnails && !a.regenerateAll && !a.items?.length) throw new Error("regenerateThumbnails needs items; use regenerateAll for the whole library.");
+      const runRegenerate = async () => {
+        const args = ["media", "regenerate", "--yes"];
+        if (!a.regenerateAll) args.push(...(a.items ?? []).map((i) => String(i.id)));
+        if (a.onlyMissing) args.push("--only-missing");
+        const stop = heartbeat(extra, "regenerating image sizes");
+        try {
+          const out = await wp(s, args, undefined, 590_000);
+          const lines = out.trim().split("\n");
+          return { command: args.join(" "), summary: lines[lines.length - 1], output: out.slice(-3000) };
+        } catch (e) {
+          return { command: args.join(" "), error: (e as Error).message.slice(0, 500) };
+        } finally { stop(); }
+      };
       if (a.dryRun) {
+        const wouldRegenerate = regenerate ? { scope: a.regenerateAll ? "all images" : `${a.items?.length ?? 0} items`, onlyMissing: a.onlyMissing } : undefined;
+        if (!a.items?.length) return { site: s.name, dryRun: true, wouldRegenerate, note: "No commands were run." };
         const rows = await wpJson<{ ID: number; post_title: string; post_excerpt: string; post_content: string }[]>(s, ["post", "list", "--post_type=attachment", "--post_status=inherit", `--post__in=${a.items.map((i) => i.id).join(",")}`, "--fields=ID,post_title,post_excerpt,post_content"]);
         const alts = await Promise.all(a.items.map((i) => wp(s, ["post", "meta", "get", String(i.id), "_wp_attachment_image_alt"]).then((v) => v.trim()).catch(() => "")));
-        return { site: s.name, dryRun: true, changes: a.items.map((i, idx) => { const cur = rows.find((r) => r.ID === i.id); return { id: i.id, found: Boolean(cur), alt: i.alt !== undefined ? { from: alts[idx], to: i.alt } : undefined, title: i.title !== undefined ? { from: cur?.post_title, to: i.title } : undefined, caption: i.caption !== undefined ? { from: cur?.post_excerpt, to: i.caption } : undefined, description: i.description !== undefined ? { from: cur?.post_content, to: i.description } : undefined }; }) };
+        return { site: s.name, dryRun: true, wouldRegenerate, changes: a.items.map((i, idx) => { const cur = rows.find((r) => r.ID === i.id); return { id: i.id, found: Boolean(cur), alt: i.alt !== undefined ? { from: alts[idx], to: i.alt } : undefined, title: i.title !== undefined ? { from: cur?.post_title, to: i.title } : undefined, caption: i.caption !== undefined ? { from: cur?.post_excerpt, to: i.caption } : undefined, description: i.description !== undefined ? { from: cur?.post_content, to: i.description } : undefined }; }) };
       }
-      return { site: s.name, ...(await runHelper<object>(s, "wp", "media_update", [], JSON.stringify({ items: a.items }))) };
+      const updated = a.items?.length ? await runHelper<object>(s, "wp", "media_update", [], JSON.stringify({ items: a.items })) : undefined;
+      const regenerated = regenerate ? await runRegenerate() : undefined;
+      return { site: s.name, ...(updated ?? {}), regenerated };
     }),
   );
 
@@ -744,6 +863,150 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
       const s = pick(a.site);
       const r = await ssh(s, wpCmd(s, a.args), a.stdin);
       return { site: s.name, exitCode: r.code, stdout: r.stdout.slice(0, 20000), stderr: r.stderr.slice(0, 4000) };
+    }),
+  );
+
+  server.registerTool(
+    "wp_get_seo_settings",
+    {
+      title: "Read site-wide Yoast settings",
+      description:
+        "Read Yoast's site-level configuration: title and meta-description templates per post type and taxonomy, which archives are indexed or switched off (author, date, tag, format, search, 404), the XML sitemap switch and what each type contributes to it, the breadcrumb setup, and the Organization/Person knowledge-graph identity with its sameAs social profiles. Thin indexed author/date/tag archives - the classic index bloat that gsc_index_coverage surfaces on a one-author site - are configured here; change them with wp_update_seo_settings.",
+      inputSchema: {
+        site: siteParam,
+        raw: z.boolean().default(false).describe("Also return the raw wpseo_titles / wpseo_social / wpseo option arrays, for keys this tool does not summarise."),
+      },
+    },
+    tool(async (a) => ({ site: pick(a.site).name, ...(await runHelper<object>(pick(a.site), "wp", "seo_settings_get", [], JSON.stringify({ raw: a.raw }))) })),
+  );
+
+  server.registerTool(
+    "wp_update_seo_settings",
+    {
+      title: "Update site-wide Yoast settings",
+      description:
+        "Change Yoast's site-level configuration: title and meta-description templates, noindex per post type / taxonomy / archive (the same switch also drops that type from the XML sitemap), switching author, date and format archives off entirely, the title separator, the breadcrumb trail, the Organization/Person identity with its social profiles, and the XML sitemap itself. This is the fix path for index bloat from author, date and tag archives. These settings are site-wide and WordPress does not version them, so read wp_get_seo_settings first; dryRun is ON by default and returns the exact from/to list - call again with dryRun=false to apply. Afterwards Yoast's sitemap cache and the page cache are flushed, so a resubmitted sitemap is not a stale one.",
+      inputSchema: {
+        site: siteParam,
+        templates: z.array(z.object({
+          for: z.string().describe("What the template is for: a post type ('post', 'page'), a taxonomy ('tax-category', 'tax-post_tag'), or 'author-wpseo' (author archives), 'archive-wpseo' (date archives), 'search-wpseo', '404-wpseo'. Exact keys come from wp_get_seo_settings."),
+          title: z.string().optional().describe("Title template; Yoast variables allowed (%%title%% %%sep%% %%sitename%% %%page%% %%primary_category%%)."),
+          metaDescription: z.string().optional().describe("Meta-description template; empty string clears it."),
+          noindex: z.boolean().optional().describe("true = noindex this type/archive and drop it from the XML sitemap (Yoast uses one switch for both)."),
+        })).max(30).optional().describe("Per-type templates and index switches."),
+        archives: z.object({
+          disableAuthor: z.boolean().describe("Switch author archives off completely (they 404/redirect). The usual answer on a single-author site."),
+          disableDate: z.boolean().describe("Switch date archives off completely."),
+          disableFormat: z.boolean().describe("Switch post-format archives off."),
+          disableAttachmentPages: z.boolean().describe("Redirect attachment pages to the file itself (Yoast's default; keeps thin image pages out of the index)."),
+        }).partial().optional().describe("Switch whole archive types off. Stronger than noindex: the URLs stop existing."),
+        separator: z.enum(["sc-dash", "sc-ndash", "sc-mdash", "sc-middot", "sc-bull", "sc-star", "sc-smstar", "sc-pipe", "sc-tilde", "sc-laquo", "sc-raquo", "sc-lt", "sc-gt"]).optional().describe("Yoast's %%sep%% character."),
+        breadcrumbs: z.object({
+          enabled: z.boolean(),
+          separator: z.string().describe("Character between crumbs, e.g. '»'."),
+          homeText: z.string().describe("Label of the first crumb, e.g. 'Home'."),
+          prefix: z.string().describe("Text before the whole trail (usually empty)."),
+          archivePrefix: z.string().describe("Prefix on archive pages, e.g. 'Archives for'."),
+          searchPrefix: z.string().describe("Prefix on search pages, e.g. 'You searched for'."),
+          notFoundText: z.string().describe("Last crumb on 404 pages."),
+          boldLast: z.boolean().describe("Bold the current page in the trail."),
+          taxonomyForPosts: z.string().describe("Taxonomy shown in the trail for posts, e.g. 'category'."),
+        }).partial().optional().describe("Breadcrumb configuration; the trail is what Yoast turns into BreadcrumbList schema, a rich-result surface."),
+        organization: z.object({
+          type: z.enum(["company", "person"]).describe("Whether the site represents an organization or a person; drives Yoast's knowledge-graph entity."),
+          name: z.string(),
+          alternateName: z.string(),
+          logoId: z.number().int().positive().describe("Attachment ID of the logo (from wp_list_media)."),
+          personUserId: z.number().int().positive().describe("WordPress user ID the site represents, when type='person'."),
+          websiteName: z.string().describe("Name of the WebSite entity in schema; defaults to the site title."),
+          alternateWebsiteName: z.string(),
+        }).partial().optional().describe("The Organization/Person entity Yoast publishes in its schema graph, which knowledge_graph_check looks for."),
+        socialProfiles: z.object({
+          facebook: z.string().describe("Full profile URL; empty string clears."),
+          twitter: z.string().describe("X/Twitter handle without the @, as Yoast stores it."),
+          instagram: z.string(),
+          linkedin: z.string(),
+          youtube: z.string(),
+          pinterest: z.string(),
+          wikipedia: z.string(),
+          other: z.array(z.string()).max(10).describe("Any further sameAs profile URLs (replaces the current list)."),
+        }).partial().optional().describe("The sameAs profiles Yoast puts in the Organization/Person schema; knowledge_graph_check reports on these."),
+        xmlSitemap: z.boolean().optional().describe("Yoast's XML sitemap feature as a whole (sitemap_index.xml)."),
+        dryRun: z.boolean().default(true).describe("Default true: report every from/to without writing. Pass false to apply."),
+      },
+    },
+    tool(async (a) => {
+      const s = pick(a.site);
+      const { site: _s, ...payload } = a;
+      return { site: s.name, ...(await runHelper<object>(s, "wp", "seo_settings_set", [], JSON.stringify(payload))) };
+    }),
+  );
+
+  server.registerTool(
+    "wp_list_revisions",
+    {
+      title: "List revisions of a post",
+      description:
+        "List the stored revisions of a post or page with date, author and how far each one differs from what is live now, so a bad edit can be rolled back with wp_update_post_from_revision. BeTheme builder text lives in post meta, which WordPress does not version: for those posts the revision only covers the (often empty) post_content, and wp_builder_check / wp_builder_restore is the right tool.",
+      inputSchema: {
+        site: siteParam,
+        id: postId,
+        limit: z.number().int().min(1).max(50).default(20).describe("Most recent revisions to return."),
+      },
+    },
+    tool(async (a) => ({ site: pick(a.site).name, ...(await runHelper<object>(pick(a.site), "wp", "revisions_list", [], JSON.stringify({ id: a.id, limit: a.limit }))) })),
+  );
+
+  server.registerTool(
+    "wp_update_post_from_revision",
+    {
+      title: "Restore a post from a revision",
+      description:
+        "Roll a post or page back to one of its revisions (title, content and excerpt), for example after a rewrite that lost content. dryRun is ON by default and returns the line-level diff between what is live now and that revision - call again with dryRun=false to apply. WordPress stores the current state as a new revision first, so the rollback can itself be undone. Rebuilds the Yoast indexable and purges the post's cache. Builder content is not in revisions: use wp_builder_restore for BeTheme posts.",
+      inputSchema: {
+        site: siteParam,
+        id: postId,
+        revisionId: z.number().int().positive().describe("Revision ID from wp_list_revisions (must belong to this post)."),
+        dryRun: z.boolean().default(true).describe("Default true: show the diff without writing. Pass false to restore."),
+      },
+    },
+    tool(async (a) => {
+      const s = pick(a.site);
+      const res = await runHelper<Record<string, unknown>>(s, "wp", "revision_restore", [], JSON.stringify({ id: a.id, revisionId: a.revisionId, dryRun: a.dryRun }));
+      return { site: s.name, ...res };
+    }),
+  );
+
+  server.registerTool(
+    "wp_delete_cache",
+    {
+      title: "Purge caches site-wide",
+      description:
+        "Purge caches for the whole site (WP Rocket, WP Super Cache, W3TC, LiteSpeed), and optionally regenerate WP Rocket's critical CSS, flush the object cache and clear Yoast's sitemap cache. Single-post writes purge their own page already; this is the site-wide one to run after wp_bulk_update_seo across many posts, a term rename, a theme or CSS change, or wp_update_seo_settings. Stale critical CSS is a common cause of the layout shift (CLS) that pagespeed and crux_history report, so regenerate it whenever the theme's CSS changed. Regenerating critical CSS runs in the background on the site and takes a few minutes to finish.",
+      inputSchema: {
+        site: siteParam,
+        pageCache: z.boolean().default(true).describe("Clear all cached HTML."),
+        criticalCss: z.boolean().default(false).describe("Also run WP Rocket's critical-CSS regeneration (`wp rocket regenerate --file=critical-css`)."),
+        objectCache: z.boolean().default(false).describe("Also flush the object cache (transients, Redis/Memcached)."),
+        yoastSitemap: z.boolean().default(false).describe("Also clear Yoast's cached XML sitemaps, so the next fetch (or gsc_submit_sitemap) sees current data."),
+        dryRun: z.boolean().default(false).describe("Preview only: report what would be purged without running anything."),
+      },
+    },
+    tool(async (a, extra) => {
+      const s = pick(a.site);
+      const plan = { pageCache: a.pageCache, criticalCss: a.criticalCss, objectCache: a.objectCache, yoastSitemap: a.yoastSitemap };
+      if (!Object.values(plan).some(Boolean)) throw new Error("Nothing to purge: enable at least one of pageCache, criticalCss, objectCache, yoastSitemap.");
+      if (a.dryRun) return { site: s.name, dryRun: true, would: plan, note: "Nothing was purged." };
+      const stop = heartbeat(extra, "purging caches");
+      try {
+        const res = await runHelper<object>(s, "wp", "purge_site", [], JSON.stringify(plan));
+        let criticalCss: unknown;
+        if (a.criticalCss) {
+          try { criticalCss = { started: true, output: (await wp(s, ["rocket", "regenerate", "--file=critical-css"], undefined, 300_000)).trim().slice(-1500) }; }
+          catch (e) { criticalCss = { started: false, error: (e as Error).message.slice(0, 400), hint: "This WP Rocket version may not expose the CLI command; regenerate critical CSS from the WP Rocket settings page instead." }; }
+        }
+        return { site: s.name, ...res, criticalCss };
+      } finally { stop(); }
     }),
   );
 }

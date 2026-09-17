@@ -138,14 +138,26 @@ function diffStats(before: string, after: string) {
 }
 
 /** Current file on a ref: text (null when binary), size; null when missing. Falls back to the blob API for files over the 1 MB contents limit. */
-async function readRepoFile(repo: string, path: string, ref: string): Promise<{ text: string | null; bytes: number; buf: Buffer } | null> {
-  let d: { type: string; encoding?: string; content?: string; size: number; sha: string };
+async function readRepoFile(repo: string, path: string, ref: string): Promise<{ text: string | null; bytes: number; buf: Buffer; sha: string; url?: string } | null> {
+  let d: { type: string; encoding?: string; content?: string; size: number; sha: string; html_url?: string };
   try { d = await gh(`/repos/${repo}/contents/${path}?ref=${encodeURIComponent(ref)}`); } catch { return null; }
   if (d.type !== "file") return null;
   let buf: Buffer;
   if (d.encoding === "base64" && d.content) buf = Buffer.from(d.content, "base64");
   else { const blob = await gh<{ content: string }>(`/repos/${repo}/git/blobs/${d.sha}`); buf = Buffer.from(blob.content, "base64"); }
-  return { text: buf.subarray(0, 8000).includes(0) ? null : buf.toString("utf8"), bytes: buf.length, buf };
+  return { text: buf.subarray(0, 8000).includes(0) ? null : buf.toString("utf8"), bytes: buf.length, buf, sha: d.sha, url: d.html_url };
+}
+
+/**
+ * A byte window of a UTF-8 buffer that never splits a multibyte character, so paging through a
+ * big file with offset/nextOffset cannot corrupt the text. Pure, for tests.
+ */
+export function sliceUtf8(buf: Buffer, offset: number, maxBytes: number): { text: string; start: number; end: number; truncated: boolean } {
+  let start = Math.min(Math.max(0, Math.trunc(offset)), buf.length);
+  while (start > 0 && start < buf.length && (buf[start] & 0xc0) === 0x80) start++; // land on a lead byte
+  let end = Math.min(start + Math.max(1, Math.trunc(maxBytes)), buf.length);
+  while (end > start && end < buf.length && (buf[end] & 0xc0) === 0x80) end--; // do not cut a character in half
+  return { text: buf.subarray(start, end).toString("utf8"), start, end, truncated: end < buf.length };
 }
 
 async function branchHead(repo: string, branch: string): Promise<string | null> {
@@ -209,16 +221,30 @@ export function registerGitHubTools(server: McpServer) {
     "github_get_file",
     {
       title: "Read a file from GitHub",
-      description: "Read a file (text) from a repository branch. Returns content, sha (needed for edits), size and the branch's latest commit. Files over 1 MB are refused; use github_list_dir to browse.",
-      inputSchema: { repo: repoParam, path: z.string(), ref: z.string().optional().describe("Branch, tag or commit; defaults to the default branch.") },
+      description:
+        "Read a text file from a repository branch. Returns content, sha, size and the file's URL. Files of any size are readable (the blob API is used past GitHub's 1 MB contents limit), but only maxBytes are returned per call: page through a large content bundle with the nextOffset of a truncated reply, or change it in place with github_commit_files edits instead of reading it whole. Binary files are refused.",
+      inputSchema: {
+        repo: repoParam,
+        path: z.string().describe("Path inside the repository, e.g. 'src/pages/index.astro'."),
+        ref: z.string().optional().describe("Branch, tag or commit; defaults to the default branch."),
+        maxBytes: z.number().int().min(1000).max(300_000).default(100_000).describe("Most bytes of file content to return in one call, so a huge file cannot flood the answer. Above ~100 KB the server's own result cap may trim the reply further."),
+        offset: z.number().int().min(0).default(0).describe("Byte offset to start at (use the nextOffset of a truncated reply). Never splits a UTF-8 character."),
+      },
     },
     tool(async (a) => {
-      const q = a.ref ? `?ref=${encodeURIComponent(a.ref)}` : "";
-      const d = await gh<{ type: string; size: number; sha: string; encoding?: string; content?: string; html_url: string; download_url?: string }>(`/repos/${a.repo}/contents/${a.path.replace(/^\//, "")}${q}`);
-      if (d.type !== "file") throw new Error(`${a.path} is a ${d.type}, not a file`);
-      if (d.size > 1_000_000) throw new Error(`File is ${d.size} bytes; too large for this tool`);
-      const content = d.encoding === "base64" && d.content ? Buffer.from(d.content, "base64").toString("utf8") : "";
-      return { repo: a.repo, path: a.path, ref: a.ref ?? "(default)", sha: d.sha, size: d.size, url: d.html_url, content };
+      const path = a.path.replace(/^\//, "");
+      const ref = a.ref ?? (await gh<{ default_branch: string }>(`/repos/${a.repo}`)).default_branch;
+      const file = await readRepoFile(a.repo, path, ref);
+      if (!file) throw new Error(`${path} not found on '${ref}' (or it is a directory: use github_list_dir).`);
+      if (file.text === null) throw new Error(`${path} is binary (${file.bytes} bytes); this tool returns text only.`);
+      const { text, start, end, truncated } = sliceUtf8(file.buf, a.offset, a.maxBytes);
+      return {
+        repo: a.repo, path, ref, sha: file.sha, size: file.bytes, url: file.url,
+        offset: start, returnedBytes: end - start, truncated,
+        nextOffset: truncated ? end : undefined,
+        note: truncated ? `Only bytes ${start}-${end} of ${file.bytes} are shown. Call again with offset=${end}, or edit the file in place with github_commit_files edits instead of rewriting it whole.` : undefined,
+        content: text,
+      };
     }),
   );
 
