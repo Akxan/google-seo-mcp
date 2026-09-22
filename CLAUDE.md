@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目是什么
 
-一个 MCP 服务（TypeScript，`@modelcontextprotocol/sdk`），把 Google Search Console、Google Analytics 4（Data API 与只读 Admin API）、网页与 GEO 审计（PageSpeed、CrUX、结构化数据、AI 爬虫、llms.txt 等）、跨数据源分析，以及可选的 WordPress（通过 SSH 执行 WP-CLI）、GitHub 读写（整文件、局部修改、服务器端转图提交）和 Gmail 附件（只读）封装成 80 多个工具，用于 SEO/GEO 运维。生产环境是部署在服务器上的 Streamable HTTP 实例，所有客户端都连它；本机 stdio 只用于开发验证。面向用户的说明在 `README.md`（英文）和 `README.zh-CN.md`（中文）。
+一个 MCP 服务（TypeScript，`@modelcontextprotocol/sdk`），把 Google Search Console、Google Analytics 4（Data API 与只读 Admin API）、网页与 GEO 审计（PageSpeed、CrUX、结构化数据、AI 爬虫、llms.txt 等）、跨数据源分析，以及可选的 WordPress（通过 SSH 执行 WP-CLI）、GitHub 读写（整文件、局部修改、服务器端转图提交）和 Gmail 附件（只读）封装成 99 个工具（准确数以 `test/tools.snap.json` 为准），用于 SEO/GEO 运维。生产环境是部署在服务器上的 Streamable HTTP 实例，所有客户端都连它；本机 stdio 只用于开发验证。面向用户的说明在 `README.md`（英文）和 `README.zh-CN.md`（中文）。
 
 ## 常用命令
 
@@ -39,6 +39,8 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 - `src/server.ts`：`createServer()` 创建 `McpServer` 并注册全部工具。两种传输都调用它；HTTP 传输是**每个请求新建一个服务实例**（无状态，`sessionIdGenerator: undefined`）。它包了一层 `registerTool`：按工具名推断注解（`WRITE_TOOLS`、`DESTRUCTIVE_TOOLS` 正则）、只读模式下跳过写入工具、按 `toolsetOf()` 应用工具集筛选（gsc/ga4/web/geo/analysis/wordpress/github/gmail/core），并给写入工具加审计日志：每次调用往 stderr 写一行 JSON（工具、成败、耗时、客户端 UA、`auditSummary()` 挑出的标识符如 id/repo/branch/文件路径，绝不含正文内容），线上用 `docker logs` 看；设置了 `SEO_MCP_DATA_DIR` 时同一行也追加到 `<dir>/audit.log`（容器每次重建日志就没了，文件不会）。**新增写入类工具时必须让名字匹配这两个正则**，否则会被当成只读。服务器 instructions 在 `buildInstructions()` 里。
 - `src/prompts.ts`：MCP 提示词（客户端显示为斜杠命令）。每条声明 `needs`（依赖哪些工具集），`registerPrompts()` 只注册工具集齐全的那些，所以裁剪过的实例不会给出跑不了的命令。提示词正文里提到的工具名有单元测试校验必须真实存在，防止与工具清单脱节。**改动工具名时记得同步这里**。**所有参数必须是可选的**：Claude Code 的 VS Code 扩展根本不显示 MCP 提示词，终端版会列出但不索要参数，必填参数会让调用直接失败；缺参数时在正文里给模型可执行的指示（查或问），单元测试会校验这一点，并禁止正文里出现 undefined。新增提示词要克制：清单随每次对话传输，正文只在用户选中时才发送，所以标题与描述要短，正文可以详细。
 - `src/index.ts`：入口，根据 `--http` 参数或 `MCP_TRANSPORT=http` 选择 stdio 或 HTTP。`src/http.ts` 是纯 `node:http` 服务，带 Bearer Token 鉴权（`MCP_AUTH_TOKEN`）、`/healthz`（无令牌只返回 `{ok:true}`，带令牌附版本号与凭据来源），默认只绑回环地址。
+- `src/oauth.ts`：OAuth 2.1 授权服务，只在 `SEO_MCP_OAUTH=1` 时加载（给填不了固定令牌的客户端用，目前是 ChatGPT 插件页）。自带 `node:sqlite` 库（`oauth_clients` + `oauth_grants`，令牌只存 SHA-256），支持动态注册（RFC 7591）、PKCE S256、刷新令牌轮换与重放即撤销（RFC 9700）、`/oauth/revoke`，两份 `.well-known` 元数据（RFC 9728 / 8414，带 `/mcp` 后缀的变体也要响应）。**授权页校验的就是 `MCP_AUTH_TOKEN` 本身**，没有第二个密钥。授权出来的会话看不到 `oauth_list_grants`、`oauth_revoke_grant` 这两个运营者工具（`http.ts` 的 `OPERATOR_ONLY_TOOLS`），`mcp:read` 的授权整个实例转只读。
+- `src/digest.ts`：每周自动体检。`startDigestSchedule()` 每小时 tick 一次，到 `SEO_MCP_DIGEST_AT`（默认 `mon:08` UTC）就对 `SEO_MCP_DIGEST_SITES` 的每个站跑 `buildDigest()`（4 个并行 GSC 查询，比较前后两周），写 `<SEO_MCP_DATA_DIR>/digests/<日期>.md`，设了 `SEO_MCP_DIGEST_REPO` 再开一个 GitHub issue。标记文件 `digest-last-run` 在跑之前就写，失败也不会每小时重试。同一套比较逻辑由 `seo_digest` 工具随时手动调用。纯函数（`compare`、`renderDigest`、`parseSchedule`、`isDue`）都有单元测试。
 - `src/google.ts`：单例 `GoogleAuth`，以及 `googleapis` 客户端工厂（`searchconsole v1`、`analyticsdata v1beta`、`analyticsadmin v1beta`）。凭据查找顺序：`GOOGLE_CREDENTIALS_JSON` → `GOOGLE_APPLICATION_CREDENTIALS` → `~/.config/google-seo-mcp/credentials.json` → ADC。GA4 用的是 `googleapis` 的 REST 客户端而不是 `@google-analytics/data`，避免引入 gRPC。
 - `src/util.ts`：`tool(fn)` 包装所有处理函数，返回值经 `fitResult()` 做体积保护（超过 `SEO_MCP_MAX_RESULT_CHARS` 时对最长的数组减半直到放下，并加 `_truncated` 说明）后以**紧凑 JSON**（不缩进）写进文本内容；抛出的异常经 `formatError` 变成 `isError` 结果（缺凭据和 403 会附加提示）。`heartbeat(extra, msg)` 给长任务发进度通知，超过约 10 秒的工具都要用。`resolveDate()` 把 `today`、`yesterday`、`NdaysAgo` 转成 `YYYY-MM-DD`，因为 Search Console 只接受绝对日期。
 - `src/tools/gsc.ts`、`src/tools/ga.ts`：Google 工具。输入 schema 是传给 `registerTool` 的 zod raw shape，`.describe()` 文本要写清楚，那是 LLM 唯一能看到的说明。GA 的行数据由 `tabulate()` 拍平成 `{维度: 值, 指标: 数字}` 对象。
@@ -72,7 +74,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 
 ## 新增或修改工具的完整流程
 
-1. 在对应的 `src/tools/*.ts` 模块里用 `server.registerTool` 注册；名字用 `前缀_动作` 形式，前缀决定工具集（见 `toolsetOf()`）；写入类工具名必须匹配 `WRITE_TOOLS`（删除类再匹配 `DESTRUCTIVE_TOOLS`）。每个参数都要 `.describe()`，可枚举的用 `z.enum`，描述精炼（80 多个工具的定义已约 2.2 万 token）。**写入类工具必须提供 `dryRun` 参数**，返回当前值与将要做的改动而不落地。纯函数尽量导出并在 `test/unit/` 加用例。
+1. 在对应的 `src/tools/*.ts` 模块里用 `server.registerTool` 注册；名字用 `前缀_动作` 形式，前缀决定工具集（见 `toolsetOf()`）；写入类工具名必须匹配 `WRITE_TOOLS`（删除类再匹配 `DESTRUCTIVE_TOOLS`）。每个参数都要 `.describe()`，可枚举的用 `z.enum`，描述精炼（99 个工具的定义已约 3.5 万 token）。**写入类工具必须提供 `dryRun` 参数**，返回当前值与将要做的改动而不落地。纯函数尽量导出并在 `test/unit/` 加用例。
 2. 需要新密钥的：`.env` 与 `.env.example` 各加一行带用途注释的条目；密钥缺失时抛出带申请路径的错误。
 3. `npm run build`，用临时客户端脚本对真实数据验证（写入只用临时对象），删掉脚本。
 4. `UPDATE_SNAPSHOT=1 npm test` 刷新工具清单快照，然后 `npm run docs:sync` 让两份 README 和 `package.json` 里的工具总数、分组计数自动对齐，并检查每个工具名都出现在两份 README 里，缺一个就失败（`npm test` 会跑同样的检查），再 `npm test` 确认通过。
@@ -134,9 +136,9 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 - stdio 模式下除 MCP 协议外不能往 stdout 写任何东西，日志一律用 `console.error`。
 - 线上实例同时被 App、手机、Claude Code 多个会话使用。本会话改站点内容前先看容器里的审计日志和目标对象的最近修改时间，不要和另一个会话改同一篇文章或同一个文件；某个会话声称「没改过」时，以审计日志为准。
 - `.env`、`service-account.json`、`credentials.json`、`client_secret*.json` 已在 `.gitignore`，秘密不进仓库，也不要出现在工具描述里。
-- 80 多个工具的定义约 2.2 万 token，每次对话都会加载：描述写得准确但不要啰嗦，新工具优先合并进现有模块而不是再拆文件；`SEO_MCP_TOOLSETS` 可按需裁剪。
+- 99 个工具的定义约 3.5 万 token，每次对话都会加载：描述写得准确但不要啰嗦，新工具优先合并进现有模块而不是再拆文件；`SEO_MCP_TOOLSETS` 可按需裁剪。
 - `buildInstructions()` 里点名了推荐先用的工具（snapshot、opportunities 等），新增重要的分析类工具时把它加进去。
 - 密钥扫描器误报时，在 `scripts/check-secrets.sh` 的 `BENIGN`（合法占位值）或 `ALLOW`（合法文件）里加豁免，不要绕过钩子提交。
 - Search Console 数据延迟 2 到 3 天；URL 检查每个资源每天约 2000 次配额，不要对整站循环调用。
-- **图片二进制绝不能经过模型的文字输出**：2026-09-14 App 端会话把一张 67 KB 的 WebP 以 base64 `content` 通过 `github_commit_files` 提交，头部合法、像素全是噪声（模型自己「写」出来的 base64）。加图只能走 `github_commit_image`（URL）或 `github_commit_attachment`（邮件附件），在服务器上转换后提交。给 `github_commit_files` 加拦截（base64 图片超过几 KB 就拒绝）是待办，还没做。
+- **图片二进制绝不能经过模型的文字输出**：2026-09-14 App 端会话把一张 67 KB 的 WebP 以 base64 `content` 通过 `github_commit_files` 提交，头部合法、像素全是噪声（模型自己「写」出来的 base64）。加图只能走 `github_commit_image`（URL）或 `github_commit_attachment`（邮件附件），在服务器上转换后提交。0.10.0 起 `github_commit_files` 会拦截：`imageContentRefusal()` 对图片扩展名或图片文件头且超过 `MAX_INLINE_IMAGE_BYTES`（4 KB）的 base64 内容直接拒绝并点名该用哪个工具，SVG 和小图标不受影响。
 - 对基于构建器的文章，`wp_update_post` 的 `content` 参数会被主题忽略，要用 `wp_builder_*` 工具。第一次编辑某篇文章前先跑 `wp_builder_check`。
