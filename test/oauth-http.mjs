@@ -129,12 +129,19 @@ try {
   assert.equal((await mcp(TOKEN)).status, 200, "the static operator token still works");
   assert.equal((await mcp("mcpa_" + randomBytes(32).toString("base64url"))).status, 401, "a forged token is refused");
 
-  // 12. An oversized body is answered with 400 and does not take the server down.
+  // 12. Managing access is the operator's alone: an OAuth client never sees the oauth_* tools.
+  assert.match((await mcp(TOKEN)).text, /oauth_list_grants/, "the operator can manage grants");
+  const again = await exchange(clientId, await approve(clientId, {}));
+  const clientView = await mcp(again.access_token);
+  assert.doesNotMatch(clientView.text, /oauth_list_grants/, "an OAuth client must not list grants");
+  assert.doesNotMatch(clientView.text, /oauth_revoke_grant/, "nor revoke them");
+
+  // 13. An oversized body is answered with 400 and does not take the server down.
   const huge = await fetch(`${base}/oauth/register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client_name: "x".repeat(40_000), redirect_uris: [REDIRECT] }) });
   assert.equal(huge.status, 400);
   assert.equal((await mcp(TOKEN)).status, 200, "the server survives an oversized body");
 
-  // 13. The audit trail names what was approved.
+  // 14. The audit trail names what was approved.
   assert.match(log, /"oauth":"register"/);
   assert.match(log, /"oauth":"approved"/);
   assert.match(log, /"oauth":"refresh-replay"/);

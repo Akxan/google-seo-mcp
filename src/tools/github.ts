@@ -30,7 +30,7 @@ export async function githubToken(): Promise<string | undefined> {
   return undefined;
 }
 
-async function gh<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
+export async function gh<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
   const token = await githubToken();
   if (!token) throw new Error("No GitHub token. Set GITHUB_TOKEN (fine-grained PAT with Contents read/write on the repos) or log in with `gh auth login`.");
   const res = await fetch(`${API}${path}`, { ...init, headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "google-seo-mcp", ...(init.headers ?? {}) } });
@@ -184,6 +184,40 @@ export async function commitBlobs(repo: string, branch: string, message: string,
   const commit = await gh<{ sha: string; html_url: string }>(`/repos/${repo}/git/commits`, { method: "POST", body: JSON.stringify({ message, tree: newTree.sha, parents: [headSha] }) });
   await gh(`/repos/${repo}/git/refs/heads/${branch}`, { method: "PATCH", body: JSON.stringify({ sha: commit.sha, force: false }) });
   return { commit: commit.sha.slice(0, 7), url: commit.html_url };
+}
+
+/** Image file extensions a commit might carry. SVG is left out: it is text a model can legitimately write. */
+const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|webp|avif|heic|heif|bmp|ico|tiff?)$/i;
+/** Enough bytes for any real image header, and small enough that a placeholder or favicon still passes. */
+export const MAX_INLINE_IMAGE_BYTES = 4096;
+
+/** Magic bytes of the formats a model is most likely to hallucinate a header for. */
+function looksLikeImage(buf: Buffer): boolean {
+  if (buf.length < 12) return false;
+  const ascii = (at: number, n: number) => buf.subarray(at, at + n).toString("latin1");
+  if (buf[0] === 0x89 && ascii(1, 3) === "PNG") return true;
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return true;            // JPEG
+  if (ascii(0, 3) === "GIF") return true;
+  if (ascii(0, 4) === "RIFF" && ascii(8, 4) === "WEBP") return true;
+  if (ascii(4, 4) === "ftyp" && /^(avif|avis|heic|heix|hevc|mif1|msf1)/.test(ascii(8, 4))) return true;
+  if (ascii(0, 2) === "BM") return true;                                              // BMP
+  if (ascii(0, 4) === "II*\u0000" || ascii(0, 4) === "MM\u0000*") return true;         // TIFF
+  if (buf[0] === 0 && buf[1] === 0 && buf[2] === 1 && buf[3] === 0) return true;      // ICO
+  return false;
+}
+
+/**
+ * Refuse binary image content that travelled through the model as base64, and say what to use instead.
+ * On 2026-09-14 a client session committed a ~67 KB WebP it had written the base64 for itself: the RIFF
+ * header was plausible, the file decoded without error, and every pixel was noise. A model cannot encode
+ * an image, so anything image-shaped above a few KB has to come from the server-side pipeline instead.
+ * Returns the error message, or null when the content is fine to commit.
+ */
+export function imageContentRefusal(path: string, buf: Buffer): string | null {
+  if (buf.length <= MAX_INLINE_IMAGE_BYTES) return null;
+  const byExtension = IMAGE_EXTENSIONS.test(path), byHeader = looksLikeImage(buf);
+  if (!byExtension && !byHeader) return null;
+  return `${path}: refusing ${Math.round(buf.length / 1024)} KB of base64 image content (${byHeader ? "image header detected" : "image file extension"}). Image bytes must not pass through the model - the base64 would be invented, and the file would decode to noise. Use github_commit_image (fetches a URL and converts it on the server) or github_commit_attachment (an image from an email), which both commit the real bytes. Text files, including SVG, are unaffected.`;
 }
 
 export const IMAGE_FORMATS = ["webp", "jpeg", "png", "avif"] as const;
@@ -390,6 +424,8 @@ export function registerGitHubTools(server: McpServer) {
         if (f.encoding === "base64") {
           const buf = Buffer.from(f.content ?? "", "base64");
           if (!buf.length || buf.toString("base64").replace(/=+$/, "") !== (f.content ?? "").replace(/\s+/g, "").replace(/=+$/, "")) throw new Error(`${path}: content is not valid base64.`);
+          const refusal = imageContentRefusal(path, buf);
+          if (refusal) throw new Error(refusal);
           return { path, action: !current ? "create" : current.buf.equals(buf) ? "unchanged" : "update", currentBytes: current?.bytes ?? 0, newBytes: buf.length, binary: true, base64: buf.toString("base64") };
         }
         const next = f.content ?? "";

@@ -5,6 +5,7 @@ import { envValue } from "./env.js";
 import { z } from "zod";
 import { currentRequest, currentScopes, describeCredentialSource, getAuth } from "./google.js";
 import { registerPrompts } from "./prompts.js";
+import { loadedOAuth } from "./oauth.js";
 import { registerSearchConsoleTools } from "./tools/gsc.js";
 import { registerAnalyticsTools } from "./tools/ga.js";
 import { loadWpSites, registerWordPressTools } from "./tools/wp.js";
@@ -29,12 +30,12 @@ export function toolsetOf(name: string): string {
   if (name.startsWith("gmail_")) return "gmail";
   if (/^(page_audit|pagespeed|sitemap_check|robots_check|canonical_host_check|site_crawl|hreflang_check|compare_pages|social_preview_check|keyword_suggest)$/.test(name)) return "web";
   if (/^(ai_crawler_access|llms_txt_|structured_data_audit|geo_page_score|eeat_audit|indexnow_submit|ai_citation_check|schema_|knowledge_graph_check|brand_mentions|ai_search_sources)/.test(name)) return "geo";
-  if (/^(migration_check|cross_site_links|content_refresh_candidates|crux_history|crux_snapshot|wikipedia_pageviews|reviews_snapshot)$/.test(name)) return "analysis";
+  if (/^(migration_check|cross_site_links|content_refresh_candidates|crux_history|crux_snapshot|wikipedia_pageviews|reviews_snapshot|seo_digest)$/.test(name)) return "analysis";
   return "core";
 }
 
-const WRITE_TOOLS = /^(wp_update_|wp_upload_|wp_bulk_|wp_set_|wp_add_|wp_delete_|wp_builder_update|wp_builder_restore|wp_run|gsc_submit_sitemap|gsc_delete_|gsc_add_|github_commit_|indexnow_submit)/;
-const DESTRUCTIVE_TOOLS = /^(wp_delete_|wp_run|wp_update_post|wp_builder_update|wp_builder_restore|wp_bulk_update_seo|github_commit_|gsc_delete_)/;
+const WRITE_TOOLS = /^(wp_update_|wp_upload_|wp_bulk_|wp_set_|wp_add_|wp_delete_|wp_builder_update|wp_builder_restore|wp_run|gsc_submit_sitemap|gsc_delete_|gsc_add_|github_commit_|indexnow_submit|oauth_revoke_)/;
+const DESTRUCTIVE_TOOLS = /^(wp_delete_|wp_run|wp_update_post|wp_builder_update|wp_builder_restore|wp_bulk_update_seo|github_commit_|gsc_delete_|oauth_revoke_)/;
 
 export function isWriteTool(name: string) { return WRITE_TOOLS.test(name); }
 
@@ -108,6 +109,13 @@ function buildInstructions(opts: ServerOptions, wpSites: string[]): string {
   ].filter(Boolean).join("\n");
 }
 
+/** The OAuth layer, or a message saying how to turn it on. */
+function requireOAuth() {
+  const o = loadedOAuth();
+  if (!o) throw new Error("The OAuth layer is not loaded. It exists only on an HTTP instance started with SEO_MCP_OAUTH=1 (and MCP_AUTH_TOKEN set); a stdio session has no grants to list.");
+  return o;
+}
+
 export function createServer(overrides: ServerOptions = {}): McpServer {
   const opts = { ...readOptions(), ...overrides };
   const wpSites = loadWpSites();
@@ -151,6 +159,50 @@ export function createServer(overrides: ServerOptions = {}): McpServer {
       const client = await auth.getClient();
       const token = await client.getAccessToken();
       return { source: describeCredentialSource(), scopes: currentScopes(), tokenObtained: Boolean(token.token), readOnly: Boolean(opts.readOnly), toolsets: opts.toolsets ?? "all", wordpressSites: wpSites.map((s) => s.name) };
+    }),
+  );
+
+  // Who else holds a key to this server. The OAuth layer issues tokens to clients that cannot send
+  // a header (ChatGPT); without these, seeing or cutting off a grant meant opening the SQLite file
+  // over SSH. http.ts excludes both from any request that is not the operator's own token.
+  server.registerTool(
+    "oauth_list_grants",
+    {
+      title: "List OAuth clients connected to this server",
+      description: "Which clients hold an OAuth token for this MCP server: client name, scope (mcp:full = every tool including writes, mcp:read = read-only), when it was approved, when it last called and how many calls it made. Run it before oauth_revoke_grant, or whenever you want to know who is connected. Needs the HTTP instance with SEO_MCP_OAUTH=1; the operator's own MCP_AUTH_TOKEN is not a grant and never appears here.",
+      inputSchema: {
+        includeRevoked: z.boolean().default(false).describe("Also list grants that were revoked or whose refresh token expired."),
+      },
+    },
+    tool(async (a: { includeRevoked: boolean }) => {
+      const grants = requireOAuth().store.listGrants(a.includeRevoked);
+      return {
+        grants,
+        live: grants.filter((g) => !g.revokedAt && !g.refreshExpired).length,
+        note: "Revoke one with oauth_revoke_grant(id). A client whose grant is revoked must go through the browser approval page again.",
+      };
+    }),
+  );
+
+  server.registerTool(
+    "oauth_revoke_grant",
+    {
+      title: "Revoke an OAuth client's access",
+      description: "Cut off one OAuth client immediately: its access and refresh tokens stop working on the next call and it has to go through the approval page again. Take the id from oauth_list_grants. Never touches the operator's MCP_AUTH_TOKEN or a hosted user's own token.",
+      inputSchema: {
+        id: z.string().min(1).describe("Grant id as oauth_list_grants reports it."),
+        dryRun: z.boolean().default(false).describe("Report which grant would be revoked, without revoking it."),
+      },
+    },
+    tool(async (a: { id: string; dryRun: boolean }) => {
+      const store = requireOAuth().store;
+      const grant = store.listGrants(true).find((g) => g.id === a.id);
+      if (!grant) throw new Error(`No grant with id '${a.id}'. Run oauth_list_grants to see the current ids.`);
+      if (grant.revokedAt) return { ...grant, action: "already revoked" };
+      if (a.dryRun) return { ...grant, action: "would revoke", dryRun: true };
+      store.revokeGrant(a.id);
+      console.error(JSON.stringify({ oauth: "revoked", at: new Date().toISOString(), grant: a.id, by: "oauth_revoke_grant" }));
+      return { ...grant, action: "revoked", revokedAt: new Date().toISOString() };
     }),
   );
 

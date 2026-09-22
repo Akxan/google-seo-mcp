@@ -60,6 +60,7 @@
 | `keyword_suggest` | Google 联想词扩展，含问句前缀与字母扩展 |
 | `gsc_site_snapshot` | 一次调用给全貌：与上一周期对比的总量、Top 关键词与页面、设备国家分布、涨跌页面、每日曲线；dataState=all 可看到截至昨天的新鲜数据 |
 | `gsc_ctr_opportunities` | 已在首页但点击率低于基准的关键词与页面，估算改标题能多拿的点击 |
+| `seo_digest` | 定期体检：本期与上一周期比,总量、涨跌的页面与关键词、彻底不再带来点击的词,开头先用一句话说明发生了什么;服务端也能按周自动生成并开成 GitHub issue |
 | `migration_check` | 迁移前安全网：把 Search Console 有流量的 URL 和旧站点地图逐个拿到新站测，分类 OK、重定向、跳首页、404 |
 | `cross_site_links` | 两个 Search Console 资源的关键词交叉比对，建议互链并检测是否已链接 |
 | `content_refresh_candidates` | 点击下滑且长期未更新的页面，附丢失的关键词 |
@@ -71,6 +72,7 @@
 | `reviews_snapshot` | Google 商家评分与最新评论（需 `GOOGLE_PLACES_API_KEY`，需开结算） |
 | `github_get_file` / `github_list_dir` / `github_search_code` / `github_list_commits` / `github_build_status` / `github_commit_files` / `github_commit_image` | 读写 GitHub 仓库：一次提交多个文件（整文件、对大文件做局部 find/replace、base64 二进制），从网址取图在服务器上转 webp、裁剪、生成变体后提交；静态站可从任何客户端修改（用 `GITHUB_TOKEN` 或本机 `gh` 登录）；`github_build_status` 查提交后站点是否真的构建成功并上线（检查项、部署记录，或对不回报状态的托管商直接抓页面验证） |
 | `gmail_get_message` | 读取一封邮件的正文（纯文本或 HTML 转文本，支持分页），用于接收别人邮件发来的文章草稿或修改意见 |
+| `oauth_list_grants` / `oauth_revoke_grant` | 查看谁通过 OAuth 连着这台服务(客户端名、权限范围、调用次数、最后一次调用),并一键吊销;只有运营者令牌能看到这两个工具,通过 OAuth 连进来的客户端看不到 |
 | `gmail_find_attachments` / `github_commit_attachment` | 只读搜索已授权的 Gmail 邮箱并列出每封邮件的附件；把邮件里的照片在服务器上转 webp、裁剪、生成变体后直接提交进仓库，全程不经过客户端 |
 
 日期参数支持 `YYYY-MM-DD`、`today`、`yesterday`、`28daysAgo` 这类写法。
@@ -330,7 +332,7 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 ### 第三方模型和本地模型
 
 - 桌面端：Cherry Studio、Cline 可以选 DeepSeek、Qwen、GLM、Kimi 或本地 Ollama 模型，把本服务作为 Streamable HTTP 类型的 MCP 服务器加进去，请求头填 Authorization 即可。
-- 工具定义约 3.4 万 token，每一轮对话都要发；96 个工具对小模型来说太多了。给它们单独开一个只读、精简工具集、单独令牌的实例，模型再糊涂也写不了东西，也看不到用不着的工具：
+- 工具定义约 3.5 万 token，每一轮对话都要发；99 个工具对小模型来说太多了。给它们单独开一个只读、精简工具集、单独令牌的实例，模型再糊涂也写不了东西，也看不到用不着的工具：
 
 ```yaml
 # docker-compose.yml：在主服务旁边再加一个
@@ -419,7 +421,7 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 
 客户端支持情况（2026-09-17 实测）：**Claude Code 终端版可用**，命令形如 `/google-seo:monthly_report`，输入片段即可筛选；**Claude Code 的 VS Code 扩展不支持**把 MCP 提示词做成斜杠命令（官方 issue 已标记为不计划支持）；桌面 App 是否支持没有官方文档。所有参数都设成可选，因为部分客户端会列出提示词却从不向用户索要参数，缺参数时正文会让模型自己查或问你，而不是直接报错。
 
-- **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`、`gmail`。96 个工具的定义约 3.4 万 token，每次对话都会完整加载，只用部分功能时应当裁剪。
+- **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`、`gmail`。99 个工具的定义约 3.5 万 token，每次对话都会完整加载，只用部分功能时应当裁剪。
 - **按连接裁剪（HTTP 模式）**：在 URL 后面加 `?toolsets=...` 就能让某一个客户端只加载它需要的工具，服务端不用改配置，也不影响其他客户端。加 `?readOnly=1` 可以让这个入口完全不能写。两个参数**只能收窄权限**：请求不到实例本身没开的工具集，也无法把只读实例变成可写。工具集名字拼错会直接返回 400，而不是静默给你一个空服务器。
 
   | 连接 URL | 工具数 | 约耗 token |
@@ -459,6 +461,7 @@ Cookie 为 `HttpOnly`、`SameSite=Lax`，HTTPS 下带 `Secure`；表单带 CSRF 
 | `MCP_PATH` | `/mcp` | HTTP 路径 |
 | `MCP_AUTH_TOKEN` | 无 | Bearer Token；非回环地址监听时务必设置 |
 | `SEO_MCP_OAUTH` | 无 | 设为 `1` 时同时接受 OAuth，给发不了 `Authorization` 头的客户端（ChatGPT）用；需要 `MCP_AUTH_TOKEN`，授权数据存在 `<SEO_MCP_DATA_DIR>/oauth.db` |
+| `SEO_MCP_DIGEST_SITES`（可选 `SEO_MCP_DIGEST_AT`、`SEO_MCP_DIGEST_REPO`） | 无 | HTTP 模式下每周自动对这些 Search Console 资源跑一次 `seo_digest`（默认 UTC 周一 8 点），Markdown 存进 `<SEO_MCP_DATA_DIR>/digests/`；填了仓库就顺便开成 GitHub issue |
 | `GOOGLE_APPLICATION_CREDENTIALS` | 无 | 服务账号或 authorized_user JSON 路径 |
 | `GOOGLE_CREDENTIALS_JSON` | 无 | 直接内联凭据 JSON（适合容器平台的 secret） |
 | `GOOGLE_OAUTH_CLIENT_SECRET_FILE`（或 `--client-secret`）、`GOOGLE_OAUTH_CLIENT_ID` + `GOOGLE_OAUTH_CLIENT_SECRET`、`GOOGLE_OAUTH_PORT` | 端口 `53682` | 只有 `npm run auth` 用：自己账号 OAuth 授权的客户端信息与本机回调端口 |

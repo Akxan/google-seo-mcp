@@ -1,6 +1,6 @@
 /**
  * Cross-source analyses: migration_check, cross_site_links, content_refresh_candidates,
- * knowledge_graph_check, crux_history, brand_mentions, reviews_snapshot.
+ * knowledge_graph_check, crux_history, brand_mentions, reviews_snapshot, seo_digest.
  */
 import { z } from "zod";
 import { envValue } from "../env.js";
@@ -9,6 +9,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { heartbeat, resolveDate, round, tool } from "../util.js";
 import { collectSitemapUrls, fetchWithTimeout } from "./web.js";
 import { normalizePath, query as gscQuery } from "./gsc.js";
+import { buildDigest, renderDigest } from "../digest.js";
 
 async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
@@ -134,6 +135,26 @@ export function parseCdxRows(rows: unknown, host: string): { url: string; lastCa
 }
 
 export function registerAnalysisTools(server: McpServer) {
+  server.registerTool(
+    "seo_digest",
+    {
+      title: "What changed this week",
+      description:
+        "The periodic check-up: one report of what moved on a property since the previous period - totals, the pages and queries that lost or gained clicks, queries that stopped bringing any, new ones that started - with a plain-language summary first. Use it to find out whether anything happened (the HTTP server can also send it on a schedule); use gsc_site_snapshot for the current state rather than the change, gsc_compare_periods for two windows you choose yourself, and content_refresh_candidates for slow decay rather than a week-over-week move.",
+      inputSchema: {
+        siteUrl,
+        days: z.number().int().min(1).max(90).default(7).describe("Length of each window; the comparison period is the same number of days immediately before it."),
+        endDate: z.string().default("3daysAgo").describe("Last day of the current window; Search Console data lags 2-3 days."),
+        minClicks: z.number().int().min(1).max(100).default(3).describe("Ignore moves smaller than this, so a 1-click wobble on a small site does not fill the report."),
+        markdown: z.boolean().default(false).describe("Also return the report as Markdown, the way the scheduled digest files it."),
+      },
+    },
+    tool(async (a: { siteUrl: string; days: number; endDate: string; minClicks: number; markdown: boolean }) => {
+      const digest = await buildDigest(a.siteUrl, a.days, a.endDate, 500, a.minClicks);
+      return a.markdown ? { ...digest, markdown: renderDigest([digest]) } : digest;
+    }),
+  );
+
   server.registerTool(
     "migration_check",
     {
