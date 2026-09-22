@@ -44,7 +44,7 @@
 | `canonical_host_check` | 检查 http/https、带不带 www、结尾斜杠等写法是否都 301 到同一个地址，避免站点被当成两个 |
 | `ai_crawler_access` | 检查 GPTBot、OAI-SearchBot、ClaudeBot、PerplexityBot、Google-Extended 等 AI 爬虫的 robots 规则和真实 UA 请求是否被拦 |
 | `llms_txt_check` / `llms_txt_generate` | 检查 /llms.txt 的存在与格式、链接是否有效；从站点地图生成草稿 |
-| `structured_data_audit` | 提取 JSON-LD，按类型校验必填/推荐字段，核对全站机构实体信息一致性 |
+| `structured_data_audit` | 提取 JSON-LD，按类型校验必填/推荐字段，核对全站机构实体一致性；并检查实体站得住脚没有：每个 sameAs 档案是否还在（被机器人拒的算 blocked 不算失效）、schema 里的电话在页面上看不看得到、机构有没有一个 @id 供 publisher/author 引用 |
 | `geo_page_score` | 单页 GEO 评分：首段直接回答、问句标题、FAQ、列表表格、可引用数据、作者日期、外部引用、结构化数据 |
 | `geo_answer_coverage` | 逐段读正文：用户真实搜的每个问句，页面上有没有一段在开头就回答它。分 missing（没有）、weak（只是顺带提到，没有对应标题）、buried（答案埋在铺垫后面）、thin（没有可引用的内容）、ok（返回抽出的答案和 FAQPage 草稿）|
 | `eeat_audit` | 站点级 E-E-A-T 清单：关于/联系/隐私页、地址电话、机构 schema、评价 schema、作者页、文章署名与日期 |
