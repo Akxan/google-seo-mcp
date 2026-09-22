@@ -2,7 +2,7 @@
 
 # google-seo-mcp
 
-**SEO & GEO MCP server for Claude, Codex, Cursor and any MCP client — Google Search Console, Google Analytics 4, PageSpeed Insights, structured data, llms.txt, WordPress and GitHub as 96 tools, so an assistant can diagnose and fix technical SEO, content and generative-engine-optimization issues in one conversation.**
+**SEO & GEO MCP server for Claude, Codex, Cursor and any MCP client — Google Search Console, Google Analytics 4, PageSpeed Insights, structured data, llms.txt, WordPress and GitHub as 99 tools, so an assistant can diagnose and fix technical SEO, content and generative-engine-optimization issues in one conversation.**
 
 [![GitHub stars](https://img.shields.io/github/stars/Akxan/google-seo-mcp?style=flat&logo=github)](https://github.com/Akxan/google-seo-mcp/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -36,12 +36,12 @@ Most SEO MCP servers wrap one API. Real SEO work crosses several: you find a str
 | **Google Analytics 4** (11) | `ga_list_properties`, `ga_property_config` (streams, custom dimensions/metrics, key events, audiences with their defining clauses, Ads links, retention, attribution model and lookback windows, Google Signals state — read-only), `ga_run_report` (up to 4 date ranges, in-list and OR filters, and a `dataQuality` note whenever rows were sampled or withheld by privacy thresholding), `ga_batch_run_reports`, `ga_run_pivot_report`, `ga_run_funnel_report`, `ga_run_realtime_report`, `ga_get_metadata`, `ga_check_compatibility`, `ga_compare_periods`, `ga_landing_page_seo` (organic landing pages merged with Search Console) |
 | **Page & site audits** (10) | `page_audit`, `site_crawl`, `pagespeed`, `sitemap_check`, `robots_check`, `canonical_host_check` (www/https/trailing-slash variants must all land on one address), `hreflang_check`, `social_preview_check`, `compare_pages`, `keyword_suggest` |
 | **GEO** (13) | `ai_crawler_access`, `llms_txt_check`, `llms_txt_generate`, `structured_data_audit`, `schema_generate`, `schema_validate`, `geo_page_score`, `eeat_audit`, `knowledge_graph_check`, `indexnow_submit`, `ai_citation_check`, `ai_search_sources` (batch up to 10 questions against Perplexity's search endpoint and rank who gets cited), `brand_mentions` |
-| **Analysis** (7) | `migration_check` (pre-migration URL safety net), `cross_site_links`, `content_refresh_candidates`, `crux_history`, `crux_snapshot` (latest real-user record with the LCP sub-part breakdown, so you can see whether LCP is slow because of the server, resource discovery, transfer or render-blocking), `wikipedia_pageviews` (monthly views per language for an entity, with seasonality and year-on-year change), `reviews_snapshot` |
+| **Analysis** (8) | `seo_digest` (what changed since the previous period: totals, the pages and queries that moved, what stopped bringing clicks - the weekly check the server can also send by itself), `migration_check` (pre-migration URL safety net), `cross_site_links`, `content_refresh_candidates`, `crux_history`, `crux_snapshot` (latest real-user record with the LCP sub-part breakdown, so you can see whether LCP is slow because of the server, resource discovery, transfer or render-blocking), `wikipedia_pageviews` (monthly views per language for an entity, with seasonality and year-on-year change), `reviews_snapshot` |
 | **WordPress** (28, optional) | `wp_site_info`, `wp_list_posts`, `wp_get_post`, `wp_update_post`, `wp_seo_status`, `wp_update_seo`, `wp_bulk_update_seo` (Yoast fields), `wp_builder_check`, `wp_builder_list_items`, `wp_builder_update`, `wp_builder_restore` (BeTheme / Muffin Builder content, with snapshot-based undo), `wp_list_media`, `wp_update_media` (alt text), `wp_upload_media` (fetch, convert and resize an image into the media library, optionally as the featured image), `wp_list_terms`, `wp_update_term`, `wp_internal_link_suggestions`, `wp_list_redirects`, `wp_add_redirect`, `wp_delete_redirect` (Yoast Premium), `wp_get_schema`, `wp_set_schema` (JSON-LD injection), `wp_get_seo_settings`, `wp_update_seo_settings` (site-wide Yoast: title templates, archive noindex, breadcrumbs, organization identity, sitemap), `wp_list_revisions`, `wp_update_post_from_revision` (rollback with a diff preview), `wp_delete_cache` (site-wide purge and critical-CSS regeneration), `wp_run` (raw WP-CLI) |
 | **GitHub** (8, optional) | `github_get_file`, `github_list_dir`, `github_search_code`, `github_list_commits`, `github_commit_files` (atomic multi-file commits with full content, in-place find/replace edits for large files, or base64 binaries), `github_commit_image` (fetch an image URL, convert to webp, resize or crop, add variants, commit), `github_commit_attachment` (same, from a Gmail attachment), `github_build_status` (did the commit actually build and go live: check runs, deployments, or a direct fetch of the page for hosts that report nothing back) (so a static site can be edited from any client) |
 | **Gmail** (2, optional) | `gmail_find_attachments` (read-only search of the authorized mailbox listing each message's attachments, so a photo someone emailed lands in the repo through `github_commit_attachment` without leaving the chat), `gmail_get_message` (read the body of an emailed draft article or a client's corrections, plain text or HTML, with paging) |
 
-Plus `google_auth_status` for diagnostics. Every tool carries MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`), the server publishes `instructions` for the model, and there is a read-only mode and toolset filtering.
+Plus `google_auth_status` for diagnostics, and `oauth_list_grants` / `oauth_revoke_grant` to see and cut off the clients that connected through the [OAuth layer](#connect-a-client) (operator token only: a client that arrived through OAuth cannot see them). Every tool carries MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`), the server publishes `instructions` for the model, and there is a read-only mode and toolset filtering.
 
 <details>
 <summary><b>Example prompts</b></summary>
@@ -135,7 +135,7 @@ flowchart LR
 
 **Hosted mode.** With the `SEO_MCP_HOSTED_*` variables set, `src/hosted/` adds a landing page, Google OAuth sign-in and a token dashboard. A `seo_…` bearer token on `/mcp` resolves to that user's encrypted refresh token, and the request runs inside an `AsyncLocalStorage` scope so every Google client created by the tools uses that grant instead of the operator's credentials; the server instance for such requests is read-only and limited to own-data toolsets.
 
-**Safety.** Write tools are recognised by name and receive `readOnlyHint:false` (`destructiveHint:true` for deletes, raw WP-CLI and commits). `--read-only` drops them at registration; `--toolsets=gsc,web` trims the tool list (96 definitions ≈ 34k tokens). Server instructions tell the model that fetched page text and CMS content are untrusted data.
+**Safety.** Write tools are recognised by name and receive `readOnlyHint:false` (`destructiveHint:true` for deletes, raw WP-CLI and commits). `--read-only` drops them at registration; `--toolsets=gsc,web` trims the tool list (99 definitions ≈ 35k tokens). Server instructions tell the model that fetched page text and CMS content are untrusted data.
 
 ## Quick start
 
@@ -323,7 +323,7 @@ LangChain (`langchain-mcp-adapters`), Google ADK (`MCPToolset`) and the Vercel A
 ### Third-party and local models
 
 - Desktop: Cherry Studio and Cline let you pick DeepSeek, Qwen, GLM, Kimi or a local Ollama model and add this server as a Streamable HTTP MCP server with the Authorization header.
-- The tool catalogue is about 34k tokens and travels with every turn, and 96 tools are a lot for smaller models. Point them at a second, read-only instance with a trimmed toolset and its own token, so a confused model can neither write nor see what it does not need:
+- The tool catalogue is about 35k tokens and travels with every turn, and 99 tools are a lot for smaller models. Point them at a second, read-only instance with a trimmed toolset and its own token, so a confused model can neither write nor see what it does not need:
 
 ```yaml
 # docker-compose.yml: a second service next to the main one
@@ -379,10 +379,11 @@ Client support, as tested on 2026-09-17: the **Claude Code CLI** lists them as `
 
 In HTTP mode a single instance can also be narrowed **per connection**, without changing the server's configuration or affecting other clients: append `?toolsets=gsc,ga4,web,geo,analysis` to the endpoint URL, and `?readOnly=1` to make that entry point unable to write. Both parameters only ever remove access — a request cannot reach a toolset the instance was not started with, and cannot turn a read-only tenant into a writing one. An unknown toolset name returns 400 rather than silently yielding an empty server.
 
-The full set of tool definitions costs roughly 34k tokens in every conversation. Pointing a day-to-day client at `/mcp?toolsets=gsc,ga4,web,geo,analysis` cuts that to about 21k, and `?toolsets=gsc,ga4` to about 12k; keep the full URL for the connection you use to edit sites.
+The full set of tool definitions costs roughly 35k tokens in every conversation. Pointing a day-to-day client at `/mcp?toolsets=gsc,ga4,web,geo,analysis` cuts that to about 21k, and `?toolsets=gsc,ga4` to about 12k; keep the full URL for the connection you use to edit sites.
 | `SEO_MCP_MAX_RESULT_CHARS` | cap on a single tool result (default 120000); oversized arrays are trimmed with a note on how to narrow the query |
 | `MCP_TRANSPORT=http`, `MCP_HOST`, `MCP_PORT`, `MCP_PATH`, `MCP_AUTH_TOKEN` | HTTP mode |
 | `SEO_MCP_OAUTH=1` | HTTP mode: also accept OAuth, for clients that cannot send an `Authorization` header (ChatGPT). Needs `MCP_AUTH_TOKEN`; grants live in `<SEO_MCP_DATA_DIR>/oauth.db` |
+| `SEO_MCP_DIGEST_SITES` (+ `SEO_MCP_DIGEST_AT`, `SEO_MCP_DIGEST_REPO`) | HTTP mode: run `seo_digest` for those Search Console properties once a week (default `mon:08` UTC), keep a Markdown copy under `<SEO_MCP_DATA_DIR>/digests/` and, with a repo, file it as a GitHub issue |
 | `SEO_MCP_HOSTED_CLIENT_ID`, `SEO_MCP_HOSTED_CLIENT_SECRET`, `SEO_MCP_HOSTED_SECRET`, `SEO_MCP_PUBLIC_URL` (+ optional `SEO_MCP_DATA_DIR`, `SEO_MCP_HOSTED_CONTACT`, `SEO_MCP_HOSTED_VERIFIED`) | [Hosted mode](#hosted-mode-let-other-people-sign-in-with-google): Google sign-in for other users, per-user read-only tokens |
 | `SEO_MCP_GITHUB_APP_ID`, `SEO_MCP_GITHUB_APP_SLUG`, `SEO_MCP_GITHUB_APP_CLIENT_ID`, `SEO_MCP_GITHUB_APP_CLIENT_SECRET`, `SEO_MCP_GITHUB_APP_PRIVATE_KEY_FILE` | hosted mode: a GitHub App users install on their repositories to get the `github_*` tools (installation tokens, one hour) |
 | `GOOGLE_OAUTH_CLIENT_SECRET_FILE` (or `--client-secret`), `GOOGLE_OAUTH_CLIENT_ID` + `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_PORT` | `npm run auth` only: the OAuth client for the user-account flow (callback port defaults to 53682) |

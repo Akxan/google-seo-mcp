@@ -113,6 +113,7 @@ export function derivedBase(headers: http.IncomingHttpHeaders): string {
 export interface OAuthClient { clientId: string; name: string | null; redirectUris: string[]; createdAt: string; lastUsedAt: string | null }
 export interface Grant { id: string; clientId: string; scope: string; accessExp: number; refreshExp: number; createdAt: string; calls: number }
 export interface Issued { access: string; refresh: string; expiresIn: number; scope: string; grantId: string }
+export interface GrantSummary { id: string; client: string | null; clientId: string; scope: string; createdAt: string; lastUsedAt: string | null; calls: number; revokedAt: string | null; accessExpired: boolean; refreshExpired: boolean }
 
 export class OAuthStore {
   private db: DatabaseSync;
@@ -202,6 +203,32 @@ export class OAuthStore {
     return { access, refresh: next, expiresIn: ACCESS_TTL_S, scope: String(r.scope), grantId: String(r.id) };
   }
 
+  /** Every grant with its client, newest first: what a human needs to see who is connected. */
+  listGrants(includeRevoked = false): GrantSummary[] {
+    const rows = this.db.prepare(`SELECT g.id, g.client_id, g.scope, g.created_at, g.last_used_at, g.calls, g.revoked_at, g.access_exp, g.refresh_exp, c.name
+      FROM oauth_grants g LEFT JOIN oauth_clients c ON c.client_id = g.client_id
+      ${includeRevoked ? "" : "WHERE g.revoked_at IS NULL"} ORDER BY g.created_at DESC`).all() as Record<string, string | number | null>[];
+    const now = nowS();
+    return rows.map((r) => ({
+      id: String(r.id),
+      client: (r.name as string | null) ?? null,
+      clientId: String(r.client_id),
+      scope: String(r.scope),
+      createdAt: String(r.created_at),
+      lastUsedAt: (r.last_used_at as string | null) ?? null,
+      calls: Number(r.calls ?? 0),
+      revokedAt: (r.revoked_at as string | null) ?? null,
+      accessExpired: Number(r.access_exp) < now,
+      refreshExpired: Number(r.refresh_exp) < now,
+    }));
+  }
+
+  /** Revoke one grant by the id `listGrants` reports. Returns false when it is unknown or already revoked. */
+  revokeGrant(id: string): boolean {
+    const r = this.db.prepare("UPDATE oauth_grants SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL").run(new Date().toISOString(), id);
+    return Number(r.changes) > 0;
+  }
+
   /** Revoke by any of the grant's tokens (access, current or previous refresh). */
   revoke(token: string): boolean {
     const hash = hashToken(token);
@@ -227,6 +254,10 @@ export interface OAuthServer {
 }
 
 interface Pending { clientId: string; redirectUri: string; challenge: string; scope: string; exp: number }
+
+/** The instance this process loaded, for the oauth_* tools; null in stdio mode or when the flag is off. */
+let LOADED: OAuthServer | null = null;
+export function loadedOAuth(): OAuthServer | null { return LOADED; }
 
 export function loadOAuth(): OAuthServer | null {
   if (!/^(1|true|yes)$/i.test(envValue("SEO_MCP_OAUTH") ?? "")) return null;
@@ -423,7 +454,7 @@ export function loadOAuth(): OAuthServer | null {
     return false;
   }
 
-  return {
+  LOADED = {
     store,
     handle,
     resolve(bearer) {
@@ -435,6 +466,7 @@ export function loadOAuth(): OAuthServer | null {
     metadataUrl: (req) => `${baseOf(req)}/.well-known/oauth-protected-resource`,
     describe: () => `OAuth on (${store.countClients()} clients, ${store.countGrants()} grants, data in ${dataDir})`,
   };
+  return LOADED;
 }
 
 async function readBody(req: http.IncomingMessage, limit = 16_384): Promise<string> {

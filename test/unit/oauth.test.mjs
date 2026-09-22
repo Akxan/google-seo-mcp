@@ -116,3 +116,27 @@ test("store: open registration is pruned, but clients with grants are kept", () 
   assert.equal(s.countClients(), 2);
   s.close();
 });
+
+test("store: grants can be listed and revoked by id, the way the oauth_* tools do it", () => {
+  const s = new OAuthStore(":memory:");
+  const c = s.registerClient("ChatGPT", ["https://chatgpt.com/cb"]);
+  const a = s.issue(c.clientId, SCOPE_FULL), b = s.issue(c.clientId, SCOPE_READ);
+
+  const live = s.listGrants();
+  assert.equal(live.length, 2);
+  assert.equal(live[0].client, "ChatGPT");
+  assert.deepEqual(live.map((g) => g.scope).sort(), [SCOPE_FULL, SCOPE_READ]);
+  assert.ok(live.every((g) => g.revokedAt === null && !g.accessExpired && !g.refreshExpired));
+  assert.equal(live.find((g) => g.id === a.grantId).calls, 0);
+  s.resolveAccess(a.access);
+  assert.equal(s.listGrants().find((g) => g.id === a.grantId).calls, 1, "usage is counted");
+
+  assert.equal(s.revokeGrant(a.grantId), true);
+  assert.equal(s.revokeGrant(a.grantId), false, "already revoked");
+  assert.equal(s.revokeGrant("no-such-id"), false);
+  assert.equal(s.resolveAccess(a.access), null, "the revoked client is cut off");
+  assert.ok(s.resolveAccess(b.access), "the other grant is untouched");
+  assert.equal(s.listGrants().length, 1);
+  assert.equal(s.listGrants(true).length, 2, "includeRevoked shows the history");
+  s.close();
+});

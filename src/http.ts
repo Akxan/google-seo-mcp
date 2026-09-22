@@ -6,6 +6,7 @@ import { envValue } from "./env.js";
 import { describeCredentialSource, runWithAuth } from "./google.js";
 import { loadHosted } from "./hosted/index.js";
 import { loadOAuth } from "./oauth.js";
+import { startDigestSchedule } from "./digest.js";
 
 const PORT = Number(envValue("MCP_PORT") ?? 8080);
 const HOST = envValue("MCP_HOST") ?? "127.0.0.1";
@@ -26,6 +27,8 @@ export function narrowOptions(base: ServerOptions, url: URL): ServerOptions {
   return out;
 }
 const TOKEN = envValue("MCP_AUTH_TOKEN");
+/** Tools only the operator's own token may see: they manage access to this server itself. */
+const OPERATOR_ONLY_TOOLS = ["oauth_list_grants", "oauth_revoke_grant"];
 
 function bearer(req: http.IncomingMessage): string {
   const header = req.headers.authorization ?? "";
@@ -49,6 +52,8 @@ export function startHttp() {
   const hosted = loadHosted();
   // Optional OAuth layer (SEO_MCP_OAUTH=1) for clients that cannot send a static bearer token.
   const oauth = loadOAuth();
+  // Optional weekly Search Console digest (SEO_MCP_DIGEST_SITES), so a drop reports itself.
+  const digest = startDigestSchedule();
   if (!TOKEN && HOST !== "127.0.0.1" && HOST !== "localhost" && HOST !== "::1") {
     console.error("WARNING: MCP_AUTH_TOKEN is not set while binding to a non-loopback host. Anyone reaching this port can query your Google data.");
   }
@@ -99,8 +104,12 @@ export function startHttp() {
     // instance was not started with, nor turn a read-only tenant into a writing one.
     let options: ServerOptions;
     try {
-      const base = tenant ? tenant.options : configuredOptions();
-      options = narrowOptions(grant?.readOnly ? { ...base, readOnly: true } : base, url);
+      let base = tenant ? tenant.options : configuredOptions();
+      // Managing who may connect belongs to the operator alone: a client that arrived through the
+      // OAuth flow (or a hosted user) must not be able to list or revoke anyone's access.
+      if (grant || tenant) base = { ...base, exclude: [...(base.exclude ?? []), ...OPERATOR_ONLY_TOOLS] };
+      if (grant?.readOnly) base = { ...base, readOnly: true };
+      options = narrowOptions(base, url);
     } catch (err) {
       json(res, 400, { error: (err as Error).message });
       return;
@@ -126,7 +135,7 @@ export function startHttp() {
 
   httpServer.keepAliveTimeout = 65_000;
   httpServer.listen(PORT, HOST, () => {
-    console.error(`google-seo-mcp listening on http://${HOST}:${PORT}${PATH} (auth: ${TOKEN ? "bearer token" : "NONE"}, credentials: ${describeCredentialSource()}${oauth ? `, ${oauth.describe()}` : ""}${hosted ? `, ${hosted.describe()}` : ""})`);
+    console.error(`google-seo-mcp listening on http://${HOST}:${PORT}${PATH} (auth: ${TOKEN ? "bearer token" : "NONE"}, credentials: ${describeCredentialSource()}${oauth ? `, ${oauth.describe()}` : ""}${hosted ? `, ${hosted.describe()}` : ""}${digest ? `, ${digest}` : ""})`);
   });
 
   const shutdown = () => {
