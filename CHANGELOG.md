@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+- **`geo_answer_coverage`: whether an AI can lift an answer off the page.** Every GEO tool so far measured readiness - is the door open to GPTBot, is the schema complete, does the page look extractable - and none measured coverage: for a question people actually search, is there a passage that answers it. Generative engines retrieve passages, not pages, so the check is per heading-delimited block: `missing` (nothing covers it), `weak` (the terms appear in prose but no heading is aimed at the question), `buried` (the answer starts more than 60 words into the passage), `thin` (nothing concrete to lift) or `ok`, which returns the extracted answer and a FAQPage JSON-LD draft. Questions come from Search Console, or you can pass your own with the pages to read, which needs no Google credentials at all.
+  Matching is lexical, and two things keep that honest. Terms are weighted by how many passages on the page contain them, so a word that appears everywhere (the site's own subject: "seville" on a Seville site) stops counting as evidence of which passage answers - without this the tool graded a page that never states a distance as having answered "how far is ronda from seville". And a passage that merely mentions the terms is `weak`, not `ok`: with no heading aimed at the question there is nothing for a retriever to select. Terms are compared on a six-character stem so Spanish inflection ("aparcar" against "aparcamientos") does not cause a false miss. The returned answer text is there for the caller to judge relevance itself, which word overlap cannot.
+  This is the per-question companion to `gsc_question_queries`, which checks headings only and stays the fast page-level view.
+
 ## [0.10.0] - 2026-09-22
 
 ### Added

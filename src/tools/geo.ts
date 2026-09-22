@@ -7,8 +7,9 @@ import { z } from "zod";
 import { envValue } from "../env.js";
 import * as cheerio from "cheerio";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { round, tool, heartbeat } from "../util.js";
+import { round, tool, heartbeat, resolveDate } from "../util.js";
 import { collectSitemapUrls, fetchWithTimeout, parseRobots, robotsAllows } from "./web.js";
+import { query as gscQuery } from "./gsc.js";
 
 /* ---------- shared helpers ---------- */
 
@@ -58,7 +59,7 @@ const QUESTION_WORDS = /^(how|what|why|when|where|which|who|is|are|can|does|do|s
 export function isQuestion(s: string) { return /\?\s*$/.test(s) || QUESTION_WORDS.test(s.trim()); }
 
 const STOP = new Set("the a an of in on to for and or is are with from by at as vs de la el los las en y o del al un una para con por que es se su lo mi".split(" "));
-function contentWords(s: string) { return s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter((w) => w.length > 2 && !STOP.has(w)); }
+export function contentWords(s: string) { return s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter((w) => w.length > 2 && !STOP.has(w)); }
 
 /* ---------- AI crawler list ---------- */
 
@@ -245,6 +246,141 @@ function analyzePage(url: string, $: cheerio.CheerioAPI, html: string) {
   const avgParagraphWords = paragraphs.length ? Math.round(paragraphs.reduce((a, p) => a + p.split(" ").length, 0) / paragraphs.length) : 0;
   const lastUpdatedVisible = /(last updated|updated on|última actualización|actualizado)/i.test(text.slice(0, 5000));
   return { h1, headings, questionHeadings, firstParagraph, h1Overlap, lists, tables, faqHeading, faqSchema, authorSchema, authorMeta, datePublished, dateModified, lastUpdatedVisible, externalDomains: [...externalDomains], externalDofollow, statSentences, summarySection, wordCount, avgParagraphWords, paragraphs: paragraphs.length, schemaTypes: [...new Set(nodes.flatMap(typesOf))], htmlBytes: Buffer.byteLength(html) };
+}
+
+
+/* ---------- answer blocks: what an AI can lift off the page ----------
+   AI answers are assembled from passages, not whole pages, so coverage is judged
+   per heading-delimited block: does one exist for the question, and is the answer
+   in its opening sentences rather than buried five paragraphs down. */
+
+export interface AnswerBlock { heading: string; level: number; text: string; words: number; hasList: boolean; hasTable: boolean; hasNumber: boolean }
+
+const BLOCK_TEXT_CAP = 2000;
+/** Words of preamble an answer can sit behind before extraction stops finding it. */
+const LEAD_LIMIT = 60;
+
+export function splitBlocks($: cheerio.CheerioAPI, maxBlocks = 80): AnswerBlock[] {
+  const root = $("main").first().length ? $("main").first() : $("body");
+  root.find("script, style, nav, header, footer, aside, noscript, form, template").remove();
+  const blocks: AnswerBlock[] = [];
+  let cur: AnswerBlock = { heading: "", level: 0, text: "", words: 0, hasList: false, hasTable: false, hasNumber: false };
+  const push = () => {
+    cur.text = cur.text.replace(/\s+/g, " ").trim().slice(0, BLOCK_TEXT_CAP);
+    cur.words = cur.text ? cur.text.split(" ").length : 0;
+    cur.hasNumber = /\d/.test(cur.text);
+    if (cur.heading || cur.words) blocks.push(cur);
+  };
+  root.find("h1, h2, h3, h4, p, li, blockquote, td, dd").each((_, el) => {
+    if (blocks.length >= maxBlocks) return false;
+    const tag = String((el as { tagName?: string }).tagName ?? "").toLowerCase();
+    const text = $(el).text().replace(/\s+/g, " ").trim();
+    if (/^h[1-4]$/.test(tag)) {
+      push();
+      cur = { heading: text, level: Number(tag[1]), text: "", words: 0, hasList: false, hasTable: false, hasNumber: false };
+      return;
+    }
+    if (!text) return;
+    // a <p> inside a list item or cell is already carried by that ancestor
+    if (tag === "p" && $(el).closest("li, td, blockquote").length) return;
+    if (tag === "li") cur.hasList = true;
+    if (tag === "td") cur.hasTable = true;
+    cur.text += (cur.text ? " " : "") + text;
+    return;
+  });
+  push();
+  return blocks.slice(0, maxBlocks);
+}
+
+export function sentences(text: string): string[] {
+  return text.split(/(?<=[.!?。！？])\s+/).map((x) => x.trim()).filter(Boolean);
+}
+
+const ASK = new Set("how what why when where which who whose can does do should is are best top cheapest nearest cómo como qué que por cuándo cuando dónde donde cuál cual quién quien cuánto cuanto mejor mejores puedo cerca wie was warum wann welche comment quoi pourquoi quand".split(" "));
+
+/** The terms an answer must actually contain: content words minus the interrogative itself. */
+export function questionTerms(question: string): string[] {
+  const words = contentWords(question);
+  const terms = words.filter((w) => !ASK.has(w));
+  return terms.length ? terms : words;
+}
+
+/** Crude stem: Spanish and English inflect at the tail ("aparcar"/"aparcamientos",
+    "tour"/"tours"), and six characters is enough to survive that without merging
+    unrelated words. Good enough here; this is word overlap, not language understanding. */
+export function stem(word: string): string { return word.slice(0, 6); }
+export function stems(text: string): Set<string> { return new Set(contentWords(text).map(stem)); }
+
+/** How much a term tells us about WHICH passage answers: a word on every passage of the page
+    (usually the site's own subject - "seville" on a Seville site) is no evidence at all.
+    Keyed by stem. */
+export function termWeights(terms: string[], blocks: AnswerBlock[]): Map<string, number> {
+  const n = blocks.length || 1;
+  const blockStems = blocks.map((b) => stems(`${b.heading} ${b.text}`));
+  const w = new Map<string, number>();
+  for (const key of terms.map(stem)) {
+    const df = blockStems.filter((set) => set.has(key)).length;
+    w.set(key, Math.log((n + 1) / (df + 1)) + 0.05);
+  }
+  return w;
+}
+
+/** Share of the question's terms present in a passage, by weight. */
+function coverage(terms: string[], have: Set<string>, weights?: Map<string, number>): number {
+  if (!terms.length) return 0;
+  const keys = terms.map(stem);
+  const total = keys.reduce((sum, k) => sum + (weights?.get(k) ?? 1), 0);
+  if (!total) return 0;
+  return keys.filter((k) => have.has(k)).reduce((sum, k) => sum + (weights?.get(k) ?? 1), 0) / total;
+}
+
+export type AnswerVerdict = "ok" | "weak" | "buried" | "thin" | "missing";
+
+export interface AnswerCheck { score: number; verdict: AnswerVerdict; headingMatch: number; leadWords: number; answer: string; issues: string[] }
+
+/** What the question shape demands of the passage: a figure, steps, or a list. */
+export function expectationsOf(question: string): string[] {
+  const q = question.toLowerCase();
+  const want: string[] = [];
+  if (/\b(cuánto|cuanto|precio|coste|cost|price|how much|how many|how far|how long|cuántos|cuantos|distancia|distance|duración|tiempo)\b/.test(q)) want.push("number");
+  if (/\b(cómo|como|how to|how do|pasos|steps)\b/.test(q)) want.push("steps");
+  if (/\b(mejor|mejores|best|top|cuál|cual|which|vs)\b/.test(q)) want.push("list");
+  return want;
+}
+
+export function evaluateAnswer(question: string, block: AnswerBlock, weights?: Map<string, number>): AnswerCheck {
+  const q = questionTerms(question);
+  const headHit = coverage(q, stems(block.heading), weights);
+  const bodyHit = coverage(q, stems(block.text), weights);
+  const score = round(headHit * 0.5 + bodyHit * 0.5, 2) ?? 0;
+  const sents = sentences(block.text);
+  // where the answer actually starts: first sentence carrying most of the question
+  let hitIndex = sents.findIndex((s) => coverage(q, stems(s), weights) >= 0.6);
+  if (hitIndex < 0) hitIndex = bodyHit >= 0.6 ? 0 : -1;
+  const leadWords = hitIndex > 0 ? sents.slice(0, hitIndex).join(" ").split(" ").length : 0;
+  const answer = (hitIndex < 0 ? sents : sents.slice(hitIndex)).slice(0, 2).join(" ").split(" ").slice(0, 70).join(" ");
+  const issues: string[] = [];
+  for (const want of expectationsOf(question)) {
+    if (want === "number" && !block.hasNumber) issues.push("the question asks for a figure, the passage has no number");
+    if (want === "steps" && !block.hasList) issues.push("a how-to question answers better as an ordered list");
+    if (want === "list" && !block.hasList && !block.hasTable) issues.push("a best/which question answers better as a list or table");
+  }
+  const thin = block.words < 6 || (block.words < 15 && !block.hasNumber && !block.hasList);
+  // A passage that merely mentions the terms is not an answer: without a heading aimed at the
+  // question there is nothing for a retriever to pick out, however often the words appear.
+  const verdict: AnswerVerdict = thin ? "thin" : headHit < 0.5 ? "weak" : leadWords > LEAD_LIMIT ? "buried" : "ok";
+  return { score, verdict, headingMatch: round(headHit, 2) ?? 0, leadWords, answer, issues };
+}
+
+/** Best block for a question; null when nothing on the page is close enough. */
+export function bestBlockFor(question: string, blocks: AnswerBlock[], minScore = 0.4): { block: AnswerBlock; check: AnswerCheck } | null {
+  const weights = termWeights(questionTerms(question), blocks);
+  let best: { block: AnswerBlock; check: AnswerCheck } | null = null;
+  for (const block of blocks) {
+    const check = evaluateAnswer(question, block, weights);
+    if (!best || check.score > best.check.score) best = { block, check };
+  }
+  return best && best.check.score >= minScore ? best : null;
 }
 
 /* ---------- registration ---------- */
@@ -668,6 +804,99 @@ export function registerGeoTools(server: McpServer) {
       }
       const audits = flattenNodes(out).map(auditNode).filter((x) => x.missingRequired.length || x.problems.length);
       return { url: a.url, existingTypes: p.schemaTypes, generated: out, warnings: audits, note: out.some((o) => o["@type"] === "FAQPage") ? "Only publish FAQPage markup for questions that are visibly answered on the page." : undefined };
+    }),
+  );
+
+
+  server.registerTool(
+    "geo_answer_coverage",
+    {
+      title: "Answer coverage: can an AI lift an answer off the page",
+      description:
+        "Per question, what to write. Reads the page body (not just its headings, which is all gsc_question_queries checks) and for each question users actually search, finds the passage meant to answer it and judges whether an AI could extract it: missing (nothing covers it), weak (the terms appear in prose but no heading is aimed at the question), buried (the answer starts more than 60 words into the passage), thin (nothing concrete to lift), ok (returns the extracted answer, so you can judge relevance yourself - the match is lexical, not semantic). Also flags when the question shape demands something the passage lacks - a figure for 'how much', steps for 'how to', a list for 'best/which'. Questions come from Search Console unless you pass your own with pages.",
+      inputSchema: {
+        siteUrl: z.string().optional().describe("Search Console property, e.g. 'sc-domain:example.com'. Only omit it when you pass both questions and pages."),
+        questions: z.array(z.string()).max(50).optional().describe("Check these questions instead of pulling them from Search Console. Requires pages."),
+        pages: z.array(z.string().url()).max(20).optional().describe("Pages to read. Default: the page Search Console shows for each question."),
+        startDate: z.string().default("90daysAgo").describe("Start of the Search Console window."),
+        endDate: z.string().default("3daysAgo").describe("End of the window; Search Console lags 2-3 days."),
+        minImpressions: z.number().int().min(1).default(5).describe("Ignore questions below this many impressions."),
+        maxQuestions: z.number().int().min(1).max(50).default(25).describe("How many questions to check, most impressions first."),
+        maxPages: z.number().int().min(1).max(20).default(10).describe("How many distinct pages to fetch."),
+        faqDraft: z.boolean().default(true).describe("Include a FAQPage JSON-LD draft built from the passages that pass. Publish it only for answers visible on the page."),
+      },
+    },
+    tool(async (args, extra) => {
+      const stop = heartbeat(extra, "reading pages");
+      try {
+        let asked: { query: string; page: string | null; impressions?: number; clicks?: number; position?: number | null }[];
+        let period: { start: string; end: string } | undefined;
+        if (args.questions?.length) {
+          if (!args.pages?.length) throw new Error("pages is required when you pass questions yourself.");
+          asked = args.questions.map((q) => ({ query: q, page: null }));
+        } else {
+          if (!args.siteUrl) throw new Error("Pass siteUrl, or pass questions together with pages.");
+          period = { start: resolveDate(args.startDate), end: resolveDate(args.endDate) };
+          const rows = await gscQuery({ siteUrl: args.siteUrl, startDate: args.startDate, endDate: args.endDate, dimensions: ["query", "page"], rowLimit: 5000 });
+          asked = rows
+            .filter((r) => r.impressions >= args.minImpressions && isQuestion(r.keys.query))
+            .sort((a, b) => b.impressions - a.impressions)
+            .map((r) => ({ query: r.keys.query, page: r.keys.page, impressions: r.impressions, clicks: r.clicks, position: r.position }));
+        }
+        if (!asked.length) return { siteUrl: args.siteUrl, period, questions: 0, note: "No question-style queries above minImpressions in this window." };
+
+        // Fetch at most maxPages distinct pages, keeping the questions that land on them.
+        const wanted = args.pages?.length ? args.pages.slice(0, args.maxPages) : [...new Set(asked.map((a) => a.page!))].slice(0, args.maxPages);
+        const checked = asked.filter((a) => !a.page || wanted.includes(a.page)).slice(0, args.maxQuestions);
+        const fetched = await mapLimit(wanted, 4, async (url) => {
+          try {
+            const { $ } = await loadPage(url);
+            return { url, blocks: splitBlocks($), error: undefined as string | undefined };
+          } catch (e) { return { url, blocks: [] as AnswerBlock[], error: (e as Error).message }; }
+        });
+        const byUrl = new Map(fetched.map((f) => [f.url, f]));
+
+        const results = checked.map((a) => {
+          const sources = a.page ? [byUrl.get(a.page)] : fetched;
+          let best: { url: string; block: AnswerBlock; check: AnswerCheck } | null = null;
+          for (const src of sources) {
+            if (!src || src.error) continue;
+            const hit = bestBlockFor(a.query, src.blocks);
+            if (hit && (!best || hit.check.score > best.check.score)) best = { url: src.url, ...hit };
+          }
+          const page = a.page ?? best?.url ?? null;
+          const err = page ? byUrl.get(page)?.error : undefined;
+          if (err) return { query: a.query, page, impressions: a.impressions, verdict: "error" as const, error: err };
+          if (!best) {
+            return { query: a.query, page, impressions: a.impressions, clicks: a.clicks, position: round(a.position ?? null, 1), verdict: "missing" as const, fix: `Add an H2 phrased like the question and answer it in the first 40-60 words${expectationsOf(a.query).length ? ` (include ${expectationsOf(a.query).join(" and ")})` : ""}.` };
+          }
+          const { block, check } = best;
+          return {
+            query: a.query, page: best.url, impressions: a.impressions, clicks: a.clicks, position: round(a.position ?? null, 1),
+            verdict: check.verdict, score: check.score, headingMatch: check.headingMatch, heading: block.heading || null, blockWords: block.words,
+            leadWords: check.verdict === "buried" ? check.leadWords : undefined,
+            answer: check.answer || undefined,
+            issues: check.issues.length ? check.issues : undefined,
+            fix: check.verdict === "weak" ? "Nothing is headed for this question. Add an H2/H3 phrased like it, with the answer in the first 40-60 words."
+              : check.verdict === "buried" ? "Move the answer into the first sentence under that heading; keep the background below it."
+              : check.verdict === "thin" ? "Expand this passage into a self-contained 40-60 word answer; as it stands it carries no fact to lift."
+              : check.issues.length ? check.issues.join("; ") : undefined,
+          };
+        });
+
+        const counts = results.reduce((acc, r) => { acc[r.verdict] = (acc[r.verdict] ?? 0) + 1; return acc; }, {} as Record<string, number>);
+        const answered = results.filter((r) => r.verdict === "ok" && r.answer);
+        const faq = args.faqDraft && answered.length
+          ? { "@context": "https://schema.org", "@type": "FAQPage", mainEntity: answered.slice(0, 10).map((r) => ({ "@type": "Question", name: r.query, acceptedAnswer: { "@type": "Answer", text: r.answer } })) }
+          : undefined;
+        return {
+          siteUrl: args.siteUrl, period, pagesRead: fetched.filter((f) => !f.error).length, questionsChecked: results.length, counts,
+          questions: results,
+          faqDraft: faq,
+          note: faq ? "Publish the FAQPage draft only for answers that stay visible on the page; validate it with schema_validate first." : undefined,
+          suggestion: "Fix 'missing' and 'weak' first (no section exists for the question), then 'buried' (the answer is there but unreachable). Check each returned answer against its question before trusting the 'ok' - the match is by word overlap. Re-run after editing.",
+        };
+      } finally { stop(); }
     }),
   );
 
