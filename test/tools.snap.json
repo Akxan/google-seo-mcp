@@ -21,6 +21,7 @@
   "ga_run_pivot_report",
   "ga_run_realtime_report",
   "ga_run_report",
+  "geo_answer_coverage",
   "geo_page_score",
   "github_build_status",
   "github_commit_attachment",
