@@ -249,6 +249,42 @@ function analyzePage(url: string, $: cheerio.CheerioAPI, html: string) {
 }
 
 
+
+/* ---------- entity corroboration ---------- */
+
+/** Last nine digits: enough to match a number written +34 954 22 33 44 against 954223344. */
+export function phoneKey(value: unknown): string | null {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  return digits.length >= 7 ? digits.slice(-9) : null;
+}
+
+/** A profile that refuses robots is not a dead profile: never call it broken. */
+export function classifyLink(status: number | null, error?: string): "ok" | "missing" | "blocked" | "unreachable" {
+  if (status === null) return "unreachable";
+  if (status === 404 || status === 410) return "missing";
+  if (status === 401 || status === 403 || status === 429) return "blocked";
+  return status < 400 ? "ok" : "unreachable";
+}
+
+/** Whether the organization is one node other nodes point at, or retyped on every page.
+    A retriever merges entities by @id; repeating the object leaves it guessing. */
+export function idWiring(nodes: Record<string, unknown>[]): { organizationId: string | null; referencedById: number; inlineRepeats: number } {
+  const orgs = nodes.filter((n) => typesOf(n).some((t) => ["Organization", "LocalBusiness", "TravelAgency", "TourOperator", "Corporation"].includes(t)));
+  const organizationId = (orgs.find((o) => typeof o["@id"] === "string")?.["@id"] as string) ?? null;
+  let referencedById = 0;
+  let inlineRepeats = 0;
+  for (const n of nodes) {
+    for (const key of ["publisher", "author", "provider", "brand", "parentOrganization"]) {
+      const v = n[key];
+      if (!v || typeof v !== "object") continue;
+      const ref = v as Record<string, unknown>;
+      if (typeof ref["@id"] === "string" && Object.keys(ref).length <= 2) referencedById++;
+      else if (ref.name) inlineRepeats++;
+    }
+  }
+  return { organizationId, referencedById, inlineRepeats };
+}
+
 /* ---------- answer blocks: what an AI can lift off the page ----------
    AI answers are assembled from passages, not whole pages, so coverage is judged
    per heading-delimited block: does one exist for the question, and is the answer
@@ -526,11 +562,12 @@ export function registerGeoTools(server: McpServer) {
     {
       title: "Structured data (JSON-LD) audit",
       description:
-        "Extract JSON-LD from one or more pages, validate required/recommended properties per schema type (Organization, LocalBusiness, TravelAgency, TouristTrip, Product/Offer, Event, Article/BlogPosting, FAQPage, BreadcrumbList, WebSite, Person, Review...), flag invalid JSON and bad dates, and check entity consistency across pages (organization name, telephone, address, sameAs must match everywhere). Pass explicit urls or a sitemap to sample.",
+        "Extract JSON-LD from one or more pages, validate required/recommended properties per schema type (Organization, LocalBusiness, TravelAgency, TouristTrip, Product/Offer, Event, Article/BlogPosting, FAQPage, BreadcrumbList, WebSite, Person, Review...), flag invalid JSON and bad dates, and check entity consistency across pages (organization name, telephone, address, sameAs must match everywhere). Also checks what makes an entity resolvable rather than merely declared: whether each sameAs profile still exists, whether the schema's phone appears in the visible text of the pages that claim it, and whether one Organization node carries an @id that publisher/author reference instead of being retyped on every page. Pass explicit urls or a sitemap to sample.",
       inputSchema: {
         urls: z.array(z.string().url()).max(40).optional(),
         sitemapUrl: z.string().url().optional().describe("Sample pages from this sitemap instead of explicit urls."),
         sampleSize: z.number().int().min(1).max(40).default(15),
+        checkSameAs: z.boolean().default(true).describe("Fetch each sameAs profile to see whether it still exists. A profile that refuses bots is reported as blocked, never as broken."),
       },
     },
     tool(async (a, extra) => {
@@ -543,27 +580,52 @@ export function registerGeoTools(server: McpServer) {
         urls = all.filter((_, i) => i % step === 0).slice(0, a.sampleSize);
       }
       if (!urls.length) throw new Error("Provide urls[] or sitemapUrl.");
-      const entities: { page: string; type: string; name?: unknown; telephone?: unknown; address?: unknown; sameAs?: unknown; url?: unknown }[] = [];
+      const entities: { page: string; type: string; name?: unknown; telephone?: unknown; address?: unknown; sameAs?: unknown; url?: unknown; phoneVisible?: boolean | null }[] = [];
       const pages = await mapLimit(urls, 4, async (url) => {
         try {
           const { $ } = await loadPage(url);
           const { blocks, invalid } = extractJsonLd($);
           const nodes = flattenNodes(blocks);
           const audits = nodes.map(auditNode);
+          const visibleDigits = $("body").text().replace(/\D/g, "");
+          const wiring = idWiring(nodes);
           for (const n of nodes) {
             const t = typesOf(n).find((x) => ["Organization", "LocalBusiness", "TravelAgency", "TourOperator", "Corporation"].includes(x));
-            if (t) entities.push({ page: url, type: t, name: n.name, telephone: n.telephone, address: n.address, sameAs: n.sameAs, url: n.url });
+            if (t) entities.push({ page: url, type: t, name: n.name, telephone: n.telephone, address: n.address, sameAs: n.sameAs, url: n.url, phoneVisible: n.telephone == null ? null : (() => { const k = phoneKey(n.telephone); return k ? visibleDigits.includes(k) : null; })() });
           }
           const microdata = $("[itemscope]").length;
-          return { url, jsonLdBlocks: blocks.length, invalidJsonLd: invalid, microdataItems: microdata, types: [...new Set(nodes.flatMap(typesOf))], issues: audits.filter((x) => x.missingRequired.length || x.problems.length).map((x) => ({ types: x.types, missingRequired: x.missingRequired, problems: x.problems })), recommendations: audits.filter((x) => x.missingRecommended.length).map((x) => ({ types: x.types, missingRecommended: x.missingRecommended })), unknownTypes: audits.filter((x) => !x.known).flatMap((x) => x.types) };
+          return { url, jsonLdBlocks: blocks.length, entityId: wiring.organizationId, publisherByReference: wiring.referencedById, publisherRetyped: wiring.inlineRepeats, invalidJsonLd: invalid, microdataItems: microdata, types: [...new Set(nodes.flatMap(typesOf))], issues: audits.filter((x) => x.missingRequired.length || x.problems.length).map((x) => ({ types: x.types, missingRequired: x.missingRequired, problems: x.problems })), recommendations: audits.filter((x) => x.missingRecommended.length).map((x) => ({ types: x.types, missingRecommended: x.missingRecommended })), unknownTypes: audits.filter((x) => !x.known).flatMap((x) => x.types) };
         } catch (e) { return { url, error: (e as Error).message }; }
       });
       const variants = (k: "name" | "telephone" | "address" | "sameAs" | "url") => { const m = new Map<string, string[]>(); for (const e of entities) { if (e[k] == null) continue; const v = JSON.stringify(e[k]); m.set(v, [...(m.get(v) ?? []), e.page]); } return [...m.entries()].map(([value, pagesFound]) => ({ value: JSON.parse(value), pages: pagesFound.length })); };
       const consistency = { organizationsFound: entities.length, name: variants("name"), telephone: variants("telephone"), address: variants("address"), sameAs: variants("sameAs"), url: variants("url") };
       const inconsistent = (["name", "telephone", "address", "sameAs", "url"] as const).filter((k) => consistency[k].length > 1);
+      const sameAsUrls = [...new Set(entities.flatMap((e) => (Array.isArray(e.sameAs) ? e.sameAs : e.sameAs ? [e.sameAs] : []).filter((u): u is string => typeof u === "string")))].slice(0, 20);
+      const sameAsChecked = a.checkSameAs && sameAsUrls.length
+        ? await mapLimit(sameAsUrls, 4, async (url) => {
+            try {
+              const res = await fetchWithTimeout(url, { redirect: "follow" }, 12_000);
+              return { url, status: res.status, state: classifyLink(res.status) };
+            } catch (e) { return { url, status: null, state: classifyLink(null), error: (e as Error).message }; }
+          })
+        : undefined;
+      const phoneClaims = entities.filter((e) => e.phoneVisible === false).map((e) => e.page);
+      const wiringTotals = pages.reduce((acc, p) => {
+        const q = p as { entityId?: string | null; publisherByReference?: number; publisherRetyped?: number };
+        if (q.entityId) acc.pagesWithEntityId++;
+        acc.publisherByReference += q.publisherByReference ?? 0;
+        acc.publisherRetyped += q.publisherRetyped ?? 0;
+        return acc;
+      }, { pagesWithEntityId: 0, publisherByReference: 0, publisherRetyped: 0 });
       const typeCounts: Record<string, number> = {};
       for (const p of pages) for (const t of (p as { types?: string[] }).types ?? []) typeCounts[t] = (typeCounts[t] ?? 0) + 1;
-      return { pagesAudited: pages.length, typeCounts, pagesWithoutSchema: pages.filter((p) => (p as { jsonLdBlocks?: number }).jsonLdBlocks === 0).map((p) => p.url), pagesWithIssues: pages.filter((p) => ((p as { issues?: unknown[] }).issues?.length ?? 0) > 0).length, entityConsistency: { ...consistency, inconsistentFields: inconsistent }, pages };
+      const entityNotes: string[] = [];
+      if (!sameAsUrls.length) entityNotes.push("No sameAs anywhere: nothing corroborates that this organization is the one already known elsewhere. Link the profiles that exist (Google Business, Wikipedia/Wikidata, social, directories).");
+      if (sameAsChecked?.some((s) => s.state === "missing")) entityNotes.push("A sameAs profile returns 404/410: a dead link weakens the identity claim rather than supporting it.");
+      if (phoneClaims.length) entityNotes.push(`${phoneClaims.length} page(s) declare a telephone in schema that does not appear in the visible text; the two should agree.`);
+      if (!wiringTotals.pagesWithEntityId && pages.length > 1) entityNotes.push("No Organization node carries an @id, so each page declares a separate entity instead of one that merges across the site.");
+      if (wiringTotals.publisherRetyped > wiringTotals.publisherByReference) entityNotes.push("publisher/author is retyped inline more often than referenced by @id; give the organization one @id and point at it.");
+      return { pagesAudited: pages.length, typeCounts, entityGraph: { ...wiringTotals, sameAsProfiles: sameAsChecked, phoneNotVisibleOn: phoneClaims.length ? phoneClaims : undefined, notes: entityNotes.length ? entityNotes : undefined }, pagesWithoutSchema: pages.filter((p) => (p as { jsonLdBlocks?: number }).jsonLdBlocks === 0).map((p) => p.url), pagesWithIssues: pages.filter((p) => ((p as { issues?: unknown[] }).issues?.length ?? 0) > 0).length, entityConsistency: { ...consistency, inconsistentFields: inconsistent }, pages };
       } finally { stop(); }
     }),
   );
