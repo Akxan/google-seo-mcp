@@ -108,7 +108,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 | 新增或改动工具 | 两份 README 的工具表（名字 + 一句话说明）、配置表（新密钥）、`CHANGELOG.md`；值得展示的新工具加进示例提示 |
 | 接入新的外部服务或数据源 | README 的 **Tech stack** 表、**Architecture** 的 mermaid 图（External 节点）、**Keywords** 段；`package.json` 的 `description` 与 `keywords` |
 | 工具总数变化 | **GitHub 仓库描述**：`npm run docs:sync` 会在 `package.json` 描述变动时打印现成的 `gh repo edit --description ...` 命令，照抄执行即可。描述不在仓库里，没有任何自动校验，只能靠这一步 |
-| 运行环境要求变化 | `package.json` 的 `engines`、README 的 Tech stack 的 Runtime 行、`Dockerfile`、CI 的 `node-version`，四处必须一致 |
+| 运行环境要求变化 | 这里是**两组**数字，不要混为一谈、也不要「对齐」成同一个数：<br>**对外的最低要求**——`package.json` 的 `engines` 与 README 的 Tech stack 的 Runtime 行，两处必须一致，且不低于依赖的实际下限（现在是 22，`googleapis` 定的）。写低了是真 bug：照着它装的人跑不起来（2026-09-24 修过一次，README 还写着 18）。<br>**我们自己构建与运行的版本**——`Dockerfile` 的 `FROM node:` 与 CI 的 `node-version`，两处一致即可，只要不低于上面那组。它比最低要求新是正常的（现在是 26），不要为了「四处一致」把它降下来，也不要把最低要求抬上去、平白挡住还跑得动的用户 |
 | 新增集成领域 | 仓库主题：`gh repo edit --add-topic x --remove-topic y`。**上限 20 个且已用满**，加新的必须先删旧的；优先删含义模糊或过于宽泛的（2026-09-17 删掉 `geo`（易被理解成地理）与 `seo-tools`（太泛），换成 `github` 与 `indexnow`） |
 | 发版 | 版本号、CHANGELOG 段落、tag、GitHub Release（见「新增或修改工具的完整流程」第 8 步）。发行说明用英文、按领域分组，口径与 README 一致 |
 | 发版之后 | 看一眼 GitHub 的 Security 页：新依赖可能立刻带来 Dependabot 告警（sharp 0.34 在 0.7.0 发布几分钟后就报了两个高危） |
