@@ -4,11 +4,19 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-24
+
 ### Added
 - **`geo_answer_coverage`: whether an AI can lift an answer off the page.** Every GEO tool so far measured readiness - is the door open to GPTBot, is the schema complete, does the page look extractable - and none measured coverage: for a question people actually search, is there a passage that answers it. Generative engines retrieve passages, not pages, so the check is per heading-delimited block: `missing` (nothing covers it), `weak` (the terms appear in prose but no heading is aimed at the question), `buried` (the answer starts more than 60 words into the passage), `thin` (nothing concrete to lift) or `ok`, which returns the extracted answer and a FAQPage JSON-LD draft. Questions come from Search Console, or you can pass your own with the pages to read, which needs no Google credentials at all.
   Matching is lexical, and two things keep that honest. Terms are weighted by how many passages on the page contain them, so a word that appears everywhere (the site's own subject: "seville" on a Seville site) stops counting as evidence of which passage answers - without this the tool graded a page that never states a distance as having answered "how far is ronda from seville". And a passage that merely mentions the terms is `weak`, not `ok`: with no heading aimed at the question there is nothing for a retriever to select. Terms are compared on a six-character stem so Spanish inflection ("aparcar" against "aparcamientos") does not cause a false miss. The returned answer text is there for the caller to judge relevance itself, which word overlap cannot.
   This is the per-question companion to `gsc_question_queries`, which checks headings only and stays the fast page-level view.
 - **`structured_data_audit` now checks whether the entity is resolvable, not just declared.** Cross-page consistency was already there; being consistent about an entity nothing else corroborates does not help a model decide you are the organization it already knows. Three additions: every `sameAs` profile is fetched (a 403 from Instagram or Facebook is reported as `blocked`, never as broken, so a bot-hostile platform is not mistaken for a dead link), the schema's telephone is compared against the digits visible on the pages that declare it, and the Organization's `@id` wiring is counted - one node the `publisher`/`author` of every article points at, versus the same organization retyped inline on each page, which leaves a retriever with nothing to merge on. Run against the two sites it immediately found that one declares no `sameAs` at all.
+
+### Changed
+- `googleapis` 180 → 181, `google-auth-library` 11.0.2 → 11.1.0, `zod` 4.6.2 → 4.6.5, `image-size` 2.0.2 → 2.0.4, plus `tsx` and `@types/node`. The googleapis major was verified against the live APIs before merging - `gsc_list_sites`, `gsc_search_analytics`, `ga_list_properties` and `ga_run_report` all answered normally - because a generated client's major bump moves runtime behaviour, not the hand-written tool schemas a snapshot diff would catch.
+
+### Fixed
+- The README's Node badge and install line still said 18 while `package.json` had required 22 since `googleapis` did; the same README already said 22 two sections earlier. All three now agree.
 
 ## [0.10.0] - 2026-09-22
 
@@ -182,6 +190,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - stdio and stateless Streamable HTTP transports with Bearer auth.
 
 [unreleased]: https://github.com/Akxan/google-seo-mcp/compare/v0.10.0...HEAD
+[0.11.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.7.0...v0.8.0

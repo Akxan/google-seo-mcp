@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目是什么
 
-一个 MCP 服务（TypeScript，`@modelcontextprotocol/sdk`），把 Google Search Console、Google Analytics 4（Data API 与只读 Admin API）、网页与 GEO 审计（PageSpeed、CrUX、结构化数据、AI 爬虫、llms.txt 等）、跨数据源分析，以及可选的 WordPress（通过 SSH 执行 WP-CLI）、GitHub 读写（整文件、局部修改、服务器端转图提交）和 Gmail 附件（只读）封装成 99 个工具（准确数以 `test/tools.snap.json` 为准），用于 SEO/GEO 运维。生产环境是部署在服务器上的 Streamable HTTP 实例，所有客户端都连它；本机 stdio 只用于开发验证。面向用户的说明在 `README.md`（英文）和 `README.zh-CN.md`（中文）。
+一个 MCP 服务（TypeScript，`@modelcontextprotocol/sdk`），把 Google Search Console、Google Analytics 4（Data API 与只读 Admin API）、网页与 GEO 审计（PageSpeed、CrUX、结构化数据、AI 爬虫、llms.txt 等）、跨数据源分析，以及可选的 WordPress（通过 SSH 执行 WP-CLI）、GitHub 读写（整文件、局部修改、服务器端转图提交）和 Gmail 附件（只读）封装成 100 个工具（准确数以 `test/tools.snap.json` 为准），用于 SEO/GEO 运维。生产环境是部署在服务器上的 Streamable HTTP 实例，所有客户端都连它；本机 stdio 只用于开发验证。面向用户的说明在 `README.md`（英文）和 `README.zh-CN.md`（中文）。
 
 ## 常用命令
 
@@ -52,7 +52,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 - `src/tools/github.ts`：GitHub REST，`github_commit_files` 用 Git Data API 一次提交多文件，每个文件三选一：`content`（整文件，`encoding: base64` 传二进制）、`edits`（对分支上当前内容做 find/replace，`applyTextEdits()` 要求每个 find 恰好匹配一次，否则整次拒绝）、`delete`；内容未变的文件自动跳过。`github_commit_image` 用 `sharp` 在服务器上取图、转 webp、缩放/裁剪（`attention` 智能裁剪）、生成变体后提交。写入正则用前缀 `github_commit_`，新加 GitHub 写入工具沿用这个前缀。token 取 `GITHUB_TOKEN`，否则 `gh auth token`。
 - `src/hosted/`：托管（多用户）模式，只在 `SEO_MCP_HOSTED_CLIENT_ID/SECRET`、`SEO_MCP_HOSTED_SECRET`、`SEO_MCP_PUBLIC_URL` 四个都设置时启用（只设一部分会在启动时报错）。`store.ts` 是 `node:sqlite` 数据库（`users` 存加密的刷新令牌，`tokens` 只存哈希）和纯函数（AES-256-GCM、令牌格式 `seo_`、HMAC 签名的 cookie），有单元测试；`pages.ts` 是中英文 HTML（首页、控制台、隐私、条款，内联 CSS，无 JS）；`index.ts` 是路由（`/`、`/login`、`/oauth/callback`、`/dashboard`、`/tokens`、`/tokens/revoke`、`/disconnect`、`/logout`、`/privacy`、`/terms`、`/robots.txt`）和 `resolve(bearer)`。`http.ts` 收到非运营者令牌时用它解析成用户，`createServer(HOSTED_SERVER_OPTIONS)`（只读、`gsc,ga4,web,geo,analysis`、排除 `ai_citation_check`/`reviews_snapshot`/`brand_mentions` 这些花运营者付费额度的工具），并用 `google.ts` 的 `runWithAuth()`（`AsyncLocalStorage`）包住 `handleRequest`，工具里所有 `getAuth()` 就都拿到该用户的 OAuth 客户端。改动 `google.ts` 时别破坏这个作用域。用户只读 scope 在 `HOSTED_SCOPES`，加写入 scope 前先想清楚责任。`githubApp.ts` 是 GitHub App 集成（五个 `SEO_MCP_GITHUB_APP_*` 变量一起设才启用）：`/connect/github` 跳到应用安装页，回调里用 GitHub 附带的 OAuth `code` 换用户令牌、核对 `installation_id` 确实属于该用户后只存安装 ID；工具需要时 `installationToken()` 用私钥签 RS256 JWT 换一小时令牌（内存缓存）。连了 GitHub 的用户 `resolve()` 返回的 options 多 `github` 工具集加 `allowWrite: ["github_commit_"]`，并排除依赖 Gmail 的 `github_commit_attachment`。`tools/github.ts` 的 `githubToken()` 在托管请求里只用 `RequestAuth.githubToken`，没有就报错，**绝不回落到运营者的 `GITHUB_TOKEN`**。
 - `src/gmail.ts` + `src/tools/gmail.ts`：Gmail 只读客户端（`GMAIL_CREDENTIALS`，默认 `~/.config/google-seo-mcp/gmail.json`，由 `npm run auth -- --gmail` 生成）与两个工具：`gmail_find_attachments`（列邮件及附件）、`github_commit_attachment`（取附件、图片走 `renderImageOutputs()` 转换、`commitBlobs()` 提交）。凭据缺失时工具返回带操作步骤的错误，不隐藏。`collectAttachments()` 是纯函数，有单元测试。
-- `src/tools/geo.ts`：GEO 与信任信号检查。`BOTS` 表维护 AI 爬虫的 robots 令牌和 UA 字符串；`SCHEMA_RULES` 是各 schema 类型的必填/推荐字段表；`analyzePage()` 是 `geo_page_score` 和 `eeat_audit` 共用的页面信号提取。`indexnow_submit` 和 `ai_citation_check` 依赖可选环境变量，缺失时返回带说明的错误而不是不注册。
+- `src/tools/geo.ts`：GEO 与信任信号检查。`BOTS` 表维护 AI 爬虫的 robots 令牌和 UA 字符串；`SCHEMA_RULES` 是各 schema 类型的必填/推荐字段表；`analyzePage()` 是 `geo_page_score` 和 `eeat_audit` 共用的页面信号提取。`indexnow_submit` 和 `ai_citation_check` 依赖可选环境变量，缺失时返回带说明的错误而不是不注册。 `geo_answer_coverage` 走另一套：`splitBlocks()` 按 h1-h4 把正文切成段落块，`termWeights()` 给问句里的每个词按「本页有多少块包含它」加权（全页到处都有的词权重趋近 0，否则站名本身就能把重叠度顶满），`evaluateAnswer()` 判 ok/weak/buried/thin——**没有对应标题的算 weak 不算 ok**，词面重叠不等于回答了。词干是 6 字符截断，兜西语词形变化。`structured_data_audit` 除了跨页实体一致性，还查 sameAs 是否存活（`classifyLink()` 把 401/403/429 记成 blocked，不能当死链）、schema 电话是否出现在可见文字里、机构 `@id` 的接线方式（`idWiring()`）。
 - `src/tools/wp.ts`：WordPress 工具。只在设置了 `WP_SITES`（JSON 数组）或 `WP_SSH_*` 环境变量时注册。每次调用都是 `spawn` 一个 `ssh … 'cd <path> && wp …'`；所有远程参数都经 `shq()` 做 POSIX 单引号转义。大块数据（正文、构建器修改）通过 stdin 传，不放进 argv。
   - Yoast 字段就是原始 post meta（`_yoast_wpseo_title`、`_yoast_wpseo_metadesc` 等）。写完 meta 后 `rebuildYoastIndexable()` 用 `wp eval` 调 Yoast 的 `Indexable_Builder`，否则前台标题不会变。`purgeCache()` 清该文章在 WP Rocket、Super Cache、W3TC、LiteSpeed 中的缓存。
   - `scripts/wp-helper.php` 承载所有批量或需要 PHP 逻辑的操作（SEO 状态、批量 Yoast、媒体、分类、内链建议、Yoast Premium 重定向），输入输出都是 STDIN/STDOUT 的 JSON，由 `runHelper()` 调用。`wpPostIndexForHost()` 缓存全站 URL 到文章 ID 的映射，供 `gsc_opportunities` 使用。
@@ -74,7 +74,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 
 ## 新增或修改工具的完整流程
 
-1. 在对应的 `src/tools/*.ts` 模块里用 `server.registerTool` 注册；名字用 `前缀_动作` 形式，前缀决定工具集（见 `toolsetOf()`）；写入类工具名必须匹配 `WRITE_TOOLS`（删除类再匹配 `DESTRUCTIVE_TOOLS`）。每个参数都要 `.describe()`，可枚举的用 `z.enum`，描述精炼（99 个工具的定义已约 3.5 万 token）。**写入类工具必须提供 `dryRun` 参数**，返回当前值与将要做的改动而不落地。纯函数尽量导出并在 `test/unit/` 加用例。
+1. 在对应的 `src/tools/*.ts` 模块里用 `server.registerTool` 注册；名字用 `前缀_动作` 形式，前缀决定工具集（见 `toolsetOf()`）；写入类工具名必须匹配 `WRITE_TOOLS`（删除类再匹配 `DESTRUCTIVE_TOOLS`）。每个参数都要 `.describe()`，可枚举的用 `z.enum`，描述精炼（100 个工具的定义已约 3.6 万 token）。**写入类工具必须提供 `dryRun` 参数**，返回当前值与将要做的改动而不落地。纯函数尽量导出并在 `test/unit/` 加用例。
 2. 需要新密钥的：`.env` 与 `.env.example` 各加一行带用途注释的条目；密钥缺失时抛出带申请路径的错误。
 3. `npm run build`，用临时客户端脚本对真实数据验证（写入只用临时对象），删掉脚本。
 4. `UPDATE_SNAPSHOT=1 npm test` 刷新工具清单快照，然后 `npm run docs:sync` 让两份 README 和 `package.json` 里的工具总数、分组计数自动对齐，并检查每个工具名都出现在两份 README 里，缺一个就失败（`npm test` 会跑同样的检查），再 `npm test` 确认通过。
@@ -136,7 +136,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 - stdio 模式下除 MCP 协议外不能往 stdout 写任何东西，日志一律用 `console.error`。
 - 线上实例同时被 App、手机、Claude Code 多个会话使用。本会话改站点内容前先看容器里的审计日志和目标对象的最近修改时间，不要和另一个会话改同一篇文章或同一个文件；某个会话声称「没改过」时，以审计日志为准。
 - `.env`、`service-account.json`、`credentials.json`、`client_secret*.json` 已在 `.gitignore`，秘密不进仓库，也不要出现在工具描述里。
-- 99 个工具的定义约 3.5 万 token，每次对话都会加载：描述写得准确但不要啰嗦，新工具优先合并进现有模块而不是再拆文件；`SEO_MCP_TOOLSETS` 可按需裁剪。
+- 100 个工具的定义约 3.6 万 token，每次对话都会加载：描述写得准确但不要啰嗦，新工具优先合并进现有模块而不是再拆文件；`SEO_MCP_TOOLSETS` 可按需裁剪。
 - `buildInstructions()` 里点名了推荐先用的工具（snapshot、opportunities 等），新增重要的分析类工具时把它加进去。
 - 密钥扫描器误报时，在 `scripts/check-secrets.sh` 的 `BENIGN`（合法占位值）或 `ALLOW`（合法文件）里加豁免，不要绕过钩子提交。
 - Search Console 数据延迟 2 到 3 天；URL 检查每个资源每天约 2000 次配额，不要对整站循环调用。
