@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+- **`audit.log` now keeps 30 days, as the privacy page already said it did.** The hosted privacy page promises access logs are deleted after 30 days; the on-disk copy of the write audit (`<SEO_MCP_DATA_DIR>/audit.log`) only ever grew, and its first line would have crossed 30 days on 2026-10-14. Expired lines are now dropped when a new one is written, at most every six hours. Reading and rewriting happen synchronously, so no concurrent write can land between them and be lost; a line whose date cannot be read is kept rather than silently discarded.
+
+### Added
+- **`deploy/backup-data.sh`**, a cron-ready backup of `hosted.db` and `oauth.db` (14 days, `integrity_check` on every copy, fails loudly on a mistyped path instead of reporting "skipped" forever). Nothing backed these up before. It uses `sqlite3 .backup` rather than `cp` for a reason worth knowing: both databases run in WAL mode, and on the production server the `.db` files were 4 KB while their `-wal` files held 111 KB and 539 KB. A test reproducing that layout gave `no such table` from a copied `.db` and all 50 rows from the script's backup.
+
 ## [0.11.0] - 2026-09-24
 
 ### Added

@@ -103,3 +103,32 @@ test("a prompt never fails just because the client did not ask for its arguments
     assert.ok(text.length > 100, `${name} produced no usable body without arguments`);
   }
 });
+
+// /privacy promises access logs go after 30 days; audit.log used to grow forever.
+test("keepRecentAuditLines drops lines past the retention window and keeps the rest", async () => {
+  const { keepRecentAuditLines, AUDIT_RETENTION_DAYS } = await import("../../dist/server.js");
+  assert.equal(AUDIT_RETENTION_DAYS, 30, "the number the privacy page states");
+  const now = Date.parse("2026-10-20T12:00:00Z");
+  const line = (at, tool) => JSON.stringify({ audit: "write", at, tool, ok: true });
+  const text = [
+    line("2026-09-14T20:46:38.313Z", "github_commit_files"), // 36 days old
+    line("2026-09-20T12:00:00.000Z", "wp_update_seo"),        // exactly 30 days: kept
+    line("2026-10-19T08:00:00.000Z", "indexnow_submit"),
+  ].join("\n") + "\n";
+  const kept = keepRecentAuditLines(text, now);
+  assert.ok(!kept.includes("github_commit_files"), "36 days old is gone");
+  assert.ok(kept.includes("wp_update_seo"), "the boundary day stays");
+  assert.ok(kept.includes("indexnow_submit"));
+  assert.ok(kept.endsWith("\n"), "still one line per entry, so the next append starts clean");
+});
+
+test("keepRecentAuditLines never drops a line it cannot date", async () => {
+  const { keepRecentAuditLines } = await import("../../dist/server.js");
+  const now = Date.parse("2026-10-20T12:00:00Z");
+  assert.match(keepRecentAuditLines("not json at all\n", now), /not json at all/, "unreadable evidence is kept, not silently lost");
+  assert.match(keepRecentAuditLines('{"at":"garbage"}\n', now), /garbage/);
+  assert.equal(keepRecentAuditLines("", now), "");
+  assert.equal(keepRecentAuditLines("\n\n", now), "", "blank lines are not kept");
+  const old = JSON.stringify({ at: "2020-01-01T00:00:00Z" }) + "\n";
+  assert.equal(keepRecentAuditLines(old, now), "", "everything expired leaves an empty file, not a stray newline");
+});

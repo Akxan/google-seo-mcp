@@ -39,6 +39,41 @@ const DESTRUCTIVE_TOOLS = /^(wp_delete_|wp_run|wp_update_post|wp_builder_update|
 
 export function isWriteTool(name: string) { return WRITE_TOOLS.test(name); }
 
+/** /privacy promises access logs are deleted after 30 days; before 0.11.1 nothing deleted audit.log. */
+export const AUDIT_RETENTION_DAYS = 30;
+const AUDIT_PRUNE_EVERY_MS = 6 * 3_600_000;
+let auditPrunedAt = 0;
+
+/** Lines of an audit log still inside the retention window. A line whose date cannot be read is
+    kept: silently dropping audit evidence is worse than keeping a stray line. */
+export function keepRecentAuditLines(text: string, now: number, days = AUDIT_RETENTION_DAYS): string {
+  const cutoff = now - days * 86_400_000;
+  const kept = text.split("\n").filter((line) => {
+    if (!line.trim()) return false;
+    const at = /"at":"([^"]+)"/.exec(line)?.[1];
+    const t = at ? Date.parse(at) : NaN;
+    return Number.isNaN(t) || t >= cutoff;
+  });
+  return kept.length ? kept.join("\n") + "\n" : "";
+}
+
+/** Append one line, pruning expired ones at most every six hours. Both steps are synchronous on
+    purpose: with no await between reading and rewriting the file, no other write can interleave
+    and be lost. The file is a few KB and only write tools touch it. */
+function appendAuditLine(file: string, line: string) {
+  try {
+    if (Date.now() - auditPrunedAt > AUDIT_PRUNE_EVERY_MS) {
+      auditPrunedAt = Date.now();
+      if (fs.existsSync(file)) {
+        const text = fs.readFileSync(file, "utf8");
+        const kept = keepRecentAuditLines(text, Date.now());
+        if (kept.length !== text.length) fs.writeFileSync(file, kept);
+      }
+    }
+    fs.appendFileSync(file, line + "\n");
+  } catch (e) { console.error(`audit log: ${(e as Error).message}`); }
+}
+
 /** Identifiers worth keeping in the write-audit log; content fields (title, content, jsonld, edits…) never appear. */
 const AUDIT_KEYS = new Set(["site", "args", "id", "postId", "ids", "repo", "branch", "path", "url", "urls", "siteUrl", "feedpath", "sitemapUrl", "messageId", "filename", "termId", "taxonomy", "mediaId", "from", "to", "status", "date", "revisionId", "featuredMediaId", "dryRun", "createBranch", "convert"]);
 export function auditSummary(args: unknown): Record<string, unknown> {
@@ -140,7 +175,7 @@ export function createServer(overrides: ServerOptions = {}): McpServer {
           console.error(line);
           // Container logs vanish on every redeploy; keep a copy on disk when a data dir is configured.
           const dir = envValue("SEO_MCP_DATA_DIR");
-          if (dir) fs.appendFile(path.join(dir, "audit.log"), line + "\n", () => {});
+          if (dir) appendAuditLine(path.join(dir, "audit.log"), line);
           return res;
         }
       : cb;

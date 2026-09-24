@@ -174,6 +174,8 @@ curl http://127.0.0.1:8080/healthz
 服务默认只监听 `127.0.0.1:8080`。对外访问请用 Caddy 或 Nginx 反向代理并开启 HTTPS，
 示例见 `deploy/Caddyfile.example` 和 `deploy/nginx.conf.example`（Nginx 必须关闭 `proxy_buffering`）。
 `/healthz` 不带令牌时只返回 `{"ok":true}`，带 Bearer 令牌时附带版本号和凭据来源。
+每次调用写入类工具都会往 stderr 写一行审计记录（工具、成败、耗时、客户端、文章 ID 或文件路径这类标识符，不含正文）；设了 `SEO_MCP_DATA_DIR` 时同一行也写进 `<目录>/audit.log`，只保留 30 天（托管模式隐私页承诺的期限），过期的行自动删除。
+`deploy/backup-data.sh <数据目录>` 用来给 cron 备份 `hosted.db` 和 `oauth.db`（保留 14 天，备份后做完整性校验）。别用 `cp`：两个库都是 WAL 模式，最近写入的数据还在 `-wal` 文件里，直接复制 `.db` 可能拿到一个几乎空的库。
 
 ### Docker
 
