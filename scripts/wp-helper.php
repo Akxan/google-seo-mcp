@@ -72,6 +72,26 @@ function h_yo($key, $default = '') {
   return array_key_exists($key, $all) ? $all[$key] : $default;
 }
 
+/** Yoast 20+ builds an organization's sameAs from facebook_site, twitter_site and the
+    other_social_urls list only (Social_Profiles_Helper::get_organization_social_profile_fields);
+    instagram_url, youtube_url and the like are legacy keys it never reads for an organization.
+    So named platforms are kept inside other_social_urls, one URL each. */
+function h_social_platforms() {
+  return ['instagram' => ['instagram.com'], 'linkedin' => ['linkedin.com'], 'youtube' => ['youtube.com', 'youtu.be'], 'pinterest' => ['pinterest.'], 'wikipedia' => ['wikipedia.org']];
+}
+function h_social_platform($url) {
+  $host = strtolower((string) parse_url((string) $url, PHP_URL_HOST));
+  if ($host === '') return null;
+  foreach (h_social_platforms() as $name => $needles) foreach ($needles as $n) if (strpos($host, $n) !== false) return $name;
+  return null;
+}
+/** Split other_social_urls into [platform => url] (first URL per platform) and the unnamed rest. */
+function h_split_social($urls) {
+  $named = []; $rest = [];
+  foreach ((array) $urls as $u) { $p = h_social_platform($u); if ($p !== null && !isset($named[$p])) $named[$p] = $u; else $rest[] = $u; }
+  return [$named, $rest];
+}
+
 /** Line-level difference between two texts: counts plus a bounded sample, so a diff cannot flood the result. */
 function h_diff_lines($before, $after, $max = 15) {
   $a = preg_split("/\r\n|\n|\r/", (string) $before);
@@ -364,11 +384,14 @@ switch ($action) {
       'websiteName' => h_yo('website_name'), 'alternateWebsiteName' => h_yo('alternate_website_name'),
       'email' => h_yo('org-email'), 'phone' => h_yo('org-phone'),
     ];
-    $social = [
-      'facebook' => h_yo('facebook_site'), 'twitter' => h_yo('twitter_site'), 'instagram' => h_yo('instagram_url'),
-      'linkedin' => h_yo('linkedin_url'), 'youtube' => h_yo('youtube_url'), 'pinterest' => h_yo('pinterest_url'),
-      'wikipedia' => h_yo('wikipedia_url'), 'other' => (array) h_yo('other_social_urls', []),
-    ];
+    [$named, $rest] = h_split_social(h_yo('other_social_urls', []));
+    $social = ['facebook' => h_yo('facebook_site'), 'twitter' => h_yo('twitter_site')];
+    foreach (array_keys(h_social_platforms()) as $f) $social[$f] = $named[$f] ?? '';
+    $social['other'] = $rest;
+    // Values left in the legacy per-platform options are not published; say so instead of reporting them.
+    $legacy = [];
+    foreach (array_keys(h_social_platforms()) as $f) { $v = (string) h_yo("{$f}_url"); if ($v !== '') $legacy[$f] = $v; }
+    if ($legacy) $social['legacyIgnored'] = $legacy;
     $excluded = array_values(array_merge(
       array_map(fn($x) => $x['for'], array_filter($types, fn($x) => $x['noindex'])),
       array_map(fn($x) => $x['for'], array_filter($taxes, fn($x) => $x['noindex']))
@@ -457,10 +480,20 @@ switch ($action) {
     }
     if (array_key_exists('phone', $org)) $set($titles, 'org-phone', trim((string) $org['phone']), 'organization telephone (schema)');
 
-    $socMap = ['facebook' => 'facebook_site', 'twitter' => 'twitter_site', 'instagram' => 'instagram_url', 'linkedin' => 'linkedin_url', 'youtube' => 'youtube_url', 'pinterest' => 'pinterest_url', 'wikipedia' => 'wikipedia_url'];
     $prof = $in['socialProfiles'] ?? [];
-    foreach ($socMap as $field => $key) if (array_key_exists($field, $prof)) $set($social, $key, (string) $prof[$field], "social profile {$field}");
-    if (array_key_exists('other', $prof)) $set($social, 'other_social_urls', array_values(array_filter(array_map('esc_url_raw', (array) $prof['other']))), 'other social profiles (sameAs)');
+    foreach (['facebook' => 'facebook_site', 'twitter' => 'twitter_site'] as $field => $key) if (array_key_exists($field, $prof)) $set($social, $key, (string) $prof[$field], "social profile {$field}");
+    [$named, $rest] = h_split_social(h_yo('other_social_urls', []));
+    $touched = false;
+    if (array_key_exists('other', $prof)) { $rest = array_values(array_filter(array_map('esc_url_raw', (array) $prof['other']))); $touched = true; }
+    foreach (array_keys(h_social_platforms()) as $field) {
+      if (!array_key_exists($field, $prof)) continue;
+      $url = esc_url_raw(trim((string) $prof[$field]));
+      if ($url === '') unset($named[$field]); else $named[$field] = $url;
+      $touched = true;
+      // Clear the legacy option too: a value Yoast ignores only misleads whoever reads it next.
+      if ((string) h_yo("{$field}_url") !== '') $set($social, "{$field}_url", '', "legacy {$field} option (Yoast 20+ does not publish it)");
+    }
+    if ($touched) $set($social, 'other_social_urls', array_values(array_unique(array_merge(array_values($named), $rest))), 'other social profiles (sameAs)');
 
     if (array_key_exists('xmlSitemap', $in)) $set($general, 'enable_xml_sitemap', (bool) $in['xmlSitemap'], 'XML sitemap enabled');
 
