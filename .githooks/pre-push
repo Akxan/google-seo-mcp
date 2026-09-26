@@ -6,6 +6,12 @@ zero=0000000000000000000000000000000000000000
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ "$local_sha" = "$zero" ] && continue
   scripts/check-secrets.sh --tree "$local_sha"
-  if [ "$remote_sha" = "$zero" ]; then range="$local_sha --not --remotes"; else range="$remote_sha..$local_sha"; fi
+  # A new ref, or a force push whose old remote commit is not in this clone (rewritten history):
+  # scan every commit no remote-tracking ref has, which is stricter, never looser.
+  if [ "$remote_sha" = "$zero" ] || ! git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+    range="$local_sha --not --remotes"
+  else
+    range="$remote_sha..$local_sha"
+  fi
   scripts/check-secrets.sh --messages "$range"
 done
