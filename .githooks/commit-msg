@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Commit messages are published with the commit; scan them like files.
+exec scripts/check-secrets.sh --message "$1"

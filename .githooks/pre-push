@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Scan every commit tree that is about to be pushed.
+# Scan every commit tree that is about to be pushed, and the message of every commit the remote
+# does not have yet (a commit made with --no-verify skipped the commit-msg check).
 set -e
+zero=0000000000000000000000000000000000000000
 while read -r local_ref local_sha remote_ref remote_sha; do
-  [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
+  [ "$local_sha" = "$zero" ] && continue
   scripts/check-secrets.sh --tree "$local_sha"
+  if [ "$remote_sha" = "$zero" ]; then range="$local_sha --not --remotes"; else range="$remote_sha..$local_sha"; fi
+  scripts/check-secrets.sh --messages "$range"
 done

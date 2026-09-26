@@ -3,6 +3,10 @@
 #   scripts/check-secrets.sh            # scan files staged for commit
 #   scripts/check-secrets.sh --all      # scan every tracked file
 #   scripts/check-secrets.sh --tree <rev>  # scan a git tree (used before push)
+#   scripts/check-secrets.sh --message <file>    # scan a commit message (commit-msg hook)
+#   scripts/check-secrets.sh --messages <range>  # scan the messages of a rev range (pre-push)
+# Commit messages are public on GitHub just like files, and they cannot be fixed afterwards
+# without rewriting history: site names in nine of them went out unnoticed before these modes.
 # Generic patterns live below; machine-specific identifiers (your IP, usernames,
 # domains, project IDs) go one-per-line into .secret-patterns.local (gitignored).
 set -euo pipefail
@@ -33,6 +37,10 @@ scan() { # $1 = label, stdin = content
 case "$mode" in
   --all) while IFS= read -r f; do [ -f "$f" ] && scan "$f" < "$f"; done < <(git ls-files) ;;
   --tree) rev="${2:-HEAD}"; while IFS= read -r f; do scan "$rev:$f" < <(git show "$rev:$f" 2>/dev/null); done < <(git ls-tree -r --name-only "$rev") ;;
+  # Feed scan() through process substitution, never a pipe: a piped scan() runs in a subshell and
+  # its status=1 is lost, so a hit would print a warning and still pass.
+  --message) scan "commit message" < <(grep -v '^#' "${2:?usage: --message <file>}") ;;
+  --messages) while IFS= read -r c; do scan "commit $(git rev-parse --short "$c") message" < <(git log -1 --format=%B "$c"); done < <(git rev-list ${2:?usage: --messages <range>}) ;;
   *) while IFS= read -r f; do scan "$f" < <(git show ":$f"); done < <(git diff --cached --name-only --diff-filter=ACMR) ;;
 esac
 if [ "$status" -ne 0 ]; then echo "Secret scan FAILED: remove the matches above (or add a legitimate example to the allowlist in scripts/check-secrets.sh)."; exit 1; fi
