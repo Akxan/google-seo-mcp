@@ -387,8 +387,8 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 | `wp_get_seo_settings` / `wp_update_seo_settings` | Yoast 全站设置：各类型的标题模板、归档页是否 noindex、面包屑、机构身份与社交主页、站点地图开关（写入默认预演） |
 | `wp_list_revisions` / `wp_update_post_from_revision` | 普通文章的历史版本列表与回滚，回滚前给出逐行差异预览（构建器文章请用 wp_builder_restore） |
 | `wp_delete_cache` | 全站清缓存：页面缓存、关键 CSS 重建、对象缓存、Yoast 站点地图缓存（批量改完 SEO 后用） |
-| `wp_builder_list_items` | BeTheme（Muffin Builder）站点：列出页面构建器里的标题、正文块、图片等可编辑项 |
-| `wp_builder_update` | 改构建器项的文本字段，自动重新生成 SEO 副本、重建 Yoast 索引、清缓存 |
+| `wp_builder_list_items` | BeTheme（Muffin Builder）站点：列出页面构建器里的标题、正文块、图片等可编辑项，折叠栏、标签页、FAQ 里的每一条也会列出（路径形如 `tabs.2.content`） |
+| `wp_builder_update` | 改构建器项的文本字段（含折叠栏等嵌套条目，路径不存在就拒绝），自动重新生成 SEO 副本、重建 Yoast 索引、清缓存；改的是页眉页脚模板时清全站缓存 |
 | `wp_builder_check` | 只读检查构建器数据能否无损往返，并列出可回滚的快照 |
 | `wp_builder_restore` | 回滚构建器内容到写入前的快照（保留最近 3 份，默认预演） |
 | `wp_seo_status` | 全站文章的 Yoast 标题、描述、关键词状态，找出缺失项 |

@@ -90,8 +90,21 @@ function mfn_summarize($sections) {
         $attr = $item['attr'] ?? ($item['fields'] ?? []);
         $fields = [];
         foreach ($attr as $k => $v) {
-          if (!is_string($v)) continue;
-          if (in_array($k, $TEXT_KEYS, true) || strlen($v) > 40) $fields[$k] = $v;
+          if (is_string($v)) {
+            if (in_array($k, $TEXT_KEYS, true) || strlen($v) > 40) $fields[$k] = $v;
+            continue;
+          }
+          // Toggles, tabs, accordions and FAQ lists keep their entries as a list of
+          // {title, content, ...}. Expose each entry's text as "tabs.2.content" so it can be
+          // read and edited like any other field; before this they were silently invisible.
+          if (is_array($v) && $v && array_keys($v) === range(0, count($v) - 1)) {
+            foreach ($v as $i => $entry) {
+              if (!is_array($entry)) continue;
+              foreach ($entry as $sk => $sv) {
+                if (is_string($sv) && (in_array($sk, $TEXT_KEYS, true) || strlen($sv) > 40)) $fields["{$k}.{$i}.{$sk}"] = $sv;
+              }
+            }
+          }
         }
         $items[] = ['uid' => $item['uid'] ?? null, 'type' => $item['type'] ?? null, 'position' => "s{$si}/w{$wi}/i{$ii}", 'fields' => (object) $fields];
       }
@@ -134,14 +147,30 @@ switch ($action) {
       $item = &mfn_find($sections, $e['uid'] ?? '');
       if ($item === null) mfn_fail("item {$e['uid']} not found");
       $bag = isset($item['attr']) ? 'attr' : 'fields';
-      $old = $item[$bag][$e['field']] ?? null;
-      $item[$bag][$e['field']] = (string) $e['value'];
+      $path = explode('.', (string) ($e['field'] ?? ''));
+      if (count($path) === 1) {
+        $old = $item[$bag][$path[0]] ?? null;
+        $item[$bag][$path[0]] = (string) $e['value'];
+      } else {
+        // A nested path may only replace a string that already exists: a mistyped index such as
+        // tabs.9.content must fail, not append a half-formed entry to a live toggle or FAQ.
+        $last = array_pop($path);
+        $ref = &$item[$bag];
+        foreach ($path as $seg) {
+          if (!is_array($ref) || !array_key_exists($seg, $ref)) mfn_fail("field {$e['field']} not found on item {$e['uid']}; list the item to see its fields");
+          $ref = &$ref[$seg];
+        }
+        if (!is_array($ref) || !array_key_exists($last, $ref) || !is_string($ref[$last])) mfn_fail("field {$e['field']} not found on item {$e['uid']}; list the item to see its fields");
+        $old = $ref[$last];
+        $ref[$last] = (string) $e['value'];
+        unset($ref);
+      }
       $applied[] = ['uid' => $e['uid'], 'field' => $e['field'], 'old_length' => is_string($old) ? strlen($old) : null, 'new_length' => strlen($e['value'])];
       unset($item);
     }
     $kept = mfn_backup($postId, count($applied) . ' field(s) edited');
     $seoLen = mfn_save($postId, $sections);
-    mfn_out(['post_id' => $postId, 'applied' => $applied, 'seo_copy_length' => $seoLen, 'post_modified' => get_post_field('post_modified', $postId), 'backups_kept' => $kept]);
+    mfn_out(['post_id' => $postId, 'post_type' => get_post_type($postId), 'applied' => $applied, 'seo_copy_length' => $seoLen, 'post_modified' => get_post_field('post_modified', $postId), 'backups_kept' => $kept]);
   case 'backups':
     mfn_out(['post_id' => $postId, 'backups' => mfn_backup_list($postId), 'keeps' => MFN_BACKUP_KEEP]);
   case 'restore':

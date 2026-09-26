@@ -500,7 +500,7 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
     {
       title: "List page-builder items (BeTheme/Muffin Builder)",
       description:
-        "For posts built with BeTheme's Muffin Builder (post_content is empty and the text lives in builder items), list every builder item with its uid, type (heading, column, image...) and text fields (title, content, header_tag, src, alt...). Use the uid + field with wp_builder_update to edit copy.",
+        "For posts built with BeTheme's Muffin Builder (post_content is empty and the text lives in builder items), list every builder item with its uid, type (heading, column, image...) and text fields (title, content, header_tag, src, alt...). Entries inside toggles, tabs, accordions and FAQ lists appear as paths such as 'tabs.2.content'. Use the uid + field with wp_builder_update to edit copy.",
       inputSchema: { site: siteParam, id: postId },
     },
     tool(async (a) => ({ site: pick(a.site).name, ...(await builder<object>(pick(a.site), "list", a.id)) })),
@@ -511,7 +511,7 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
     {
       title: "Update page-builder item fields",
       description:
-        "Edit text fields of Muffin Builder items (e.g. a heading's 'title' or 'header_tag', a column's HTML 'content', an image's 'alt'). Applies all edits atomically, regenerates the builder's SEO copy, bumps post_modified and rebuilds the Yoast indexable. Fetch current values with wp_builder_list_items first and send the full replacement value.",
+        "Edit text fields of Muffin Builder items (e.g. a heading's 'title' or 'header_tag', a column's HTML 'content', an image's 'alt'). A field may be a nested path from wp_builder_list_items ('tabs.2.content'); a path that does not already exist is refused. Applies all edits atomically, regenerates the builder's SEO copy, bumps post_modified and rebuilds the Yoast indexable. Editing a header/footer template purges the whole site's page cache, since the template is on every page. Fetch current values with wp_builder_list_items first and send the full replacement value.",
       inputSchema: {
         site: siteParam,
         id: postId,
@@ -526,8 +526,14 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
         const changes = a.edits.map((e) => { const it = list.items.find((x) => x.uid === e.uid); return { uid: e.uid, type: it?.type ?? "(not found)", field: e.field, from: it?.fields?.[e.field] ?? null, to: e.value }; });
         return { site: s.name, id: a.id, dryRun: true, changes, missing: changes.filter((c) => c.type === "(not found)").map((c) => c.uid) };
       }
-      const result = await builder<object>(s, "set", a.id, [], JSON.stringify(a.edits));
-      const [yoastIndex, cachePurged] = await Promise.all([rebuildYoastIndexable(s, a.id), purgeCache(s, a.id)]);
+      const result = await builder<{ post_type?: string }>(s, "set", a.id, [], JSON.stringify(a.edits));
+      // A BeTheme header/footer template is rendered into every page, so purging its own URL
+      // leaves every cached page still showing the old copy.
+      const siteWide = result.post_type === "template";
+      const purge = siteWide
+        ? runHelper<object>(s, "wp", "purge_site", [], JSON.stringify({ pageCache: true })).then((r) => ({ scope: "site", ...r }), (e: Error) => `site purge failed: ${e.message.slice(0, 100)}`)
+        : purgeCache(s, a.id);
+      const [yoastIndex, cachePurged] = await Promise.all([rebuildYoastIndexable(s, a.id), purge]);
       return { site: s.name, ...result, yoastIndex, cachePurged };
     }),
   );

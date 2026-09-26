@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format follows [Kee
 ## [Unreleased]
 
 ### Fixed
+- **The page-builder tools could not see inside toggles, tabs, accordions or FAQ lists.** BeTheme stores those entries as a list (`tabs: [{title, content}, ...]`), and `wp_builder_list_items` skipped anything that was not a plain string, so a footer's "Contact Us" toggle came back with no fields at all and `wp_builder_update` had no way to reach it. Each entry now appears as a path such as `tabs.2.content` and can be edited like any other field. A nested path may only replace a string that already exists: a mistyped index is refused rather than appending a half-formed entry to a live toggle. Found while correcting a phone number in a site footer.
+- **Editing a header or footer template left every cached page showing the old version.** `wp_builder_update` purged the edited post's own URL, but a BeTheme template has no page of its own; it is rendered into every page. When the edited post is a template the tool now purges the whole site's page cache.
 - **`audit.log` now keeps 30 days, as the privacy page already said it did.** The hosted privacy page promises access logs are deleted after 30 days; the on-disk copy of the write audit (`<SEO_MCP_DATA_DIR>/audit.log`) only ever grew, and its first line would have crossed 30 days on 2026-10-14. Expired lines are now dropped when a new one is written, at most every six hours. Reading and rewriting happen synchronously, so no concurrent write can land between them and be lost; a line whose date cannot be read is kept rather than silently discarded.
 
 ### Added
