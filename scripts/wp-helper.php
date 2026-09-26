@@ -42,6 +42,25 @@ function h_purge_site() {
   return $done ?: ['none'];
 }
 
+/** Clear WP Rocket's "Remove Unused CSS" results, the same call as its "Clear Used CSS" button.
+    That trimmed stylesheet is computed once per URL from the HTML of the day and stored apart
+    from the page cache, so a page purge leaves it alone: after a header/footer/theme change it
+    keeps dropping rules for classes that did not exist yet (a footer phone icon once stayed
+    invisible on every page because the trimmed CSS was months old). Pages load the full CSS until
+    WP Rocket rebuilds them. */
+function h_clear_used_css() {
+  $opts = get_option('wp_rocket_settings');
+  if (empty($opts['remove_unused_css'])) return 'not enabled';
+  $c = apply_filters('rocket_container', null);
+  if (!is_object($c) || !method_exists($c, 'get')) return 'wp-rocket container unavailable';
+  try {
+    $sub = $c->get('rucss_admin_subscriber');
+    if (!method_exists($sub, 'delete_used_css_rows')) return 'unsupported wp-rocket version';
+    $sub->delete_used_css_rows();
+    return 'wp-rocket used css cleared';
+  } catch (Throwable $e) { return 'failed: ' . $e->getMessage(); }
+}
+
 /** Drop Yoast's cached XML sitemaps so the next fetch is built from current data. */
 function h_flush_yoast_sitemap() {
   $done = [];
@@ -565,6 +584,7 @@ switch ($action) {
     if (!empty($in['pageCache'])) $done['pageCache'] = h_purge_site();
     if (!empty($in['objectCache'])) { wp_cache_flush(); $done['objectCache'] = 'flushed'; }
     if (!empty($in['yoastSitemap'])) $done['yoastSitemap'] = h_flush_yoast_sitemap();
+    if (!empty($in['usedCss'])) $done['usedCss'] = h_clear_used_css();
     h_out(['purged' => $done]);
   }
 

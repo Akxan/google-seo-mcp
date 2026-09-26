@@ -511,7 +511,7 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
     {
       title: "Update page-builder item fields",
       description:
-        "Edit text fields of Muffin Builder items (e.g. a heading's 'title' or 'header_tag', a column's HTML 'content', an image's 'alt'). A field may be a nested path from wp_builder_list_items ('tabs.2.content'). To add an entry to a toggle, tab set or FAQ, use the next index (tabs.2 when there are two): it is created with the previous entry's keys, empty. Any other missing path is refused. Applies all edits atomically, regenerates the builder's SEO copy, bumps post_modified and rebuilds the Yoast indexable. Editing a header/footer template purges the whole site's page cache, since the template is on every page. Fetch current values with wp_builder_list_items first and send the full replacement value.",
+        "Edit text fields of Muffin Builder items (e.g. a heading's 'title' or 'header_tag', a column's HTML 'content', an image's 'alt'). A field may be a nested path from wp_builder_list_items ('tabs.2.content'). To add an entry to a toggle, tab set or FAQ, use the next index (tabs.2 when there are two): it is created with the previous entry's keys, empty. Any other missing path is refused. Applies all edits atomically, regenerates the builder's SEO copy, bumps post_modified and rebuilds the Yoast indexable. Editing a header/footer template purges the whole site's page cache and WP Rocket's used CSS, since the template is on every page. Fetch current values with wp_builder_list_items first and send the full replacement value.",
       inputSchema: {
         site: siteParam,
         id: postId,
@@ -528,10 +528,12 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
       }
       const result = await builder<{ post_type?: string }>(s, "set", a.id, [], JSON.stringify(a.edits));
       // A BeTheme header/footer template is rendered into every page, so purging its own URL
-      // leaves every cached page still showing the old copy.
+      // leaves every cached page still showing the old copy. WP Rocket's trimmed "used CSS" is a
+      // separate per-URL cache computed from the old HTML: without clearing it too, anything new
+      // the template introduces (an icon, a class) renders unstyled on every page.
       const siteWide = result.post_type === "template";
       const purge = siteWide
-        ? runHelper<object>(s, "wp", "purge_site", [], JSON.stringify({ pageCache: true })).then((r) => ({ scope: "site", ...r }), (e: Error) => `site purge failed: ${e.message.slice(0, 100)}`)
+        ? runHelper<object>(s, "wp", "purge_site", [], JSON.stringify({ pageCache: true, usedCss: true })).then((r) => ({ scope: "site", ...r }), (e: Error) => `site purge failed: ${e.message.slice(0, 100)}`)
         : purgeCache(s, a.id);
       const [yoastIndex, cachePurged] = await Promise.all([rebuildYoastIndexable(s, a.id), purge]);
       return { site: s.name, ...result, yoastIndex, cachePurged };
@@ -997,13 +999,14 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
         criticalCss: z.boolean().default(false).describe("Also run WP Rocket's critical-CSS regeneration (`wp rocket regenerate --file=critical-css`)."),
         objectCache: z.boolean().default(false).describe("Also flush the object cache (transients, Redis/Memcached)."),
         yoastSitemap: z.boolean().default(false).describe("Also clear Yoast's cached XML sitemaps, so the next fetch (or gsc_submit_sitemap) sees current data."),
+        usedCss: z.boolean().default(false).describe("Also clear WP Rocket's Remove Unused CSS results (its 'Clear Used CSS' button). They are computed once per URL and survive page purges, so after a header, footer or theme change they keep dropping rules for new classes and icons. Pages load full CSS until rebuilt."),
         dryRun: z.boolean().default(false).describe("Preview only: report what would be purged without running anything."),
       },
     },
     tool(async (a, extra) => {
       const s = pick(a.site);
-      const plan = { pageCache: a.pageCache, criticalCss: a.criticalCss, objectCache: a.objectCache, yoastSitemap: a.yoastSitemap };
-      if (!Object.values(plan).some(Boolean)) throw new Error("Nothing to purge: enable at least one of pageCache, criticalCss, objectCache, yoastSitemap.");
+      const plan = { pageCache: a.pageCache, criticalCss: a.criticalCss, objectCache: a.objectCache, yoastSitemap: a.yoastSitemap, usedCss: a.usedCss };
+      if (!Object.values(plan).some(Boolean)) throw new Error("Nothing to purge: enable at least one of pageCache, criticalCss, objectCache, yoastSitemap, usedCss.");
       if (a.dryRun) return { site: s.name, dryRun: true, would: plan, note: "Nothing was purged." };
       const stop = heartbeat(extra, "purging caches");
       try {
