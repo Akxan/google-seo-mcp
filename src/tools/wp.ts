@@ -511,7 +511,7 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
     {
       title: "Update page-builder item fields",
       description:
-        "Edit text fields of Muffin Builder items (e.g. a heading's 'title' or 'header_tag', a column's HTML 'content', an image's 'alt'). A field may be a nested path from wp_builder_list_items ('tabs.2.content'); a path that does not already exist is refused. Applies all edits atomically, regenerates the builder's SEO copy, bumps post_modified and rebuilds the Yoast indexable. Editing a header/footer template purges the whole site's page cache, since the template is on every page. Fetch current values with wp_builder_list_items first and send the full replacement value.",
+        "Edit text fields of Muffin Builder items (e.g. a heading's 'title' or 'header_tag', a column's HTML 'content', an image's 'alt'). A field may be a nested path from wp_builder_list_items ('tabs.2.content'). To add an entry to a toggle, tab set or FAQ, use the next index (tabs.2 when there are two): it is created with the previous entry's keys, empty. Any other missing path is refused. Applies all edits atomically, regenerates the builder's SEO copy, bumps post_modified and rebuilds the Yoast indexable. Editing a header/footer template purges the whole site's page cache, since the template is on every page. Fetch current values with wp_builder_list_items first and send the full replacement value.",
       inputSchema: {
         site: siteParam,
         id: postId,
@@ -926,6 +926,8 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
           personUserId: z.number().int().positive().describe("WordPress user ID the site represents, when type='person'."),
           websiteName: z.string().describe("Name of the WebSite entity in schema; defaults to the site title."),
           alternateWebsiteName: z.string(),
+          email: z.string().describe("Contact email Yoast publishes as the Organization's email; empty string clears."),
+          phone: z.string().describe("Telephone Yoast publishes as the Organization's telephone, international format (+34 600 000 000); empty string clears."),
         }).partial().optional().describe("The Organization/Person entity Yoast publishes in its schema graph, which knowledge_graph_check looks for."),
         socialProfiles: z.object({
           facebook: z.string().describe("Full profile URL; empty string clears."),

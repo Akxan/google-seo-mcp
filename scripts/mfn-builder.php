@@ -143,6 +143,7 @@ switch ($action) {
     $edits = json_decode(stream_get_contents(STDIN), true);
     if (!is_array($edits) || !count($edits)) mfn_fail('STDIN must be a JSON array of {uid, field, value}');
     $applied = [];
+    $created = [];
     foreach ($edits as $e) {
       $item = &mfn_find($sections, $e['uid'] ?? '');
       if ($item === null) mfn_fail("item {$e['uid']} not found");
@@ -152,13 +153,25 @@ switch ($action) {
         $old = $item[$bag][$path[0]] ?? null;
         $item[$bag][$path[0]] = (string) $e['value'];
       } else {
-        // A nested path may only replace a string that already exists: a mistyped index such as
-        // tabs.9.content must fail, not append a half-formed entry to a live toggle or FAQ.
+        // A nested path replaces a string that already exists, with one exception: the index right
+        // after the last entry (tabs.2 when there are two) appends a new entry. Anything further out,
+        // such as a mistyped tabs.9, still fails instead of leaving a gap in a live toggle or FAQ.
         $last = array_pop($path);
         $ref = &$item[$bag];
+        $walked = [];
         foreach ($path as $seg) {
+          $n = is_array($ref) ? count($ref) : -1;
+          if ($n > 0 && !array_key_exists($seg, $ref) && ctype_digit((string) $seg) && (int) $seg === $n && array_keys($ref) === range(0, $n - 1)) {
+            // Copy the last entry's shape with its text emptied, so the new entry carries every key
+            // the theme reads (title, content, icon, image) and the edits below fill it in.
+            $shape = $ref[$n - 1];
+            if (!is_array($shape)) mfn_fail("cannot append to {$e['field']}: the existing entries are not objects");
+            $ref[] = array_map(fn($v) => is_string($v) ? '' : (is_array($v) ? [] : $v), $shape);
+            $created[] = implode('.', array_merge($walked, [$seg]));
+          }
           if (!is_array($ref) || !array_key_exists($seg, $ref)) mfn_fail("field {$e['field']} not found on item {$e['uid']}; list the item to see its fields");
           $ref = &$ref[$seg];
+          $walked[] = $seg;
         }
         if (!is_array($ref) || !array_key_exists($last, $ref) || !is_string($ref[$last])) mfn_fail("field {$e['field']} not found on item {$e['uid']}; list the item to see its fields");
         $old = $ref[$last];
@@ -170,7 +183,7 @@ switch ($action) {
     }
     $kept = mfn_backup($postId, count($applied) . ' field(s) edited');
     $seoLen = mfn_save($postId, $sections);
-    mfn_out(['post_id' => $postId, 'post_type' => get_post_type($postId), 'applied' => $applied, 'seo_copy_length' => $seoLen, 'post_modified' => get_post_field('post_modified', $postId), 'backups_kept' => $kept]);
+    mfn_out(['post_id' => $postId, 'post_type' => get_post_type($postId), 'applied' => $applied, 'created_entries' => $created, 'seo_copy_length' => $seoLen, 'post_modified' => get_post_field('post_modified', $postId), 'backups_kept' => $kept]);
   case 'backups':
     mfn_out(['post_id' => $postId, 'backups' => mfn_backup_list($postId), 'keeps' => MFN_BACKUP_KEEP]);
   case 'restore':

@@ -362,6 +362,7 @@ switch ($action) {
       'logoId' => ((int) h_yo('company_logo_id', 0)) ?: null, 'logo' => h_yo('company_logo'),
       'personUserId' => $personId ?: null, 'personName' => $personId ? get_the_author_meta('display_name', $personId) : null,
       'websiteName' => h_yo('website_name'), 'alternateWebsiteName' => h_yo('alternate_website_name'),
+      'email' => h_yo('org-email'), 'phone' => h_yo('org-phone'),
     ];
     $social = [
       'facebook' => h_yo('facebook_site'), 'twitter' => h_yo('twitter_site'), 'instagram' => h_yo('instagram_url'),
@@ -448,6 +449,13 @@ switch ($action) {
     }
     if (array_key_exists('websiteName', $org)) $set($titles, 'website_name', (string) $org['websiteName'], 'website name in schema');
     if (array_key_exists('alternateWebsiteName', $org)) $set($titles, 'alternate_website_name', (string) $org['alternateWebsiteName'], 'alternate website name in schema');
+    // Yoast 21+ publishes these as the Organization's email and telephone in its schema graph.
+    if (array_key_exists('email', $org)) {
+      $mail = trim((string) $org['email']);
+      if ($mail !== '' && !is_email($mail)) h_fail("email '{$mail}' is not a valid address");
+      $set($titles, 'org-email', $mail, 'organization email (schema)');
+    }
+    if (array_key_exists('phone', $org)) $set($titles, 'org-phone', trim((string) $org['phone']), 'organization telephone (schema)');
 
     $socMap = ['facebook' => 'facebook_site', 'twitter' => 'twitter_site', 'instagram' => 'instagram_url', 'linkedin' => 'linkedin_url', 'youtube' => 'youtube_url', 'pinterest' => 'pinterest_url', 'wikipedia' => 'wikipedia_url'];
     $prof = $in['socialProfiles'] ?? [];
