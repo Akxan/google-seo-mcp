@@ -64,6 +64,14 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 
 本项目公开在 GitHub `Akxan/google-seo-mcp`。
 
+- **绝不泄露任何个人与站点信息，一个字都不行。** 凡是经 git 或 GitHub 离开本机的东西都是永久公开的，而且删不干净：改写历史只能改自己的仓库，别人 fork 里的副本碰不到（2026-09-26 就因为站点名写进了 9 条提交说明、而仓库已有 3 个 fork，事后只能改写本仓库，fork 里的照旧留着）。
+  - **会公开的渠道**：文件内容（含代码注释、CHANGELOG、README、测试数据、工具描述）、**提交说明**、标签说明、分支名、GitHub 上的发行说明、合并请求与议题的标题和正文、评论。
+  - **不能出现的东西**：用户的站点域名或站点名、服务器 IP 与主机名、SSH 用户名、账号与资源 ID（GA4、GSC、GCP 项目、服务账号）、邮箱、任何密钥与令牌、带用户名的本机路径、站点上的真实页面地址与标题、客户或访客数据。
+  - **一律用占位写法**：`example.com`、`octocat/my-site`；提到用户的站就写「WordPress 站」「静态站」「生产站点」。记实测结果时写现象不写站名（「一个站被误报 328 张」而不是写出站名）。
+  - **防线**：pre-commit 扫暂存文件，commit-msg 扫提交说明，pre-push 再扫要推送的每个文件树和每条说明。规则里的站点专属标识放在 `.secret-patterns.local`（gitignored）；**出现新的站点、ID 或主机时，先把它加进这个文件再干活**，扫描器只认得它知道的东西。
+  - **钩子管不到 GitHub 网页上的文字**：`gh release create`、`gh pr create`、`gh issue create/comment` 之前，先把要发的正文写进临时文件，用 `scripts/check-secrets.sh --message <文件>` 扫一遍，通过了再发。
+  - 发现已经泄露：立刻停下告诉用户，说清楚泄露了什么、在哪、能不能收回；不要自己决定改写历史。
+
 - **每次改动完成后立即 `git commit` 并 `git push`**，不积攒。**提交信息一律用中文**，说明改了什么和为什么。
 - **推送到 main 即自动部署到线上**：`.github/workflows/deploy.yml` 通过仓库 secrets（`VPS_HOST`、`VPS_USER`、`VPS_SSH_KEY`、`VPS_KNOWN_HOSTS`）用受限的部署密钥触发服务器上的 `deploy/vps-self-update.sh`（拉取、重建容器、健康检查）。test 任务在所有推送和 PR 上跑；deploy 任务只在 main、且本次推送改动了非文档文件时执行（与推送前的提交对比，不只是最后一个提交），`workflow_dispatch` 可强制部署。推送后**按提交号**确认部署成功：`gh run list --commit $(git rev-parse HEAD)` 或 `gh run watch <那次的 run id>`。**别用 `gh run list --limit 1`**：刚推送的几秒里新任务还没登记，它返回的是上一次已经成功的部署，2026-09-26 就因此在新代码上线前调用了线上工具（写入被新旧代码不一致挡下，没造成损害）。要确认线上真跑着新代码，比对容器里的文件：`docker exec <容器> sha256sum /app/scripts/<脚本>`。失败时先看工作流日志，再看服务器容器日志。
 - **每次提交前后都要检查不含个人与敏感信息**：`scripts/check-secrets.sh` 作为 pre-commit、commit-msg 与 pre-push 钩子自动运行（`npm install` 时的 `prepare` 会设置 `core.hooksPath`）。**提交说明同样公开，而且事后改不掉**：要改只能改写历史，而别人 fork 里的副本根本碰不到（2026-09-26 发现站点名已写进 9 条说明，仓库那时已有 3 个 fork）。所以 commit-msg 钩子扫说明，pre-push 再把这次要推送的每条说明扫一遍；说明里提到站点一律写「WordPress 站」「静态站」。改动涉及文档或示例时再手动跑一次 `npm run check:secrets`。机器特有的标识（IP、用户名、域名、项目 ID）写在 `.secret-patterns.local`（gitignored）里供扫描器使用。工具描述、示例、测试里一律用 `example.com`、`octocat/my-site` 这类占位值。
@@ -82,7 +90,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 5. 如果新工具和已有工具功能相近，在描述首句写清「什么时候用我、什么时候用别的」（见 `gsc_opportunities` 与 `gsc_ctr_opportunities` 的互相点名）。手动更新两份 README 的工具表（新工具名和一句话说明）与配置表，必要时更新 `buildInstructions()`；在 `CHANGELOG.md` 的 Unreleased 下加一条。**照「对外形象的维护」的第二张表逐条核对**，尤其是工具总数变化时 GitHub 仓库描述要单独更新（`docs:sync` 会打印命令）。
 6. 中文提交信息，`git push`；推送会自动部署，用 `gh run watch` 看到成功后，用线上地址调一次新工具确认（`/healthz` 先通）。
 7. 涉及服务器 `.env` 的变更（新密钥、`WP_SITES`）要在服务器上同步并重启容器。
-8. 一批功能完成后发版：`npm pkg set version=x.y.z`（服务器上报的版本号从 `package.json` 读取），把 CHANGELOG 的 Unreleased 改成版本段落并更新底部链接，提交后 `git tag -a vx.y.z -m '...'`、`git push origin vx.y.z`、`gh release create vx.y.z --title ... --notes-file <(从 CHANGELOG 摘出该段)`。版本号规则：新增工具或集成升次版本号（0.x.0），只修 bug 升补丁号（0.x.y），纯文档不发版。**发版前对照下面「对外形象的维护」逐条核对**，2026-09-11 的 0.7.0 就漏了架构图、关键词和仓库描述，事后才补。
+8. 一批功能完成后发版：`npm pkg set version=x.y.z`（服务器上报的版本号从 `package.json` 读取），把 CHANGELOG 的 Unreleased 改成版本段落并更新底部链接，提交后 `git tag -a vx.y.z -m '...'`、`git push origin vx.y.z`、`gh release create vx.y.z --title ... --notes-file <文件>`（从 CHANGELOG 摘出该段写进文件，**先用 `scripts/check-secrets.sh --message <文件>` 扫过再发**）。版本号规则：新增工具或集成升次版本号（0.x.0），只修 bug 升补丁号（0.x.y），纯文档不发版。**发版前对照下面「对外形象的维护」逐条核对**，2026-09-11 的 0.7.0 就漏了架构图、关键词和仓库描述，事后才补。
 
 ## 对外形象的维护（README、徽章、仓库元数据）
 
