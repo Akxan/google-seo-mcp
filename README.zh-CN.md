@@ -27,7 +27,7 @@
 | `ga_run_realtime_report` | GA4 实时（最近 30 分钟）数据，可筛选、排序、按分钟区间切分 |
 | `ga_get_metadata` | 查询某媒体资源可用的维度和指标（含自定义维度），带指标类型（秒/货币/普通）与已废弃的旧名 |
 | `ga_compare_periods` | GA4 两个时间段对比，按维度拆分，含总量和百分比变化 |
-| `ga_landing_page_seo` | 自然搜索落地页：GA4 行为数据与 Search Console 点击数据合并成一张表 |
+| `ga_landing_page_seo` | 自然搜索落地页：GA4 行为数据与 Search Console 点击数据合并成一张表；GA4 记到的搜索访问远少于 Search Console 点击时发出提醒（多半是同意模式或统计代码缺失，不是流量真少） |
 | `ga_run_pivot_report` | 透视表：一个维度做行、一个做列，例如落地页 × 设备 |
 | `ga_batch_run_reports` | 一次调用跑最多 5 个报表 |
 | `ga_run_funnel_report` | 漏斗：按事件定义步骤，看每步人数与流失，可按维度拆分；可看流失后用户的下一步动作，也可做趋势漏斗 |

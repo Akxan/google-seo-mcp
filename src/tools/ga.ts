@@ -262,6 +262,22 @@ export function compactAudienceClauses(clauses: AudienceFilterClauseLike[] | nul
   );
 }
 
+
+/** Search Console counts every click from Google; GA4 only sees sessions whose tag fired and,
+    under consent mode, whose visitor granted analytics_storage (in the EEA/UK that is only those
+    who accept the cookie banner). The two never match exactly - ad blockers, bots and non-Google
+    engines move them by tens of percent - but GA4 recording under half of the clicks points at
+    tracking, not traffic. Below 20 clicks there is too little to judge. */
+export function trackingGap(gscClicks: number, gaOrganicSessions: number): { ratio: number | null; severity: "none" | "warning" | "severe"; note?: string } {
+  const ratio = gscClicks > 0 ? round(gaOrganicSessions / gscClicks, 2) : null;
+  if (gscClicks < 20 || ratio === null || ratio >= 0.5) return { ratio, severity: "none" };
+  return {
+    ratio,
+    severity: ratio < 0.2 ? "severe" : "warning",
+    note: `Search Console reports ${gscClicks} clicks from Google but GA4 recorded ${gaOrganicSessions} organic sessions (${Math.round(ratio * 100)}%). GA4 is under-recording search traffic, not losing it. Usual causes: consent mode leaving analytics_storage denied for visitors who never accept the cookie banner (EEA/UK by default), the tag missing from some templates, or the GA4 property not belonging to this site. Use Search Console for search volume until tracking is fixed; the GA4 engagement and key-event figures here describe only the visitors GA4 could see.`,
+  };
+}
+
 export function registerAnalyticsTools(server: McpServer) {
   server.registerTool(
     "ga_list_properties",
@@ -520,7 +536,7 @@ export function registerAnalyticsTools(server: McpServer) {
     {
       title: "Organic landing pages: GA4 + Search Console merged",
       description:
-        "One table per landing page combining GA4 organic-search behaviour (sessions, engagement rate, bounce rate, avg. session duration, key events) with Search Console performance (clicks, impressions, CTR, position) for the same period. Requires both the GA4 property and the Search Console property of the same site.",
+        "One table per landing page combining GA4 organic-search behaviour (sessions, engagement rate, bounce rate, avg. session duration, key events) with Search Console performance (clicks, impressions, CTR, position) for the same period. Requires both the GA4 property and the Search Console property of the same site. Also flags a tracking gap when GA4 records far fewer organic sessions than Search Console clicks (consent mode, a missing tag), so use it to check GA4 figures before trusting them.",
       inputSchema: {
         propertyId,
         siteUrl: z.string().describe("Search Console property for the same site, e.g. 'sc-domain:example.com'."),
@@ -574,6 +590,8 @@ export function registerAnalyticsTools(server: McpServer) {
         merged.set(path, e);
       }
       const rows = [...merged.values()];
+      const totals = { sessions: rows.reduce((a, r) => a + r.sessions, 0), clicks: rows.reduce((a, r) => a + r.clicks, 0), impressions: rows.reduce((a, r) => a + r.impressions, 0) };
+      const gap = trackingGap(totals.clicks, totals.sessions);
       const key = args.sortBy as keyof Merged;
       rows.sort((a, b) => ((b[key] as number) ?? 0) - ((a[key] as number) ?? 0));
       return {
@@ -582,7 +600,8 @@ export function registerAnalyticsTools(server: McpServer) {
         period: { start, end },
         pages: rows.length,
         dataQuality: dataQuality(gaRes.data.metadata),
-        totals: { sessions: rows.reduce((a, r) => a + r.sessions, 0), clicks: rows.reduce((a, r) => a + r.clicks, 0), impressions: rows.reduce((a, r) => a + r.impressions, 0) },
+        totals,
+        trackingGap: gap.severity === "none" ? undefined : gap,
         rows: rows.slice(0, args.limit),
       };
     }),
