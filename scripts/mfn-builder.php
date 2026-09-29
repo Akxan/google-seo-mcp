@@ -113,6 +113,42 @@ function mfn_summarize($sections) {
   return $items;
 }
 
+/** Set one field on a builder item and return its previous value. $field is a plain key or a
+    nested path such as tabs.2.content. A nested path replaces a string that already exists, with
+    one exception: the index right after the last entry (tabs.2 when there are two) appends a new
+    entry. Anything further out, such as a mistyped tabs.9, throws instead of leaving a gap in a
+    live toggle or FAQ. Appended paths are added to $created. Pure: covered by test/php. */
+function mfn_set_field(array &$item, string $field, string $value, array &$created) {
+  $bag = isset($item['attr']) ? 'attr' : 'fields';
+  $path = explode('.', $field);
+  if (count($path) === 1) {
+    $old = $item[$bag][$path[0]] ?? null;
+    $item[$bag][$path[0]] = $value;
+    return $old;
+  }
+  $last = array_pop($path);
+  $ref = &$item[$bag];
+  $walked = [];
+  foreach ($path as $seg) {
+    $n = is_array($ref) ? count($ref) : -1;
+    if ($n > 0 && !array_key_exists($seg, $ref) && ctype_digit((string) $seg) && (int) $seg === $n && array_keys($ref) === range(0, $n - 1)) {
+      // Copy the last entry's shape with its text emptied, so the new entry carries every key
+      // the theme reads (title, content, icon, image) and the edits that follow fill it in.
+      $shape = $ref[$n - 1];
+      if (!is_array($shape)) throw new RuntimeException("cannot append to {$field}: the existing entries are not objects");
+      $ref[] = array_map(fn($v) => is_string($v) ? '' : (is_array($v) ? [] : $v), $shape);
+      $created[] = implode('.', array_merge($walked, [$seg]));
+    }
+    if (!is_array($ref) || !array_key_exists($seg, $ref)) throw new RuntimeException("field {$field} not found");
+    $ref = &$ref[$seg];
+    $walked[] = $seg;
+  }
+  if (!is_array($ref) || !array_key_exists($last, $ref) || !is_string($ref[$last])) throw new RuntimeException("field {$field} not found");
+  $old = $ref[$last];
+  $ref[$last] = $value;
+  return $old;
+}
+
 function &mfn_find(&$sections, $uid) {
   foreach ($sections as &$section) {
     if (!empty($section['wraps'])) foreach ($section['wraps'] as &$wrap) {
@@ -123,6 +159,9 @@ function &mfn_find(&$sections, $uid) {
   }
   $null = null; return $null;
 }
+
+// test/php loads this file for its functions only; stop before touching WordPress.
+if (defined('SEO_MCP_TEST')) return;
 
 if (!$postId) mfn_fail('post_id required');
 $sections = mfn_load($postId);
@@ -147,37 +186,8 @@ switch ($action) {
     foreach ($edits as $e) {
       $item = &mfn_find($sections, $e['uid'] ?? '');
       if ($item === null) mfn_fail("item {$e['uid']} not found");
-      $bag = isset($item['attr']) ? 'attr' : 'fields';
-      $path = explode('.', (string) ($e['field'] ?? ''));
-      if (count($path) === 1) {
-        $old = $item[$bag][$path[0]] ?? null;
-        $item[$bag][$path[0]] = (string) $e['value'];
-      } else {
-        // A nested path replaces a string that already exists, with one exception: the index right
-        // after the last entry (tabs.2 when there are two) appends a new entry. Anything further out,
-        // such as a mistyped tabs.9, still fails instead of leaving a gap in a live toggle or FAQ.
-        $last = array_pop($path);
-        $ref = &$item[$bag];
-        $walked = [];
-        foreach ($path as $seg) {
-          $n = is_array($ref) ? count($ref) : -1;
-          if ($n > 0 && !array_key_exists($seg, $ref) && ctype_digit((string) $seg) && (int) $seg === $n && array_keys($ref) === range(0, $n - 1)) {
-            // Copy the last entry's shape with its text emptied, so the new entry carries every key
-            // the theme reads (title, content, icon, image) and the edits below fill it in.
-            $shape = $ref[$n - 1];
-            if (!is_array($shape)) mfn_fail("cannot append to {$e['field']}: the existing entries are not objects");
-            $ref[] = array_map(fn($v) => is_string($v) ? '' : (is_array($v) ? [] : $v), $shape);
-            $created[] = implode('.', array_merge($walked, [$seg]));
-          }
-          if (!is_array($ref) || !array_key_exists($seg, $ref)) mfn_fail("field {$e['field']} not found on item {$e['uid']}; list the item to see its fields");
-          $ref = &$ref[$seg];
-          $walked[] = $seg;
-        }
-        if (!is_array($ref) || !array_key_exists($last, $ref) || !is_string($ref[$last])) mfn_fail("field {$e['field']} not found on item {$e['uid']}; list the item to see its fields");
-        $old = $ref[$last];
-        $ref[$last] = (string) $e['value'];
-        unset($ref);
-      }
+      try { $old = mfn_set_field($item, (string) ($e['field'] ?? ''), (string) $e['value'], $created); }
+      catch (RuntimeException $x) { mfn_fail($x->getMessage() . " on item {$e['uid']}; list the item to see its fields"); }
       $applied[] = ['uid' => $e['uid'], 'field' => $e['field'], 'old_length' => is_string($old) ? strlen($old) : null, 'new_length' => strlen($e['value'])];
       unset($item);
     }

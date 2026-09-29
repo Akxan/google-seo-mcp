@@ -4,6 +4,9 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Tests
+- **The PHP helpers that run on WordPress sites now have tests.** Both helpers execute on the site through WP-CLI, so a bug in them shipped straight to production; the two found this month (social profiles written to options Yoast never publishes, nested builder edits) were caught only by hand. `npm test` now runs `php -l` on both and `test/php/helpers.test.php` against their pure logic: which URLs belong to a named social platform, and builder path edits (replace, append at the next index, refuse a skipped index or an unknown key, leave the list untouched when refused). The path logic moved into `mfn_set_field()` to be testable, unchanged in behaviour and re-verified on a temporary draft. Skipped locally without PHP; required in CI.
+
 ### Security
 - **The secret scanner now checks commit messages, not only files.** A `commit-msg` hook refuses a message that matches the same patterns (keys, `host:port`, and the machine-specific identifiers in `.secret-patterns.local`), and `pre-push` scans the message of every commit the remote does not have yet, so a commit made with `--no-verify` is still caught. Commit messages are published with the commit and cannot be corrected without rewriting history, which forks keep regardless; nine had gone out containing site names before this.
 

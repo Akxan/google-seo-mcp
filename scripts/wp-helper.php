@@ -7,7 +7,7 @@
  *          seo_settings_get, seo_settings_set, revisions_list, revision_restore, purge_site
  */
 $action = $args[0] ?? '';
-$in = json_decode(stream_get_contents(STDIN) ?: '{}', true) ?: [];
+$in = defined('SEO_MCP_TEST') ? [] : (json_decode(stream_get_contents(STDIN) ?: '{}', true) ?: []);
 
 function h_out($d) { echo json_encode($d, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); exit(0); }
 function h_fail($m) { echo json_encode(['error' => $m]); exit(1); }
@@ -132,6 +132,9 @@ function h_post_text($id) {
   if ($seo) $t .= "\n" . $seo;
   return $t;
 }
+
+// test/php loads this file for its functions only; stop before touching WordPress.
+if (defined('SEO_MCP_TEST')) return;
 
 switch ($action) {
 
