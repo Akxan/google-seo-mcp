@@ -52,7 +52,10 @@ interface ExecResult {
 }
 
 function ssh(site: WpSite, remoteCommand: string, stdin?: string, timeoutMs = 120_000): Promise<ExecResult> {
-  const args = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15"];
+  // UpdateHostKeys=no: the container mounts ~/.ssh read-only, so OpenSSH's attempt to record extra
+  // host keys fails and prints two "Read-only file system" lines into every result. Host keys are
+  // still verified against known_hosts; only the rewrite of that file is skipped.
+  const args = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "UpdateHostKeys=no"];
   if (site.port) args.push("-p", String(site.port));
   if (site.identityFile) args.push("-i", site.identityFile);
   args.push(`${site.user}@${site.host}`, remoteCommand);
