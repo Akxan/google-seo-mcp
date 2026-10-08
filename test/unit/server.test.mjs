@@ -24,6 +24,8 @@ test("write and destructive classification", () => {
   assert.equal(isWriteTool("ga_create_custom_dimension"), true);
   assert.equal(inferAnnotations("ga_create_custom_dimension").destructiveHint, false);
   assert.equal(inferAnnotations("ga_create_custom_dimension").idempotentHint, true);
+  assert.equal(isWriteTool("ga_create_key_event"), true);
+  assert.equal(inferAnnotations("ga_create_key_event").idempotentHint, true);
   assert.equal(inferAnnotations("github_commit_files").destructiveHint, true);
   assert.equal(isWriteTool("github_get_file"), false);
   assert.equal(inferAnnotations("wp_delete_redirect").destructiveHint, true);

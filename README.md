@@ -2,7 +2,7 @@
 
 # google-seo-mcp
 
-**SEO & GEO MCP server for Claude, Codex, Cursor and any MCP client — Google Search Console, Google Analytics 4, PageSpeed Insights, structured data, llms.txt, WordPress and GitHub as 101 tools, so an assistant can diagnose and fix technical SEO, content and generative-engine-optimization issues in one conversation.**
+**SEO & GEO MCP server for Claude, Codex, Cursor and any MCP client — Google Search Console, Google Analytics 4, PageSpeed Insights, structured data, llms.txt, WordPress and GitHub as 102 tools, so an assistant can diagnose and fix technical SEO, content and generative-engine-optimization issues in one conversation.**
 
 [![GitHub stars](https://img.shields.io/github/stars/Akxan/google-seo-mcp?style=flat&logo=github)](https://github.com/Akxan/google-seo-mcp/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -33,7 +33,7 @@ Most SEO MCP servers wrap one API. Real SEO work crosses several: you find a str
 | Area | Tools |
 |---|---|
 | **Search Console** (16) | `gsc_list_sites`, `gsc_search_analytics`, `gsc_site_snapshot`, `gsc_compare_periods`, `gsc_opportunities` (position 8–20 quick wins), `gsc_ctr_opportunities`, `gsc_cannibalization`, `gsc_question_queries`, `gsc_rich_results_report`, `gsc_inspect_url`, `gsc_index_coverage` (batch URL inspection with sitemap membership, referring URLs, rich-result issue severities and orphan detection), `gsc_list_sitemaps` (including the child sitemaps of an index) / `gsc_submit_sitemap` / `gsc_delete_sitemap`, `gsc_add_site` / `gsc_delete_site` |
-| **Google Analytics 4** (12) | `ga_list_properties`, `ga_property_config` (streams, custom dimensions/metrics, key events, audiences with their defining clauses, Ads links, retention, attribution model and lookback windows, Google Signals state — read-only), `ga_create_custom_dimension` (registers event parameters as custom dimensions so GA4 keeps their values; the one GA4 write, skipped in read-only mode), `ga_run_report` (up to 4 date ranges, in-list and OR filters, and a `dataQuality` note whenever rows were sampled or withheld by privacy thresholding), `ga_batch_run_reports`, `ga_run_pivot_report`, `ga_run_funnel_report`, `ga_run_realtime_report`, `ga_get_metadata`, `ga_check_compatibility`, `ga_compare_periods`, `ga_landing_page_seo` (organic landing pages merged with Search Console, and a warning when GA4 records far fewer organic sessions than Search Console clicks, the signature of consent mode or a missing tag) |
+| **Google Analytics 4** (13) | `ga_list_properties`, `ga_property_config` (streams, custom dimensions/metrics, key events, audiences with their defining clauses, Ads links, retention, attribution model and lookback windows, Google Signals state — read-only), `ga_create_custom_dimension` (registers event parameters as custom dimensions so GA4 keeps their values), `ga_create_key_event` (marks events as key events without waiting for them to show up in the UI; both GA4 writes are skipped in read-only mode), `ga_run_report` (up to 4 date ranges, in-list and OR filters, and a `dataQuality` note whenever rows were sampled or withheld by privacy thresholding), `ga_batch_run_reports`, `ga_run_pivot_report`, `ga_run_funnel_report`, `ga_run_realtime_report`, `ga_get_metadata`, `ga_check_compatibility`, `ga_compare_periods`, `ga_landing_page_seo` (organic landing pages merged with Search Console, and a warning when GA4 records far fewer organic sessions than Search Console clicks, the signature of consent mode or a missing tag) |
 | **Page & site audits** (10) | `page_audit`, `site_crawl`, `pagespeed`, `sitemap_check`, `robots_check`, `canonical_host_check` (www/https/trailing-slash variants must all land on one address), `hreflang_check`, `social_preview_check`, `compare_pages`, `keyword_suggest` |
 | **GEO** (14) | `ai_crawler_access`, `llms_txt_check`, `llms_txt_generate`, `structured_data_audit` (per-type validation, cross-page entity consistency, and what makes the entity resolvable: live sameAs profiles, schema phone against visible text, one @id for publisher/author to reference), `schema_generate`, `schema_validate`, `geo_page_score`, `geo_answer_coverage` (per question people actually search, does a passage on the page answer it in its opening sentences, or is the answer missing, unheaded or buried), `eeat_audit`, `knowledge_graph_check`, `indexnow_submit`, `ai_citation_check`, `ai_search_sources` (batch up to 10 questions against Perplexity's search endpoint and rank who gets cited), `brand_mentions` |
 | **Analysis** (8) | `seo_digest` (what changed since the previous period: totals, the pages and queries that moved, what stopped bringing clicks - the weekly check the server can also send by itself), `migration_check` (pre-migration URL safety net), `cross_site_links`, `content_refresh_candidates`, `crux_history`, `crux_snapshot` (latest real-user record with the LCP sub-part breakdown, so you can see whether LCP is slow because of the server, resource discovery, transfer or render-blocking), `wikipedia_pageviews` (monthly views per language for an entity, with seasonality and year-on-year change), `reviews_snapshot` |
@@ -135,7 +135,7 @@ flowchart LR
 
 **Hosted mode.** With the `SEO_MCP_HOSTED_*` variables set, `src/hosted/` adds a landing page, Google OAuth sign-in and a token dashboard. A `seo_…` bearer token on `/mcp` resolves to that user's encrypted refresh token, and the request runs inside an `AsyncLocalStorage` scope so every Google client created by the tools uses that grant instead of the operator's credentials; the server instance for such requests is read-only and limited to own-data toolsets.
 
-**Safety.** Write tools are recognised by name and receive `readOnlyHint:false` (`destructiveHint:true` for deletes, raw WP-CLI and commits). `--read-only` drops them at registration; `--toolsets=gsc,web` trims the tool list (101 definitions ≈ 37k tokens). Server instructions tell the model that fetched page text and CMS content are untrusted data.
+**Safety.** Write tools are recognised by name and receive `readOnlyHint:false` (`destructiveHint:true` for deletes, raw WP-CLI and commits). `--read-only` drops them at registration; `--toolsets=gsc,web` trims the tool list (102 definitions ≈ 37k tokens). Server instructions tell the model that fetched page text and CMS content are untrusted data.
 
 ## Quick start
 
@@ -151,7 +151,7 @@ cp .env.example .env      # fill in credentials (see below)
 
 ### Google credentials
 
-**Service account (recommended, works unattended):** create a service account in the Cloud project, download its JSON key, set `GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json` in `.env`, then add the service-account email as a user on each Search Console property (permission *Full*) and each GA4 property (role *Viewer*, or *Editor* if it should register custom dimensions with `ga_create_custom_dimension`).
+**Service account (recommended, works unattended):** create a service account in the Cloud project, download its JSON key, set `GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json` in `.env`, then add the service-account email as a user on each Search Console property (permission *Full*) and each GA4 property (role *Viewer*, or *Editor* if it should write with `ga_create_custom_dimension` / `ga_create_key_event`).
 
 **Your own Google account (OAuth):** create an OAuth client ID of type *Desktop app*, download `client_secret.json`, run
 
@@ -323,7 +323,7 @@ LangChain (`langchain-mcp-adapters`), Google ADK (`MCPToolset`) and the Vercel A
 ### Third-party and local models
 
 - Desktop: Cherry Studio and Cline let you pick DeepSeek, Qwen, GLM, Kimi or a local Ollama model and add this server as a Streamable HTTP MCP server with the Authorization header.
-- The tool catalogue is about 37k tokens and travels with every turn, and 101 tools are a lot for smaller models. Point them at a second, read-only instance with a trimmed toolset and its own token, so a confused model can neither write nor see what it does not need:
+- The tool catalogue is about 37k tokens and travels with every turn, and 102 tools are a lot for smaller models. Point them at a second, read-only instance with a trimmed toolset and its own token, so a confused model can neither write nor see what it does not need:
 
 ```yaml
 # docker-compose.yml: a second service next to the main one

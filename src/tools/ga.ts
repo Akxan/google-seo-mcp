@@ -902,4 +902,55 @@ export function registerAnalyticsTools(server: McpServer) {
       };
     }),
   );
+  server.registerTool(
+    "ga_create_key_event",
+    {
+      title: "Mark GA4 events as key events",
+      description:
+        "Mark events as key events (conversions) in a GA4 property, so they count in keyEvents metrics, conversion reports and Google Ads imports. The GA4 UI only offers a star next to events that have already appeared in the last days, so a freshly instrumented event has to wait for traffic; the API registers it at once, with the counting method chosen here. Events already marked are skipped. A standard property allows 30 key events; check ga_property_config keyEvents first. dryRun shows what exists and what would be created.",
+      inputSchema: {
+        propertyId,
+        events: z
+          .array(
+            z.object({
+              eventName: z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/).max(40).describe("Event name exactly as sent to gtag, e.g. 'whatsapp_click'."),
+              countingMethod: z.enum(["ONCE_PER_EVENT", "ONCE_PER_SESSION"]).default("ONCE_PER_EVENT").describe("ONCE_PER_EVENT counts every occurrence (purchases, leads); ONCE_PER_SESSION counts at most one per session (sign-ups, contact clicks)."),
+            }),
+          )
+          .min(1)
+          .max(20)
+          .describe("Events to mark as key events in this property."),
+        dryRun: z.boolean().default(false).describe("List existing key events and the ones that would be created, without creating anything."),
+      },
+    },
+    tool(async (args) => {
+      const parent = propertyName(args.propertyId);
+      const admin = analyticsAdmin();
+      const existing = (await admin.properties.keyEvents.list({ parent, pageSize: 200 })).data.keyEvents ?? [];
+      const have = new Map(existing.map((k) => [k.eventName ?? "", k]));
+      const results: Record<string, unknown>[] = [];
+      for (const e of args.events) {
+        const dup = have.get(e.eventName);
+        if (dup) {
+          results.push({ eventName: e.eventName, status: "exists", countingMethod: dup.countingMethod, name: dup.name });
+          continue;
+        }
+        if (args.dryRun) {
+          results.push({ eventName: e.eventName, countingMethod: e.countingMethod, status: "would create" });
+          continue;
+        }
+        const r = await admin.properties.keyEvents.create({ parent, requestBody: { eventName: e.eventName, countingMethod: e.countingMethod } });
+        have.set(e.eventName, r.data);
+        results.push({ eventName: e.eventName, countingMethod: e.countingMethod, status: "created", name: r.data.name });
+      }
+      return {
+        property: parent,
+        dryRun: args.dryRun || undefined,
+        results,
+        keyEvents: have.size,
+        limit: 30,
+        note: args.dryRun ? undefined : "Counts from now on; past occurrences are not re-counted. Google Ads conversions import separately.",
+      };
+    }),
+  );
 }

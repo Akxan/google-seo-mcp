@@ -33,7 +33,8 @@
 | `ga_run_funnel_report` | 漏斗：按事件定义步骤，看每步人数与流失，可按维度拆分；可看流失后用户的下一步动作，也可做趋势漏斗 |
 | `ga_check_compatibility` | 检查维度指标组合能否一起查询 |
 | `ga_property_config` | 只读配置：时区货币、数据保留、数据流与增强型衡量、自定义维度指标、关键事件、Google Ads 关联、受众（含定义条件）、归因模型与回溯窗口、Google Signals 状态 |
-| `ga_create_custom_dimension` | 把事件参数（或用户属性）注册成自定义维度：GA4 只保留已注册参数的值，且不补历史；一次可注册多个，已有的跳过；维度不能删只能归档，所以先看 `ga_property_config`；支持 dryRun。唯一的 GA4 写入工具，只读模式下不注册 |
+| `ga_create_custom_dimension` | 把事件参数（或用户属性）注册成自定义维度：GA4 只保留已注册参数的值，且不补历史；一次可注册多个，已有的跳过；维度不能删只能归档，所以先看 `ga_property_config`；支持 dryRun。只读模式下不注册 |
+| `ga_create_key_event` | 把事件标成关键事件（转化）：GA4 后台只能给「近期事件」里出现过的事件点星，新埋的点要等流量，API 立刻就能标；可选每次事件或每会话计数一次，已标的跳过，上限 30 个；支持 dryRun。只读模式下不注册 |
 | `gsc_delete_sitemap` / `gsc_add_site` / `gsc_delete_site` | 站点地图删除、资源添加与移除 |
 | `gsc_opportunities` | 展示高但排名在 8 到 20 位的关键词与页面，自动映射到 WordPress 文章 ID |
 | `gsc_cannibalization` | 同一关键词被多个页面分摊的情况 |
@@ -95,7 +96,7 @@
 1. 「IAM 和管理 → 服务账号」创建一个服务账号，下载 JSON 密钥。
 2. 把服务账号的邮箱（`xxx@yyy.iam.gserviceaccount.com`）添加为：
    - Search Console 资源的用户（设置 → 用户和权限，「完整」权限才能提交站点地图）；
-   - GA4 媒体资源的用户（管理 → 媒体资源访问权限管理，「查看者」即可；要用 `ga_create_custom_dimension` 注册自定义维度则需要「编辑者」）。
+   - GA4 媒体资源的用户（管理 → 媒体资源访问权限管理，「查看者」即可；要用 `ga_create_custom_dimension` / `ga_create_key_event` 写入则需要「编辑者」）。
 3. 设置环境变量 `GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json`。
 
 ### 方式 B：用自己的 Google 账号 OAuth 授权（本机方便）
@@ -336,7 +337,7 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 ### 第三方模型和本地模型
 
 - 桌面端：Cherry Studio、Cline 可以选 DeepSeek、Qwen、GLM、Kimi 或本地 Ollama 模型，把本服务作为 Streamable HTTP 类型的 MCP 服务器加进去，请求头填 Authorization 即可。
-- 工具定义约 3.7 万 token，每一轮对话都要发；101 个工具对小模型来说太多了。给它们单独开一个只读、精简工具集、单独令牌的实例，模型再糊涂也写不了东西，也看不到用不着的工具：
+- 工具定义约 3.7 万 token，每一轮对话都要发；102 个工具对小模型来说太多了。给它们单独开一个只读、精简工具集、单独令牌的实例，模型再糊涂也写不了东西，也看不到用不着的工具：
 
 ```yaml
 # docker-compose.yml：在主服务旁边再加一个
@@ -425,7 +426,7 @@ LangChain（`langchain-mcp-adapters`）、Google ADK（`MCPToolset`）、Vercel 
 
 客户端支持情况（2026-09-17 实测）：**Claude Code 终端版可用**，命令形如 `/google-seo:monthly_report`，输入片段即可筛选；**Claude Code 的 VS Code 扩展不支持**把 MCP 提示词做成斜杠命令（官方 issue 已标记为不计划支持）；桌面 App 是否支持没有官方文档。所有参数都设成可选，因为部分客户端会列出提示词却从不向用户索要参数，缺参数时正文会让模型自己查或问你，而不是直接报错。
 
-- **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`、`gmail`。101 个工具的定义约 3.7 万 token，每次对话都会完整加载，只用部分功能时应当裁剪。
+- **工具集筛选**：`--toolsets=gsc,ga4,web` 或 `SEO_MCP_TOOLSETS`，可选 `gsc`、`ga4`、`web`、`geo`、`analysis`、`wordpress`、`github`、`gmail`。102 个工具的定义约 3.7 万 token，每次对话都会完整加载，只用部分功能时应当裁剪。
 - **按连接裁剪（HTTP 模式）**：在 URL 后面加 `?toolsets=...` 就能让某一个客户端只加载它需要的工具，服务端不用改配置，也不影响其他客户端。加 `?readOnly=1` 可以让这个入口完全不能写。两个参数**只能收窄权限**：请求不到实例本身没开的工具集，也无法把只读实例变成可写。工具集名字拼错会直接返回 400，而不是静默给你一个空服务器。
 
   | 连接 URL | 工具数 | 约耗 token |
