@@ -9,6 +9,7 @@ import { google } from "googleapis";
 export const SCOPES = [
   "https://www.googleapis.com/auth/webmasters",
   "https://www.googleapis.com/auth/analytics.readonly",
+  "https://www.googleapis.com/auth/analytics.edit",
 ];
 
 export const DEFAULT_CREDENTIALS_PATH = path.join(

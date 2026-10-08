@@ -841,5 +841,65 @@ export function registerAnalyticsTools(server: McpServer) {
       return out;
     }),
   );
-
+  server.registerTool(
+    "ga_create_custom_dimension",
+    {
+      title: "Register GA4 custom dimensions",
+      description:
+        "Register event parameters (or user properties) as custom dimensions so GA4 keeps their values and reports can use them (customEvent:<parameter>, customUser:<property>). GA4 discards the values of unregistered parameters and never backfills, so register them as soon as the site starts sending them. Check ga_property_config customDimensions first: a dimension cannot be deleted through the API, only archived in the GA4 UI, and a standard property allows 50 event-scoped and 25 user-scoped. Parameters already registered with the same scope are skipped, not duplicated. dryRun shows what exists and what would be created.",
+      inputSchema: {
+        propertyId,
+        dimensions: z
+          .array(
+            z.object({
+              parameterName: z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/).max(40).describe("Parameter name exactly as sent to gtag, e.g. 'link_location' (letters, digits, underscores; starts with a letter; at most 40 characters, 24 for USER scope)."),
+              displayName: z.string().min(1).max(82).optional().describe("Name shown in reports; defaults to the parameter name."),
+              scope: z.enum(["EVENT", "USER", "ITEM"]).default("EVENT").describe("EVENT for event parameters, USER for user properties, ITEM for e-commerce item parameters."),
+              description: z.string().max(150).optional().describe("Shown in the GA4 admin list; say which site code sends the parameter."),
+            }),
+          )
+          .min(1)
+          .max(20)
+          .describe("Dimensions to register in this property."),
+        dryRun: z.boolean().default(false).describe("List existing dimensions and the ones that would be created, without creating anything."),
+      },
+    },
+    tool(async (args) => {
+      const parent = propertyName(args.propertyId);
+      const admin = analyticsAdmin();
+      const existing = (await admin.properties.customDimensions.list({ parent, pageSize: 200 })).data.customDimensions ?? [];
+      const key = (p: string | null | undefined, s: string | null | undefined) => `${s ?? "EVENT"}:${p}`;
+      const have = new Map(existing.map((d) => [key(d.parameterName, d.scope), d]));
+      const results: Record<string, unknown>[] = [];
+      for (const d of args.dimensions) {
+        if (d.scope === "USER" && d.parameterName.length > 24) {
+          results.push({ parameterName: d.parameterName, scope: d.scope, status: "rejected", reason: "user-scoped parameter names are limited to 24 characters" });
+          continue;
+        }
+        const dup = have.get(key(d.parameterName, d.scope));
+        if (dup) {
+          results.push({ parameterName: d.parameterName, scope: d.scope, status: "exists", displayName: dup.displayName, name: dup.name });
+          continue;
+        }
+        const body = { parameterName: d.parameterName, displayName: d.displayName ?? d.parameterName, scope: d.scope, description: d.description };
+        if (args.dryRun) {
+          results.push({ ...body, status: "would create" });
+          continue;
+        }
+        const r = await admin.properties.customDimensions.create({ parent, requestBody: body });
+        have.set(key(d.parameterName, d.scope), r.data);
+        results.push({ ...body, status: "created", name: r.data.name });
+      }
+      const registered: Record<string, number> = { EVENT: 0, USER: 0, ITEM: 0 };
+      for (const d of have.values()) registered[d.scope ?? "EVENT"] = (registered[d.scope ?? "EVENT"] ?? 0) + 1;
+      return {
+        property: parent,
+        dryRun: args.dryRun || undefined,
+        results,
+        registered,
+        limits: { EVENT: 50, USER: 25, ITEM: 10 },
+        note: args.dryRun ? undefined : "Values are kept from now on; a new dimension can take up to 48 hours to show in reports, and ga_get_metadata lists it sooner.",
+      };
+    }),
+  );
 }

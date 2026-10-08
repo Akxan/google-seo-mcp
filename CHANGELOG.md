@@ -4,6 +4,9 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+- **`ga_create_custom_dimension` registers event parameters as GA4 custom dimensions.** GA4 drops the value of every event parameter that is not registered as a custom dimension and never backfills, so a site that sends `link_location` with its contact-click events has nothing to report on until someone opens the admin UI; three production properties had been sending such parameters for weeks with none registered. The tool registers several at once, skips the ones already there, enforces the 24-character limit of user-scoped names and reports the count against the property's quota; `dryRun` previews. It is the first GA4 write tool, so the operator credentials now request the `analytics.edit` scope as well: a service account needs the *Editor* role on the property, and an OAuth credential made with `npm run auth` before this version keeps working for reading and needs re-authorizing before it can register anything.
+
 ## [0.12.0] - 2026-09-30
 
 ### Added

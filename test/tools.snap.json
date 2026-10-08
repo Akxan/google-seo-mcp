@@ -13,6 +13,7 @@
   "ga_batch_run_reports",
   "ga_check_compatibility",
   "ga_compare_periods",
+  "ga_create_custom_dimension",
   "ga_get_metadata",
   "ga_landing_page_seo",
   "ga_list_properties",
