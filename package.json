@@ -49,9 +49,9 @@
     "google-seo-mcp": "dist/index.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.31.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "cheerio": "^1.2.0",
-    "google-auth-library": "^11.1.0",
+    "google-auth-library": "^11.2.0",
     "googleapis": "^182.0.0",
     "image-size": "^2.0.4",
     "sharp": "^0.35.5",
