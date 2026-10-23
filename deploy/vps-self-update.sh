@@ -13,7 +13,7 @@ for i in $(seq 1 20); do
     echo "== healthy after ${i}x2s"; docker compose ps --format 'table {{.Name}}\t{{.Status}}'
     # Reclaim what rebuilds leave behind: dangling images older than a day and build cache beyond 4 GB (recent cache of other projects on the host stays).
     docker image prune -f --filter "until=24h" >/dev/null 2>&1 || true
-    docker builder prune -f --reserved-space 4GB >/dev/null 2>&1 || true
+    docker builder prune -f --max-used-space 4GB >/dev/null 2>&1 || true
     exit 0
   fi
   sleep 2

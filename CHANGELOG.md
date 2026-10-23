@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+- **The deploy script never capped Docker build cache at 4 GB as its comment promised.** It passed `--reserved-space 4GB`, which is a floor (cache always allowed to keep), not a ceiling, so on a host shared with other projects the build cache had grown to 45 GB, 24 GB of it reclaimable. It now passes `--max-used-space 4GB`.
+
+### Security
+- **The Dockerfile pins the Node base image by digest** (`node:26.12.1-alpine@sha256:…`), matching what production has run since a host-wide image remediation, so a rebuild cannot silently pick up a different base and Dependabot proposes base-image updates as reviewable PRs. Host-specific compose settings (such as a locally tagged image name) now belong in an untracked `docker-compose.override.yml`, which is gitignored: the deploy script runs `git reset --hard`, so edits made to tracked files on the server are discarded by the next deploy, and the remediation's compose edit would have been lost that way.
+
 ### Added
 - **`ga_create_key_event` marks events as GA4 key events.** The GA4 admin UI only offers the star next to events that have already appeared in the recent-events list, so a freshly instrumented contact event has to wait a day for traffic before anyone can mark it, and a session that instruments the event cannot finish the job. The Admin API registers it at once; the tool takes several events with their counting method, skips the ones already marked and reports the count against the 30-event limit, with `dryRun`.
 - **`ga_create_custom_dimension` registers event parameters as GA4 custom dimensions.** GA4 drops the value of every event parameter that is not registered as a custom dimension and never backfills, so a site that sends `link_location` with its contact-click events has nothing to report on until someone opens the admin UI; three production properties had been sending such parameters for weeks with none registered. The tool registers several at once, skips the ones already there, enforces the 24-character limit of user-scoped names and reports the count against the property's quota; `dryRun` previews. It is the first GA4 write tool, so the operator credentials now request the `analytics.edit` scope as well: a service account needs the *Editor* role on the property, and an OAuth credential made with `npm run auth` before this version keeps working for reading and needs re-authorizing before it can register anything.

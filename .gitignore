@@ -24,3 +24,6 @@ data/
 # Subagent git worktrees (never committed)
 .claude/worktrees/
 test/tools.size.json
+
+# Host-specific compose settings (image tags, pull policy) live only on the server: deploy runs git reset --hard
+docker-compose.override.yml

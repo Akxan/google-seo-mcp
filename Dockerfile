@@ -1,10 +1,10 @@
-FROM node:26-alpine AS build
+FROM node:26.12.1-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS build
 WORKDIR /app
 COPY package*.json tsconfig.json ./
 COPY src ./src
 RUN npm ci --ignore-scripts && npm run build && npm prune --omit=dev
 
-FROM node:26-alpine
+FROM node:26.12.1-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797
 # openssh-client: WordPress tools run WP-CLI over SSH. git/ca-certificates: GitHub + HTTPS.
 RUN apk add --no-cache openssh-client git ca-certificates
 WORKDIR /app
