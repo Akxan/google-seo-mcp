@@ -1,14 +1,32 @@
 version: 2
+# Goal: one routine dependency PR per week, so production redeploys about once a week.
+# - npm minor + patch versions arrive together every Monday as one grouped PR.
+# - npm major versions stay separate: each needs a local build, tests and a tools/list comparison (see CLAUDE.md).
+# - Security updates do not follow the schedule (they open as soon as an advisory lands),
+#   but advisories that are pending at the same time are bundled into one PR.
+# - Docker base image and GitHub Actions change rarely and come monthly, each as one grouped PR.
 updates:
   - package-ecosystem: npm
     directory: /
-    schedule: { interval: weekly, day: monday }
+    schedule: { interval: weekly, day: monday, time: "05:00" }  # UTC
     groups:
-      minor-and-patch: { update-types: [minor, patch] }
+      minor-and-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
     open-pull-requests-limit: 5
-  - package-ecosystem: github-actions
-    directory: /
-    schedule: { interval: weekly }
   - package-ecosystem: docker
     directory: /
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }
+    groups:
+      base-image:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: monthly }
+    groups:
+      actions:
+        patterns: ["*"]
