@@ -56,10 +56,84 @@ function typesOf(node: Record<string, unknown>): string[] {
 
 const QUESTION_WORDS = /^(how|what|why|when|where|which|who|is|are|can|does|do|should|best|top|cómo|como|qué|que|por qué|cuándo|cuando|dónde|donde|cuál|cual|quién|quien|cuánto|cuanto|mejor|mejores|es|son|puedo|se puede|wie|was|warum|wann|wo|welche|comment|quoi|pourquoi|quand|où)\b/i;
 
-export function isQuestion(s: string) { return /\?\s*$/.test(s) || QUESTION_WORDS.test(s.trim()); }
+// Full-width ？ (CJK) and ؟ (Arabic) end questions too.
+export function isQuestion(s: string) { return /[?？؟]\s*$/.test(s) || QUESTION_WORDS.test(s.trim()); }
 
 const STOP = new Set("the a an of in on to for and or is are with from by at as vs de la el los las en y o del al un una para con por que es se su lo mi".split(" "));
-export function contentWords(s: string) { return s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter((w) => w.length > 2 && !STOP.has(w)); }
+const CJK_RUN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+/gu;
+const HAS_CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
+// Chinese and Japanese have no spaces between words, so runs of those scripts become character bigrams;
+// otherwise a whole heading would be one "word" and never overlap with anything.
+export function contentWords(s: string) {
+  const out: string[] = [];
+  for (const w of s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/)) {
+    if (!w) continue;
+    if (!HAS_CJK.test(w)) { if (w.length > 2 && !STOP.has(w)) out.push(w); continue; }
+    for (const run of w.split(CJK_RUN)) if (run.length > 2 && !STOP.has(run)) out.push(run);
+    for (const run of w.match(CJK_RUN) ?? []) {
+      if (run.length === 1) continue;
+      for (let i = 0; i + 1 < run.length; i++) out.push(run.slice(i, i + 2));
+    }
+  }
+  return out;
+}
+
+// Hebrew and Arabic glue prepositions/articles to the next word (ה+, ב+, ו+…; ال, وال, بال…), so "ברובע" must
+// still match "הרובע". The extra forms are only used for matching, never shown.
+function wordForms(w: string): string[] {
+  const forms = [w];
+  if (/^[֐-׿]/.test(w)) {
+    let cur = w;
+    for (let i = 0; i < 2 && cur.length > 3 && /^[הולבמשכ]/.test(cur); i++) { cur = cur.slice(1); forms.push(cur); }
+  } else if (/^[؀-ۿ]/.test(w)) {
+    const m = w.match(/^(وال|بال|كال|فال|لل|ال)(.{3,})$/);
+    if (m) forms.push(m[2]);
+  }
+  return forms;
+}
+
+/** Share of the heading's content words that also appear in the paragraph (0–1). */
+export function keywordOverlap(heading: string, paragraph: string): number {
+  const h = contentWords(heading);
+  if (!h.length) return 0;
+  const p = new Set(contentWords(paragraph).flatMap(wordForms));
+  return round(h.filter((w) => wordForms(w).some((f) => p.has(f))).length / h.length, 2) ?? 0;
+}
+
+// Labels that introduce a summary / key-points block, in every language the managed sites use.
+const SUMMARY_LABELS = new Set([
+  "summary", "tl;dr", "tldr", "key takeaways", "key takeaway", "in short", "at a glance", "key points", "short answer", "quick answer", "the short answer", "bottom line", "in a nutshell",
+  "resumen", "en resumen", "puntos clave", "idea clave", "ideas clave", "en pocas palabras", "respuesta corta", "respuesta rápida", "lo esencial",
+  "en resum", "idea clau", "idees clau", "punts clau", "resposta curta",
+  "en bref", "résumé", "en résumé", "l'essentiel", "l’essentiel", "points clés", "à retenir", "idée clé",
+  "kurz gesagt", "zusammenfassung", "das wichtigste", "auf einen blick", "kernaussage", "fazit", "in kürze",
+  "in sintesi", "in breve", "riepilogo", "punti chiave", "idea chiave", "in poche parole",
+  "em resumo", "resumo", "em poucas palavras", "pontos-chave", "pontos chave", "ideia-chave", "ideia principal",
+  "кратко", "вкратце", "коротко", "главное", "основное", "итог", "итоги", "резюме", "главная мысль",
+  "стисло", "головне", "підсумок", "підсумки", "коротко кажучи",
+  "باختصار", "الخلاصة", "ملخص", "النقاط الرئيسية", "الفكرة الأساسية", "الفكرة الرئيسية",
+  "בקצרה", "בשורה התחתונה", "השורה התחתונה", "סיכום", "תקציר",
+  "摘要", "要点", "要點", "重点", "重點", "总结", "總結", "简而言之", "簡而言之", "核心要点", "核心要點",
+  "要約", "まとめ", "ポイント", "この記事のポイント", "結論",
+  "요약", "핵심", "핵심 요약", "한눈에 보기", "결론",
+]);
+
+/** True when a short text is (or starts with) a summary label such as "Key takeaways", "Kurz gesagt:" or "重點". */
+export function isSummaryLabel(text: string): boolean {
+  const t = text.replace(/\s+/g, " ").trim().toLowerCase();
+  if (!t) return false;
+  const bare = t.replace(/[\s:：.。!！—–-]+$/u, "");
+  if (SUMMARY_LABELS.has(bare)) return true;
+  const lead = t.match(/^(.{2,40}?)\s*[:：—–]/u);
+  return Boolean(lead && SUMMARY_LABELS.has(lead[1]));
+}
+
+const FAQ_HEADING = /faq|q&a|preguntas frecuentes|frequently asked|questions fréquentes|questions fréquemment|foire aux questions|häufige fragen|häufig gestellte fragen|domande frequenti|perguntas frequentes|preguntes freqüents|часто задаваемые вопросы|вопросы и ответы|часті питання|поширені запитання|питання та відповіді|الأسئلة الشائعة|أسئلة شائعة|الأسئلة المتكررة|שאלות נפוצות|שאלות ותשובות|常见问题|常見問題|よくある質問|자주 묻는 질문/i;
+export function isFaqHeading(text: string): boolean { return FAQ_HEADING.test(text); }
+
+const UPDATED_LABEL = /last updated|updated on|\bupdated\b|última actualización|actualizado|actualitzat|darrera actualització|mis à jour|mise à jour|aktualisiert|\bstand:|aggiornato|ultimo aggiornamento|atualizado|última atualização|обновлено|оновлено|آخر تحديث|تم التحديث|עודכן|עדכון אחרון|更新于|更新於|最后更新|最後更新|最終更新|更新日|업데이트/i;
+/** True when the text shows a visible "last updated" note in any of the supported languages. */
+export function hasUpdatedLabel(text: string): boolean { return UPDATED_LABEL.test(text); }
 
 /* ---------- AI crawler list ---------- */
 
@@ -221,12 +295,10 @@ function analyzePage(url: string, $: cheerio.CheerioAPI, html: string) {
   const questionHeadings = headings.filter(isQuestion);
   const paragraphs = $main.find("p").map((_, el) => $(el).text().replace(/\s+/g, " ").trim()).get().filter((t) => t.length > 40);
   const firstParagraph = paragraphs[0] ?? "";
-  const h1Words = contentWords(h1);
-  const firstParaWords = new Set(contentWords(firstParagraph));
-  const h1Overlap = h1Words.length ? round(h1Words.filter((w) => firstParaWords.has(w)).length / h1Words.length, 2) ?? 0 : 0;
+  const h1Overlap = keywordOverlap(h1, firstParagraph);
   const lists = $main.find("ul, ol").length;
   const tables = $main.find("table").length;
-  const faqHeading = headings.some((h) => /faq|preguntas frecuentes|frequently asked|questions fréquentes|häufige fragen/i.test(h));
+  const faqHeading = headings.some(isFaqHeading);
   const faqSchema = has("FAQPage");
   const authorSchema = nodes.some((n) => n.author);
   const authorMeta = Boolean($('meta[name="author"]').attr("content") || $('[rel="author"]').length || $(".author, .byline, [class*=author]").first().text().trim());
@@ -241,10 +313,17 @@ function analyzePage(url: string, $: cheerio.CheerioAPI, html: string) {
   const text = $main.text().replace(/\s+/g, " ").trim();
   const sentences = text.split(/(?<=[.!?。])\s+/);
   const statSentences = sentences.filter((s) => /\d/.test(s) && /(%|€|\$|km|min|hour|hora|year|año|people|personas|\d{4})/i.test(s)).length;
-  const summarySection = headings.some((h) => /summary|tl;dr|key takeaways|in short|resumen|en resumen|puntos clave|conclusi/i.test(h)) || /\b(tl;dr|key takeaways|in short)\b/i.test(text.slice(0, 3000));
+  // A summary block is usually introduced by a short label (a heading, a bold lead-in or a small caption),
+  // so look at short elements as well as headings, in every supported language.
+  const summarySection = headings.some((h) => /summary|tl;dr|key takeaways|in short|resumen|en resumen|puntos clave|conclusi/i.test(h) || isSummaryLabel(h))
+    || /\b(tl;dr|key takeaways|in short)\b/i.test(text.slice(0, 3000))
+    || $main.find("strong, b, dt, summary, h4, h5, h6, p, span, figcaption").toArray().some((el) => {
+      const t = $(el).text().replace(/\s+/g, " ").trim();
+      return t.length > 0 && t.length <= 60 ? isSummaryLabel(t) : /^.{2,40}?\s*[:：]/u.test(t) && isSummaryLabel(t.slice(0, 45));
+    });
   const wordCount = text ? text.split(" ").length : 0;
   const avgParagraphWords = paragraphs.length ? Math.round(paragraphs.reduce((a, p) => a + p.split(" ").length, 0) / paragraphs.length) : 0;
-  const lastUpdatedVisible = /(last updated|updated on|última actualización|actualizado)/i.test(text.slice(0, 5000));
+  const lastUpdatedVisible = hasUpdatedLabel(text.slice(0, 5000));
   return { h1, headings, questionHeadings, firstParagraph, h1Overlap, lists, tables, faqHeading, faqSchema, authorSchema, authorMeta, datePublished, dateModified, lastUpdatedVisible, externalDomains: [...externalDomains], externalDofollow, statSentences, summarySection, wordCount, avgParagraphWords, paragraphs: paragraphs.length, schemaTypes: [...new Set(nodes.flatMap(typesOf))], htmlBytes: Buffer.byteLength(html) };
 }
 

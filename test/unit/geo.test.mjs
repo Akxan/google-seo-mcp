@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { flattenNodes, auditNode, isQuestion, parseAgentOutput, parseSearchResults, rankSources } from "../../dist/tools/geo.js";
+import { flattenNodes, auditNode, isQuestion, parseAgentOutput, parseSearchResults, rankSources, contentWords, keywordOverlap, isSummaryLabel, isFaqHeading, hasUpdatedLabel } from "../../dist/tools/geo.js";
 
 test("flattenNodes walks arrays and @graph", () => {
   const nodes = flattenNodes([{ "@context": "https://schema.org", "@graph": [{ "@type": "WebSite", name: "x" }, { "@type": ["Organization", "LocalBusiness"], name: "y" }] }, { "@type": "FAQPage", mainEntity: [] }]);
@@ -21,6 +21,46 @@ test("isQuestion recognises English and Spanish question forms", () => {
   assert.equal(isQuestion("How far is Ronda from Seville?"), true);
   assert.equal(isQuestion("Cuánto cuesta un tour privado"), true);
   assert.equal(isQuestion("Tips for your trip"), false);
+});
+
+test("isQuestion accepts full-width and Arabic question marks", () => {
+  assert.equal(isQuestion("LINE官方帳號AI客服怎麼做？"), true);
+  assert.equal(isQuestion("كم تكلفة برمجة تطبيق؟"), true);
+  assert.equal(isQuestion("מה זה כשר?"), true);
+});
+
+test("contentWords splits Chinese and Japanese into bigrams and keeps Latin words", () => {
+  const w = contentWords("App開發費用怎麼算？2026外包報價");
+  assert.ok(w.includes("開發") && w.includes("報價"));
+  assert.ok(w.includes("app") && w.includes("2026"));
+  assert.deepEqual(contentWords("the best tour"), ["best", "tour"]);
+});
+
+test("keywordOverlap matches Hebrew and Arabic words through attached prefixes", () => {
+  assert.ok(keywordOverlap("הרובע היהודי בסביליה", "ברובע היהודי של סביליה נשארו שלושה בתי כנסת") >= 0.99);
+  assert.ok(keywordOverlap("الخلاصة السريعة", "هذه خلاصة سريعة للموضوع") >= 0.99);
+  assert.ok(keywordOverlap("App開發費用", "開發一個App的費用取決於功能") >= 0.7);
+  assert.equal(keywordOverlap("", "anything"), 0);
+});
+
+test("isSummaryLabel recognises summary labels in every supported language", () => {
+  for (const t of ["Key takeaways", "Kurz gesagt", "Das Wichtigste:", "In sintesi", "Idea clave", "Idea clave: Verifactu obliga…", "En bref", "Em resumo", "Кратко", "Головне", "باختصار", "בקצרה", "重點", "要点", "まとめ", "요약"]) {
+    assert.equal(isSummaryLabel(t), true, t);
+  }
+  for (const t of ["Historia de la judería", "Where to eat", "", "Resumen de la historia completa de la ciudad y su barrio"]) {
+    assert.equal(isSummaryLabel(t), false, t);
+  }
+});
+
+test("isFaqHeading and hasUpdatedLabel cover the site languages", () => {
+  for (const t of ["Domande frequenti", "שאלות נפוצות", "常見問題", "Häufig gestellte Fragen", "Часто задаваемые вопросы", "الأسئلة الشائعة", "よくある質問", "자주 묻는 질문", "Preguntes freqüents"]) {
+    assert.equal(isFaqHeading(t), true, t);
+  }
+  assert.equal(isFaqHeading("La judería hoy"), false);
+  for (const t of ["Updated 16 November 2026", "Stand: 16.11.2026", "עודכן ב-16 בנובמבר", "Actualizado el 16 de noviembre", "更新於 2026-11-16"]) {
+    assert.equal(hasUpdatedLabel(t), true, t);
+  }
+  assert.equal(hasUpdatedLabel("Seville has three former synagogues."), false);
 });
 
 test("parseAgentOutput reads answer text and cites in-text sources first", () => {
