@@ -9,6 +9,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - **The deploy script never capped Docker build cache at 4 GB as its comment promised.** It passed `--reserved-space 4GB`, which is a floor (cache always allowed to keep), not a ceiling, so on a host shared with other projects the build cache had grown to 45 GB, 24 GB of it reclaimable. It now passes `--max-used-space 4GB`.
 
 ### Security
+- **Patched six vulnerable transitive dependencies** (npm audit: 2 high, 4 moderate; 19 open Dependabot alerts), all inside the ranges the direct dependencies already allow, so only `package-lock.json` changes: `undici` 7.29.1 → 7.30.2 (via cheerio), `body-parser` 2.3.0 → 2.4.0 and `qs` 6.16.0 → 6.17.1 (via express in the MCP SDK and googleapis), `hono` 4.13.13 → 4.13.19 and `@hono/node-server` 2.1.1 → 2.1.11 (MCP SDK), `fast-uri` 3.1.8 → 3.1.9 (ajv). `npm audit` now reports 0 vulnerabilities.
 - **The Dockerfile pins the Node base image by digest** (`node:26.12.1-alpine@sha256:…`), matching what production has run since a host-wide image remediation, so a rebuild cannot silently pick up a different base and Dependabot proposes base-image updates as reviewable PRs. Host-specific compose settings (such as a locally tagged image name) now belong in an untracked `docker-compose.override.yml`, which is gitignored: the deploy script runs `git reset --hard`, so edits made to tracked files on the server are discarded by the next deploy, and the remediation's compose edit would have been lost that way.
 
 ### Added
