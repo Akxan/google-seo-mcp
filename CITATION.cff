@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use google-seo-mcp in research or a publication, please cite it as below."
+title: "google-seo-mcp: an SEO and GEO Model Context Protocol server for AI agents"
+type: software
+authors:
+  - alias: Akxan
+repository-code: "https://github.com/Akxan/google-seo-mcp"
+url: "https://github.com/Akxan/google-seo-mcp#readme"
+license: MIT
+version: 0.13.0
+date-released: 2026-11-27
+keywords:
+  - model-context-protocol
+  - mcp-server
+  - seo
+  - generative-engine-optimization
+  - answer-engine-optimization
+  - google-search-console
+  - google-analytics-4
+  - structured-data
+  - llms-txt
+  - ai-agents

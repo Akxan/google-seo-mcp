@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目是什么
 
-一个 MCP 服务（TypeScript，`@modelcontextprotocol/sdk`），把 Google Search Console、Google Analytics 4（Data API 与只读 Admin API）、网页与 GEO 审计（PageSpeed、CrUX、结构化数据、AI 爬虫、llms.txt 等）、跨数据源分析，以及可选的 WordPress（通过 SSH 执行 WP-CLI）、GitHub 读写（整文件、局部修改、服务器端转图提交）和 Gmail 附件（只读）封装成 100 个工具（准确数以 `test/tools.snap.json` 为准），用于 SEO/GEO 运维。生产环境是部署在服务器上的 Streamable HTTP 实例，所有客户端都连它；本机 stdio 只用于开发验证。面向用户的说明在 `README.md`（英文）和 `README.zh-CN.md`（中文）。
+一个 MCP 服务（TypeScript，`@modelcontextprotocol/sdk`），把 Google Search Console、Google Analytics 4（Data API 与 Admin API：读取配置，另可登记自定义维度和关键事件）、网页与 GEO 审计（PageSpeed、CrUX、结构化数据、AI 爬虫、llms.txt 等）、跨数据源分析，以及可选的 WordPress（通过 SSH 执行 WP-CLI）、GitHub 读写（整文件、局部修改、服务器端转图提交）和 Gmail 附件（只读）封装成 102 个工具（准确数以 `test/tools.snap.json` 为准），用于 SEO/GEO 运维。生产环境是部署在服务器上的 Streamable HTTP 实例，所有客户端都连它；本机 stdio 只用于开发验证。面向用户的说明在 `README.md`（英文）和 `README.zh-CN.md`（中文）。
 
 ## 常用命令
 
@@ -84,7 +84,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 
 ## 新增或修改工具的完整流程
 
-1. 在对应的 `src/tools/*.ts` 模块里用 `server.registerTool` 注册；名字用 `前缀_动作` 形式，前缀决定工具集（见 `toolsetOf()`）；写入类工具名必须匹配 `WRITE_TOOLS`（删除类再匹配 `DESTRUCTIVE_TOOLS`）。每个参数都要 `.describe()`，可枚举的用 `z.enum`，描述精炼（100 个工具的定义已约 3.6 万 token）。**写入类工具必须提供 `dryRun` 参数**，返回当前值与将要做的改动而不落地。纯函数尽量导出并在 `test/unit/` 加用例。
+1. 在对应的 `src/tools/*.ts` 模块里用 `server.registerTool` 注册；名字用 `前缀_动作` 形式，前缀决定工具集（见 `toolsetOf()`）；写入类工具名必须匹配 `WRITE_TOOLS`（删除类再匹配 `DESTRUCTIVE_TOOLS`）。每个参数都要 `.describe()`，可枚举的用 `z.enum`，描述精炼（102 个工具的定义已约 3.7 万 token）。**写入类工具必须提供 `dryRun` 参数**，返回当前值与将要做的改动而不落地。纯函数尽量导出并在 `test/unit/` 加用例。
 2. 需要新密钥的：`.env` 与 `.env.example` 各加一行带用途注释的条目；密钥缺失时抛出带申请路径的错误。
 3. `npm run build`，用临时客户端脚本对真实数据验证（写入只用临时对象），删掉脚本。
 4. `UPDATE_SNAPSHOT=1 npm test` 刷新工具清单快照，然后 `npm run docs:sync` 让两份 README 和 `package.json` 里的工具总数、分组计数自动对齐，并检查每个工具名都出现在两份 README 里，缺一个就失败（`npm test` 会跑同样的检查），再 `npm test` 确认通过。
@@ -119,8 +119,10 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 | 接入新的外部服务或数据源 | README 的 **Tech stack** 表、**Architecture** 的 mermaid 图（External 节点）、**Keywords** 段；`package.json` 的 `description` 与 `keywords` |
 | 工具总数变化 | **GitHub 仓库描述**：`npm run docs:sync` 会在 `package.json` 描述变动时打印现成的 `gh repo edit --description ...` 命令，照抄执行即可。描述不在仓库里，没有任何自动校验，只能靠这一步 |
 | 运行环境要求变化 | 这里是**两组**数字，不要混为一谈、也不要「对齐」成同一个数：<br>**对外的最低要求**——`package.json` 的 `engines` 与 README 的 Tech stack 的 Runtime 行，两处必须一致，且不低于依赖的实际下限（现在是 22，`googleapis` 定的）。写低了是真 bug：照着它装的人跑不起来（2026-09-24 修过一次，README 还写着 18）。<br>**我们自己构建与运行的版本**——`Dockerfile` 的 `FROM node:` 与 CI 的 `node-version`，两处一致即可，只要不低于上面那组。它比最低要求新是正常的（现在是 26），不要为了「四处一致」把它降下来，也不要把最低要求抬上去、平白挡住还跑得动的用户 |
-| 新增集成领域 | 仓库主题：`gh repo edit --add-topic x --remove-topic y`。**上限 20 个且已用满**，加新的必须先删旧的；优先删含义模糊或过于宽泛的（2026-09-17 删掉 `geo`（易被理解成地理）与 `seo-tools`（太泛），换成 `github` 与 `indexnow`） |
-| 发版 | 版本号、CHANGELOG 段落、tag、GitHub Release（见「新增或修改工具的完整流程」第 8 步）。发行说明用英文、按领域分组，口径与 README 一致 |
+| 新增集成领域 | 仓库主题：`gh repo edit --add-topic x --remove-topic y`。**上限 20 个且已用满**，加新的必须先删旧的。**换之前先查数**：`gh api "search/repositories?q=topic:X&per_page=1" --jq .total_count`。主题页按星数排序，几十万仓库的大主题（`typescript` 54 万）我们永远排不上，几十个仓库的小主题（`yoast` 44）又没人逛；留「几百到十几万、且正是目标用户会点」的。2026-11-27 按数据重排：去掉 `typescript`、`github`（6 万，太泛）、`yoast`、`pagespeed-insights`（212，`core-web-vitals` 已覆盖），加 `claude-code`（13 万，核心用户群）、`seo-tools`（1.6 千，9 月删它时没看数据）、`aeo`（1.4 千）、`seo-audit`（877）。`geo` 仍不用（易被理解成地理） |
+| 发版 | 版本号、CHANGELOG 段落、tag、GitHub Release（见「新增或修改工具的完整流程」第 8 步）。发行说明用英文、按领域分组，口径与 README 一致。**`CITATION.cff` 的 `version` 与 `date-released` 一起改**（GitHub 侧栏的「Cite this repository」读它，没有任何校验） |
+| 新增要付费密钥的工具、改了 GEO 标签表支持的语言 | 两份 README 的 FAQ（「Do I need API keys…」「Does it work for sites in languages other than English?」及中文对应两问）跟着改；根目录 `llms.txt` 里的事实段同理。FAQ 里的工具总数由 `docs:sync` 同步，别手写别的数 |
+| 一句话定位（README 首段加粗句、`package.json` 描述）变了 | 重做分享图 `docs/assets/social-preview.png`（1280×640，用 `sharp` 从 SVG 渲染，故意不写工具数免得过期），再到仓库 Settings → General → Social preview 上传：**GitHub 没有上传分享图的 API**，只能在网页上传 |
 | 发版之后 | 看一眼 GitHub 的 Security 页：新依赖可能立刻带来 Dependabot 告警（sharp 0.34 在 0.7.0 发布几分钟后就报了两个高危） |
 
 ### 三、明确不做
@@ -129,6 +131,13 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 - 不手改徽章数字，不手改由脚本同步的计数。
 - 描述和 README 里不写无法验证的形容词（「最强」「最全」之类），只写能对照工具清单核实的事实。
 - **不发布到 npm 或 MCP 注册中心**（用户决定，2026-09-09）：`package.json` 标了 `private: true`，安装方式只有 clone 加构建。
+
+### 四、社区与 GEO 文件（2026-11-27 补齐，GitHub「Community Standards」页据此打分）
+
+- `CONTRIBUTING.md`、`SECURITY.md`、`CODE_OF_CONDUCT.md`：英文为主，各带一段中文。安全报告只走 GitHub 的私密漏洞报告（仓库已开启 private vulnerability reporting），**任何文件里都不写邮箱**。行为准则是参照 Contributor Covenant 2.1 自写的短版，不是全文转载。
+- `.github/ISSUE_TEMPLATE/`（bug、功能请求、`config.yml` 里的安全与中英文文档链接）和 `.github/pull_request_template.md`：模板里提醒「不要贴真实站点数据」，与本文件的公共仓库规则一致；改了新增工具的流程要同步 PR 模板的清单。
+- 根目录 `llms.txt`（llmstxt.org 格式）：给读 GitHub 原始文件的 AI 助手一份事实摘要和文档入口，只写能对照仓库核实的事实。
+- 两份 README 的 FAQ 每问第一句直接作答（AI 引擎和搜索摘要优先截取这种句子），问题用读者会搜的原话。
 
 ## 配置与密钥
 
@@ -146,7 +155,7 @@ console.log(await c.callTool({ name: "gsc_list_sites", arguments: {} }));
 - stdio 模式下除 MCP 协议外不能往 stdout 写任何东西，日志一律用 `console.error`。
 - 线上实例同时被 App、手机、Claude Code 多个会话使用。本会话改站点内容前先看容器里的审计日志和目标对象的最近修改时间，不要和另一个会话改同一篇文章或同一个文件；某个会话声称「没改过」时，以审计日志为准。
 - `.env`、`service-account.json`、`credentials.json`、`client_secret*.json` 已在 `.gitignore`，秘密不进仓库，也不要出现在工具描述里。
-- 100 个工具的定义约 3.6 万 token，每次对话都会加载：描述写得准确但不要啰嗦，新工具优先合并进现有模块而不是再拆文件；`SEO_MCP_TOOLSETS` 可按需裁剪。
+- 102 个工具的定义约 3.7 万 token（数字以 `test/tools.size.json` 为准），每次对话都会加载：描述写得准确但不要啰嗦，新工具优先合并进现有模块而不是再拆文件；`SEO_MCP_TOOLSETS` 可按需裁剪。
 - `buildInstructions()` 里点名了推荐先用的工具（snapshot、opportunities 等），新增重要的分析类工具时把它加进去。
 - 密钥扫描器误报时，在 `scripts/check-secrets.sh` 的 `BENIGN`（合法占位值）或 `ALLOW`（合法文件）里加豁免，不要绕过钩子提交。
 - Search Console 数据延迟 2 到 3 天；URL 检查每个资源每天约 2000 次配额，不要对整站循环调用。

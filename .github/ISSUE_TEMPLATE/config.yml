@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Akxan/google-seo-mcp/security/advisories/new
+    about: Please report security problems privately, not as a public issue.
+  - name: Documentation (English)
+    url: https://github.com/Akxan/google-seo-mcp#readme
+    about: Quick start, tool list, configuration and deployment.
+  - name: 中文文档
+    url: https://github.com/Akxan/google-seo-mcp/blob/main/README.zh-CN.md
+    about: 快速开始、工具列表、配置与部署。

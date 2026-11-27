@@ -1,0 +1,24 @@
+# google-seo-mcp
+
+> Open-source (MIT) Model Context Protocol server for SEO and GEO (generative engine optimization). It gives AI agents such as Claude Code, Cursor, OpenAI Codex and Gemini CLI tools for Google Search Console, Google Analytics 4, PageSpeed Insights and the Chrome UX Report, on-page and structured-data audits, AI crawler and llms.txt checks, AI citation tracking, and optional publishing to WordPress (Yoast, WP-CLI over SSH) and GitHub-hosted static sites. Runs over stdio or as a 24/7 Streamable HTTP server, with a read-only mode, write-tool annotations and dry runs.
+
+Key facts:
+- Language and runtime: TypeScript, Node.js 22+, `@modelcontextprotocol/sdk`.
+- Install: clone the repository, `npm ci && npm run build`, then register `dist/index.js` (stdio) or the HTTP endpoint in any MCP client. It is not published to npm.
+- Authentication: a Google service account or OAuth credentials for Search Console and GA4; optional keys for PageSpeed, IndexNow, Perplexity and others. HTTP mode uses a bearer token; an optional hosted mode lets users sign in with Google.
+- Safety: write tools are annotated, skipped in read-only mode and offer `dryRun`; fetched page content is treated as untrusted data.
+
+## Docs
+
+- [README (English)](https://github.com/Akxan/google-seo-mcp#readme): what it does, quick start, every tool by area, configuration, deployment, FAQ
+- [README (中文)](https://github.com/Akxan/google-seo-mcp/blob/main/README.zh-CN.md): Chinese documentation
+- [Tool catalogue](https://github.com/Akxan/google-seo-mcp#what-it-can-do): Search Console, GA4, page and site audits, GEO, analysis, WordPress, GitHub, Gmail
+- [Quick start](https://github.com/Akxan/google-seo-mcp#quick-start): Google credentials and connecting Claude Code, Codex, Cursor, VS Code or Gemini CLI
+- [Running as an HTTP server](https://github.com/Akxan/google-seo-mcp#running-as-a-247-http-server): Docker, systemd, reverse proxy
+- [Changelog](https://github.com/Akxan/google-seo-mcp/blob/main/CHANGELOG.md): release history
+
+## Optional
+
+- [Contributing](https://github.com/Akxan/google-seo-mcp/blob/main/CONTRIBUTING.md): development setup and how to add a tool
+- [Security policy](https://github.com/Akxan/google-seo-mcp/blob/main/SECURITY.md): how to report vulnerabilities privately
+- [Tool list as JSON](https://raw.githubusercontent.com/Akxan/google-seo-mcp/main/test/tools.snap.json): names and annotations of every tool

@@ -2,7 +2,7 @@
 
 # google-seo-mcp
 
-**SEO & GEO MCP server for Claude, Codex, Cursor and any MCP client — Google Search Console, Google Analytics 4, PageSpeed Insights, structured data, llms.txt, WordPress and GitHub as 102 tools, so an assistant can diagnose and fix technical SEO, content and generative-engine-optimization issues in one conversation.**
+**SEO & GEO MCP server for Claude Code, Codex, Cursor and any MCP client — Google Search Console, Google Analytics 4, PageSpeed Insights, structured data, llms.txt, WordPress and GitHub as 102 tools, so an assistant can diagnose and fix technical SEO, content and generative-engine-optimization issues in one conversation.**
 
 [![GitHub stars](https://img.shields.io/github/stars/Akxan/google-seo-mcp?style=flat&logo=github)](https://github.com/Akxan/google-seo-mcp/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -16,7 +16,7 @@
 
 Google Search Console · Google Analytics 4 · PageSpeed & CrUX · on-page and GEO audits · WordPress over SSH · GitHub
 
-[Quick start](#quick-start) · [Tools](#what-it-can-do) · [Any agent](#works-with-any-agent) · [Architecture](#architecture) · [Configuration](#configuration) · [Deploy 24/7](#running-as-a-247-http-server) · [中文文档](README.zh-CN.md)
+[Quick start](#quick-start) · [Tools](#what-it-can-do) · [Any agent](#works-with-any-agent) · [Architecture](#architecture) · [Configuration](#configuration) · [Deploy 24/7](#running-as-a-247-http-server) · [FAQ](#faq) · [中文文档](README.zh-CN.md)
 
 </div>
 
@@ -446,6 +446,40 @@ deploy/             systemd · Caddy · Nginx samples
 test/               unit tests · smoke test · tool snapshot
 ```
 
+## FAQ
+
+### What is google-seo-mcp?
+
+google-seo-mcp is an open-source (MIT) [Model Context Protocol](https://modelcontextprotocol.io) server that lets an AI assistant do SEO and GEO work end to end: read Google Search Console and GA4 data, audit pages and structured data, check how AI search engines see a site, and publish fixes to WordPress or a GitHub-hosted static site. It exposes 102 tools and runs locally over stdio or as a 24/7 Streamable HTTP server.
+
+### How is it different from other SEO MCP servers?
+
+Most SEO MCP servers wrap a single API, such as Search Console or a keyword database. google-seo-mcp covers the whole loop in one server: data (Search Console, GA4, PageSpeed, CrUX), diagnosis (striking-distance keywords, cannibalization, content decay, index coverage, site crawl), GEO checks (AI crawlers, `llms.txt`, answer coverage, citations) and publishing (WordPress, GitHub commits, image conversion), each write with a dry run.
+
+### Which AI clients and models does it work with?
+
+It works with any MCP client: Claude Code, Claude Desktop and claude.ai, OpenAI Codex, Cursor, VS Code, Gemini CLI, Cline, Cherry Studio, n8n and Dify. Agents built with the Claude Agent SDK, OpenAI Agents SDK, LangChain, Google ADK or the Vercel AI SDK connect through their MCP client. The model needs function calling; see [Works with any agent](#works-with-any-agent).
+
+### Do I need API keys, and does it cost anything?
+
+The server is free. Search Console and GA4 use your own Google service account or OAuth credentials at no charge, and PageSpeed Insights, CrUX and the Knowledge Graph use a free Google API key. Paid third-party keys are optional and only power a few tools: Perplexity for `ai_citation_check` and `ai_search_sources`, Brave Search for `brand_mentions`, Google Places for `reviews_snapshot`. See [Configuration](#configuration).
+
+### Can it change my live website, and how is that kept safe?
+
+Only the write tools can change anything: WordPress edits, GitHub commits, Search Console sitemaps and properties, GA4 key events and custom dimensions, and IndexNow submissions. Every write tool is annotated as such, offers a `dryRun` preview, is logged to an audit trail and disappears entirely in read-only mode (`SEO_MCP_READ_ONLY=1`). The server also tells the model to treat fetched page text as untrusted data, never as instructions.
+
+### Does it help with GEO and AI search (ChatGPT, Perplexity, Google AI Overviews)?
+
+Yes. `ai_crawler_access` checks whether GPTBot, OAI-SearchBot, ClaudeBot, PerplexityBot and Google-Extended can reach a site; `llms_txt_check` and `llms_txt_generate` handle `llms.txt`; `geo_page_score`, `geo_answer_coverage` and `eeat_audit` score how easily a page can be quoted; `ai_citation_check` and `ai_search_sources` show who AI answers actually cite; and `indexnow_submit` pushes new URLs to Bing, whose index feeds ChatGPT search and Copilot.
+
+### Does it work for sites in languages other than English?
+
+Yes. Audits read pages in any language, and the GEO scoring recognises summary, FAQ and "last updated" labels in 14 languages, including Spanish, German, French, Italian, Portuguese, Catalan, Russian, Ukrainian, Arabic, Hebrew, Chinese, Japanese and Korean. Text in Chinese and Japanese, and words with Hebrew or Arabic prefixes, are matched correctly.
+
+### Can I use it without running my own server?
+
+Yes, if someone operates a hosted instance: [hosted mode](#hosted-mode-let-other-people-sign-in-with-google) lets people sign in with Google and get a personal, read-only token for their own Search Console and GA4 data. Otherwise clone the repository, build it and run it locally or on any server with Docker or systemd.
+
 ## Notes and limits
 
 - Search Console data lags 2–3 days; end date ranges at `3daysAgo`. URL Inspection has a ~2,000 calls/day quota per property.
@@ -455,11 +489,11 @@ test/               unit tests · smoke test · tool snapshot
 
 ## Contributing
 
-Issues and pull requests are welcome. CI runs build, tests and the secret scan on every push and pull request; `main` deploys only after they pass. Add new tools to the matching `src/tools/*.ts` module, give every parameter a `.describe()`, run `npm run docs:sync`, and add a line to `CHANGELOG.md`.
+Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup and how to add a tool, and [SECURITY.md](SECURITY.md) to report a vulnerability privately. CI runs build, tests and the secret scan on every push and pull request; `main` deploys only after they pass. Add new tools to the matching `src/tools/*.ts` module, give every parameter a `.describe()`, run `npm run docs:sync`, and add a line to `CHANGELOG.md`. If google-seo-mcp is useful to you, a ⭐ helps other people find it.
 
 ## Keywords
 
-MCP server · Model Context Protocol · SEO MCP · GEO · generative engine optimization · AI SEO agent · Claude MCP · Claude Code · OpenAI Codex MCP · Cursor MCP · Gemini CLI MCP · Claude Agent SDK · OpenAI Agents SDK · LangChain MCP · n8n · Dify · DeepSeek · Google Search Console API · Google Analytics 4 API · GA4 Data API · PageSpeed Insights API · Core Web Vitals · CrUX · technical SEO audit · site crawler · static site publishing · Astro · Cloudflare Pages · webp image pipeline · Gmail attachments · structured data · schema.org · JSON-LD · FAQPage · llms.txt · AI crawlers · GPTBot · ClaudeBot · PerplexityBot · robots.txt · sitemap · hreflang · keyword cannibalization · striking distance keywords · content decay · E-E-A-T · Knowledge Graph · Wikipedia pageviews · Wayback Machine · IndexNow · LCP breakdown · canonical host check · redirect chain · index bloat · WordPress SEO automation · Yoast SEO · WP-CLI · post scheduling · TypeScript
+MCP server · Model Context Protocol · SEO MCP · GEO · generative engine optimization · AEO · answer engine optimization · AI SEO agent · AI search visibility · ChatGPT search · Perplexity · Google AI Overviews · SEO tools for Claude Code · Claude MCP · Claude Code · OpenAI Codex MCP · Cursor MCP · Gemini CLI MCP · Claude Agent SDK · OpenAI Agents SDK · LangChain MCP · n8n · Dify · DeepSeek · Google Search Console API · Google Analytics 4 API · GA4 Data API · PageSpeed Insights API · Core Web Vitals · CrUX · technical SEO audit · site crawler · static site publishing · Astro · Cloudflare Pages · webp image pipeline · Gmail attachments · structured data · schema.org · JSON-LD · FAQPage · llms.txt · AI crawlers · GPTBot · ClaudeBot · PerplexityBot · robots.txt · sitemap · hreflang · keyword cannibalization · striking distance keywords · content decay · E-E-A-T · Knowledge Graph · Wikipedia pageviews · Wayback Machine · IndexNow · LCP breakdown · canonical host check · redirect chain · index bloat · WordPress SEO automation · Yoast SEO · WP-CLI · post scheduling · TypeScript
 
 ## Star history
 

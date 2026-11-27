@@ -1,0 +1,22 @@
+name: Feature or tool request
+description: Suggest a new tool, parameter or integration.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What SEO or GEO task should this help with?
+      description: The job you are trying to get done, and what you do today without it.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed tool or change
+      description: Name, inputs and outputs if you have them in mind, and which API or data source it would use.
+  - type: checkboxes
+    id: writes
+    attributes:
+      label: Does it change anything on a live site?
+      options:
+        - label: Yes — it writes (it will need a dryRun mode and read-only-mode support)

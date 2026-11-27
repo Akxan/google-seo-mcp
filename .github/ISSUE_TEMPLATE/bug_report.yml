@@ -1,0 +1,44 @@
+name: Bug report
+description: A tool returns an error, wrong data or crashes.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please **don't paste real site data, property IDs, tokens or emails** — use placeholders like `example.com`. Security problems go to the [Security tab](https://github.com/Akxan/google-seo-mcp/security) instead.
+        中文：请勿粘贴真实网站数据、资源 ID、令牌或邮箱，用 `example.com` 这类占位值代替。
+  - type: input
+    id: tool
+    attributes:
+      label: Tool
+      description: Which tool, e.g. `gsc_search_analytics`, `geo_page_score`.
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: Include the arguments you passed (with placeholders) and the error or output.
+    validations:
+      required: true
+  - type: dropdown
+    id: transport
+    attributes:
+      label: How do you run it?
+      options:
+        - stdio (local)
+        - HTTP server (self-hosted)
+        - Hosted mode (Google sign-in)
+        - Docker
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: MCP client and version
+      placeholder: Claude Code 2.x, Cursor, Codex CLI, Gemini CLI…
+  - type: input
+    id: version
+    attributes:
+      label: google-seo-mcp version or commit
+      placeholder: v0.13.0 or a commit SHA

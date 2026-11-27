@@ -488,6 +488,40 @@ Cookie 为 `HttpOnly`、`SameSite=Lax`，HTTPS 下带 `Secure`；表单带 CSRF 
 
 ## 6. 常见问题
 
+### google-seo-mcp 是什么？
+
+google-seo-mcp 是一个开源（MIT）的 [Model Context Protocol](https://modelcontextprotocol.io) 服务，让 AI 助手从头到尾完成 SEO 和 GEO 工作：读取 Google Search Console 和 GA4 数据，审计页面和结构化数据，检查 AI 搜索引擎怎么看你的网站，再把修改发布到 WordPress 或托管在 GitHub 上的静态站。共 102 个工具，可以在本机通过 stdio 运行，也可以作为 Streamable HTTP 服务 24 小时运行。
+
+### 和其他 SEO MCP 有什么不同？
+
+大多数 SEO MCP 只封装一个 API，比如只接 Search Console 或某个关键词数据库。google-seo-mcp 把整个流程放进一个服务：数据（Search Console、GA4、PageSpeed、CrUX）、诊断（排名 8–20 的机会词、关键词互抢、内容衰退、索引覆盖、全站爬取）、GEO 检查（AI 爬虫、`llms.txt`、问答覆盖、AI 引用），以及发布（WordPress、GitHub 提交、图片转换），每个写入操作都能先 dryRun 预览。
+
+### 支持哪些 AI 客户端和模型？
+
+任何 MCP 客户端都能用：Claude Code、Claude 桌面版和 claude.ai、OpenAI Codex、Cursor、VS Code、Gemini CLI、Cline、Cherry Studio、n8n、Dify。用 Claude Agent SDK、OpenAI Agents SDK、LangChain、Google ADK、Vercel AI SDK 写的 agent 通过各自的 MCP 客户端接入。模型需要支持函数调用（function calling），详见「接入任何 agent、SDK 和第三方模型」一节。
+
+### 需要哪些 API 密钥，要花钱吗？
+
+服务本身免费。Search Console 和 GA4 用你自己的 Google 服务账号或 OAuth 授权，不收费；PageSpeed Insights、CrUX、Knowledge Graph 用免费的 Google API 密钥。付费的第三方密钥都是可选的，只影响少数几个工具：Perplexity（`ai_citation_check`、`ai_search_sources`）、Brave Search（`brand_mentions`）、Google Places（`reviews_snapshot`）。详见「环境变量」一节。
+
+### 会改动我的线上网站吗？安全吗？
+
+只有写入类工具会改动：WordPress 编辑、GitHub 提交、Search Console 站点地图和资源、GA4 关键事件和自定义维度、IndexNow 提交。每个写入工具都带了标注，都能先 `dryRun` 预览，每次调用都记审计日志；开启只读模式（`SEO_MCP_READ_ONLY=1`）后这些工具根本不会注册。服务还会告诉模型：抓取到的网页文字一律当作不可信数据，绝不当成指令执行。
+
+### 能帮网站提升在 AI 搜索里的可见度吗（ChatGPT、Perplexity、Google AI 概览）？
+
+能。`ai_crawler_access` 检查 GPTBot、OAI-SearchBot、ClaudeBot、PerplexityBot、Google-Extended 能否访问网站；`llms_txt_check` 和 `llms_txt_generate` 处理 `llms.txt`；`geo_page_score`、`geo_answer_coverage`、`eeat_audit` 评估页面是否容易被引用；`ai_citation_check` 和 `ai_search_sources` 查看 AI 回答实际引用了谁；`indexnow_submit` 把新网址推送给 Bing，而 ChatGPT 搜索和 Copilot 用的就是 Bing 的索引。
+
+### 支持非英语网站吗？
+
+支持。审计工具能读取任何语言的页面；GEO 评分能识别 14 种语言里的「摘要」「常见问题」「更新于」标签，包括中文、日语、韩语、西班牙语、德语、法语、意大利语、葡萄牙语、加泰罗尼亚语、俄语、乌克兰语、阿拉伯语和希伯来语。中文、日文没有空格，希伯来语、阿拉伯语的词带前缀，这些情况也能正确匹配。
+
+### 不自己部署服务器也能用吗？
+
+可以，前提是有人运营托管实例：开启「托管模式」后，用户用 Google 账号登录，就能拿到一个只读的个人令牌，查自己的 Search Console 和 GA4 数据。否则就克隆仓库、构建，在本机或任何服务器上用 Docker、systemd 运行。
+
+### 排错
+
 - **403 PERMISSION_DENIED**：服务账号邮箱没有被加到 Search Console / GA4 的用户列表，或者 API 未启用。
 - **Search Console 最近两三天没数据**：官方数据有延迟，`dataState: "all"` 可以拿到未最终确认的新鲜数据。
 - **URL 检查配额**：每个资源每天约 2000 次，不要批量扫全站。
@@ -503,6 +537,6 @@ Cookie 为 `HttpOnly`、`SameSite=Lax`，HTTPS 下带 `Secure`；表单带 CSRF 
 
 ## 许可与社区
 
-[MIT](LICENSE) 协议。
+[MIT](LICENSE) 协议。欢迎提交 Issue 和 Pull Request，开发环境和新增工具的流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，安全问题请按 [SECURITY.md](SECURITY.md) 私下报告。觉得有用的话，点个 ⭐ 能帮更多人找到它。
 
 本项目积极参与并认可 [linux.do 社区](https://linux.do/)。
