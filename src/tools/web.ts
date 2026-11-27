@@ -13,26 +13,79 @@ import { imageSize, disableTypes } from "image-size";
 disableTypes(["icns", "jxl", "jxl-stream", "heif"]);
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { heartbeat, round, tool } from "../util.js";
+import { safeFetch } from "../net.js";
 
 const UA = "Mozilla/5.0 (compatible; google-seo-mcp/0.1; +https://github.com/Akxan/google-seo-mcp)";
 
-export async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 20_000): Promise<Response> {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: ctrl.signal, headers: { "User-Agent": UA, Accept: "*/*", ...(init.headers ?? {}) } });
-  } finally {
-    clearTimeout(t);
+/**
+ * The fetch for every caller-supplied URL (see src/net.ts): private addresses refused when the policy
+ * says so, redirects followed and re-checked hop by hop (`redirect: "manual"` still returns the 3xx),
+ * the timeout covers the body too, the body is capped (`opts.maxBytes`, default 15 MB) and `text()`
+ * decodes with the page's charset.
+ */
+export async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 20_000, opts: { maxBytes?: number } = {}): Promise<Response> {
+  const headers = new Headers({ "User-Agent": UA, Accept: "*/*" });
+  new Headers(init.headers).forEach((value, key) => headers.set(key, value));
+  return safeFetch(url, { ...init, headers }, { timeoutMs, maxBytes: opts.maxBytes });
+}
+
+/* ---------- fresh (cache-busting) fetches ---------- */
+
+/** Query parameter added by fresh fetches; stripCacheBuster removes it from everything shown to the caller. */
+export const CACHE_BUST_PARAM = "_seo_mcp_fresh";
+/** Request headers that ask every cache on the way for a revalidated copy. */
+export const FRESH_HEADERS: Record<string, string> = { "Cache-Control": "no-cache", Pragma: "no-cache" };
+
+/** The URL with a unique cache-busting parameter appended (existing query and encoding kept as they are). */
+export function withCacheBuster(url: string, token = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`): string {
+  const u = new URL(url);
+  const extra = `${CACHE_BUST_PARAM}=${token}`;
+  u.search = u.search && u.search !== "?" ? `${u.search}&${extra}` : `?${extra}`;
+  return u.toString();
+}
+
+const BUSTER_RE = new RegExp(`([?&])${CACHE_BUST_PARAM}=[^&#\\s"'<>]*(&)?`, "g");
+
+/** Remove the cache-busting parameter from a string, or from every string inside an array/object (deep). */
+export function stripCacheBuster<T>(value: T): T {
+  if (typeof value === "string") {
+    if (!value.includes(CACHE_BUST_PARAM)) return value;
+    return value.replace(BUSTER_RE, (_m, sep: string, amp?: string) => (amp ? sep : "")) as T;
   }
+  if (Array.isArray(value)) return value.map((v) => stripCacheBuster(v)) as T;
+  if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, stripCacheBuster(v)])) as T;
+  }
+  return value;
+}
+
+/** Cache headers that tell whether a CDN or page cache answered (cf-cache-status HIT, age > 0, x-cache HIT). */
+export function cacheInfo(headers: Headers, fresh = false) {
+  const h = (name: string) => headers.get(name) ?? null;
+  return { fresh, cfCacheStatus: h("cf-cache-status"), age: h("age"), xCache: h("x-cache"), lastModified: h("last-modified") };
+}
+
+/**
+ * fetchWithTimeout, optionally fresh: a cache-busting parameter plus no-cache headers, with the parameter
+ * stripped again from the returned `url`. For tools that want a `fresh` option (page_audit, geo_page_score).
+ */
+export async function fetchMaybeFresh(url: string, fresh: boolean, init: RequestInit = {}, timeoutMs = 20_000, opts: { maxBytes?: number } = {}): Promise<Response> {
+  if (!fresh) return fetchWithTimeout(url, init, timeoutMs, opts);
+  const headers = new Headers(FRESH_HEADERS);
+  new Headers(init.headers).forEach((value, key) => headers.set(key, value));
+  const res = await fetchWithTimeout(withCacheBuster(url), { ...init, headers }, timeoutMs, opts);
+  Object.defineProperty(res, "url", { value: stripCacheBuster(res.url) });
+  return res;
 }
 
 /** Follow redirects manually so the chain can be reported. */
-async function fetchFollow(url: string, maxHops = 6): Promise<{ response: Response; chain: { url: string; status: number }[] }> {
+async function fetchFollow(url: string, init: RequestInit = {}, maxHops = 6): Promise<{ response: Response; chain: { url: string; status: number }[] }> {
   const chain: { url: string; status: number }[] = [];
   let current = url;
   for (let i = 0; i < maxHops; i++) {
-    const res = await fetchWithTimeout(current, { redirect: "manual" });
+    const res = await fetchWithTimeout(current, { ...init, redirect: "manual" });
     if (res.status >= 300 && res.status < 400 && res.headers.get("location")) {
+      void res.body?.cancel().catch(() => {});
       chain.push({ url: current, status: res.status });
       current = new URL(res.headers.get("location")!, current).toString();
       continue;
@@ -42,47 +95,71 @@ async function fetchFollow(url: string, maxHops = 6): Promise<{ response: Respon
   throw new Error(`Too many redirects starting at ${url}`);
 }
 
+type SitemapEntry = { loc: string; lastmod?: string; sitemap: string; alternates?: { hreflang: string; href: string }[] };
+type SitemapFetch = { kind: "index"; children: string[] } | { kind: "urlset"; entries: SitemapEntry[] } | { kind: "error"; error: string };
+
+/** Child sitemaps fetched at once; results are still committed in queue order, so the output is deterministic. */
+const SITEMAP_CONCURRENCY = 4;
+/** The sitemap protocol allows 50 MB uncompressed per file. */
+const SITEMAP_MAX_BYTES = 50 * 1024 * 1024;
+
+async function fetchSitemap(u: string): Promise<SitemapFetch> {
+  try {
+    // 30 s now that the timeout covers the body too (it used to stop at the headers).
+    const res = await fetchWithTimeout(u, {}, 30_000, { maxBytes: SITEMAP_MAX_BYTES });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    // Decide by the gzip magic bytes, not the extension: fetch already decompresses Content-Encoding: gzip,
+    // and a .gz name on plain XML used to throw. The output cap stops a decompression bomb (the sitemap
+    // protocol allows 50 MB uncompressed) from exhausting the memory every client shares.
+    const body = buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b ? gunzipSync(buf, { maxOutputLength: 64 * 1024 * 1024 }).toString("utf8") : buf.toString("utf8");
+    if (/<sitemapindex/i.test(body)) return { kind: "index", children: [...body.matchAll(/<sitemap>[\s\S]*?<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((m) => decodeXml(m[1])) };
+    const entries: SitemapEntry[] = [];
+    for (const e of body.matchAll(/<url>([\s\S]*?)<\/url>/gi)) {
+      const loc = /<loc>\s*([^<\s]+)\s*<\/loc>/i.exec(e[1])?.[1];
+      if (!loc) continue;
+      const lastmod = /<lastmod>\s*([^<\s]+)\s*<\/lastmod>/i.exec(e[1])?.[1];
+      // Multilingual plugins (Polylang, WPML, some Astro integrations) put hreflang in the sitemap instead of the HTML.
+      const alternates = /hreflang/i.test(e[1]) ? parseSitemapAlternates(e[1]) : undefined;
+      entries.push({ loc: decodeXml(loc), lastmod, sitemap: u, ...(alternates?.length ? { alternates } : {}) });
+    }
+    return { kind: "urlset", entries };
+  } catch (err) {
+    return { kind: "error", error: (err as Error).message };
+  }
+}
+
 export async function collectSitemapUrls(sitemapUrl: string, opts: { maxSitemaps?: number; maxUrls?: number } = {}) {
   const maxSitemaps = opts.maxSitemaps ?? 50;
   const maxUrls = opts.maxUrls ?? 50_000;
-  const urls: { loc: string; lastmod?: string; sitemap: string; alternates?: { hreflang: string; href: string }[] }[] = [];
+  const urls: SitemapEntry[] = [];
   const sitemaps: { url: string; type: "index" | "urlset" | "error"; count: number; error?: string }[] = [];
   const queue = [sitemapUrl];
   const seen = new Set<string>();
   while (queue.length && sitemaps.length < maxSitemaps && urls.length < maxUrls) {
-    const u = queue.shift()!;
-    if (seen.has(u)) continue;
-    seen.add(u);
-    try {
-      const res = await fetchWithTimeout(u);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      let body: string;
-      const buf = Buffer.from(await res.arrayBuffer());
-      // Decide by the gzip magic bytes, not the extension: fetch already decompresses Content-Encoding: gzip,
-      // and a .gz name on plain XML used to throw. The output cap stops a decompression bomb (the sitemap
-      // protocol allows 50 MB uncompressed) from exhausting the memory every client shares.
-      body = buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b ? gunzipSync(buf, { maxOutputLength: 64 * 1024 * 1024 }).toString("utf8") : buf.toString("utf8");
-      if (/<sitemapindex/i.test(body)) {
-        const children = [...body.matchAll(/<sitemap>[\s\S]*?<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((m) => decodeXml(m[1]));
-        sitemaps.push({ url: u, type: "index", count: children.length });
-        queue.push(...children);
+    // The next few unseen sitemaps in queue order, never more than the remaining sitemap budget.
+    const batch: string[] = [];
+    while (queue.length && batch.length < Math.min(SITEMAP_CONCURRENCY, maxSitemaps - sitemaps.length)) {
+      const u = queue.shift()!;
+      if (seen.has(u)) continue;
+      seen.add(u);
+      batch.push(u);
+    }
+    if (!batch.length) break;
+    const results = await Promise.all(batch.map(fetchSitemap));
+    // Commit in order exactly as a one-by-one walk would; what a limit cuts off goes back on the queue.
+    for (let i = 0; i < batch.length; i++) {
+      if (sitemaps.length >= maxSitemaps || urls.length >= maxUrls) { queue.unshift(...batch.slice(i)); break; }
+      const u = batch[i], r = results[i];
+      if (r.kind === "error") sitemaps.push({ url: u, type: "error", count: 0, error: r.error });
+      else if (r.kind === "index") {
+        sitemaps.push({ url: u, type: "index", count: r.children.length });
+        queue.push(...r.children);
       } else {
-        const entries = [...body.matchAll(/<url>([\s\S]*?)<\/url>/gi)];
-        let n = 0;
-        for (const e of entries) {
-          const loc = /<loc>\s*([^<\s]+)\s*<\/loc>/i.exec(e[1])?.[1];
-          if (!loc) continue;
-          const lastmod = /<lastmod>\s*([^<\s]+)\s*<\/lastmod>/i.exec(e[1])?.[1];
-          // Multilingual plugins (Polylang, WPML, some Astro integrations) put hreflang in the sitemap instead of the HTML.
-          const alternates = /hreflang/i.test(e[1]) ? parseSitemapAlternates(e[1]) : undefined;
-          urls.push({ loc: decodeXml(loc), lastmod, sitemap: u, ...(alternates?.length ? { alternates } : {}) });
-          n++;
-          if (urls.length >= maxUrls) break;
-        }
-        sitemaps.push({ url: u, type: "urlset", count: n });
+        const take = r.entries.slice(0, maxUrls - urls.length);
+        for (const e of take) urls.push(e);
+        sitemaps.push({ url: u, type: "urlset", count: take.length });
       }
-    } catch (err) {
-      sitemaps.push({ url: u, type: "error", count: 0, error: (err as Error).message });
     }
   }
   return { sitemaps, urls, truncated: queue.length > 0 || urls.length >= maxUrls };
@@ -169,30 +246,110 @@ export function parseRobots(text: string): { groups: RobotsGroup[]; sitemaps: st
   return { groups, sitemaps };
 }
 
-function robotsPatternToRegex(pattern: string): RegExp {
-  let re = "";
-  for (const ch of pattern) {
-    if (ch === "*") re += ".*";
-    else if (ch === "$") re += "$";
-    else re += ch.replace(/[.+?^${}()|[\]\\/]/g, "\\$&");
+const HEX = "0123456789ABCDEF";
+const pct = (byte: number) => `%${HEX[byte >> 4]}${HEX[byte & 15]}`;
+const UNRESERVED = /[A-Za-z0-9\-._~]/;
+// Never valid literally in a URI (plus ', which WHATWG URLs percent-encode in query strings): always compared encoded.
+const ALWAYS_ENCODED = /[\x00-\x20"'<>\\^`{|}\x7f]/;
+
+/**
+ * RFC 9309 2.2.2: one percent-encoded form for robots.txt rules and URL paths, so `/café` in a rule
+ * matches `/caf%C3%A9` in the URL. Non-ASCII goes to UTF-8 %XX, hex is uppercased, %XX of unreserved
+ * characters is decoded, reserved characters (including `*` and `$`) are left exactly as written.
+ */
+export function normalizeRobotsPath(s: string): string {
+  let out = "";
+  for (let i = 0; i < s.length; ) {
+    const ch = s[i];
+    if (ch === "%" && /^[0-9a-f]{2}$/i.test(s.slice(i + 1, i + 3))) {
+      const byte = parseInt(s.slice(i + 1, i + 3), 16);
+      const c = String.fromCharCode(byte);
+      out += byte < 0x80 && UNRESERVED.test(c) ? c : pct(byte);
+      i += 3;
+      continue;
+    }
+    const cp = s.codePointAt(i)!;
+    const len = cp > 0xffff ? 2 : 1;
+    if (cp >= 0x80) for (const b of Buffer.from(s.slice(i, i + len), "utf8")) out += pct(b);
+    else out += ALWAYS_ENCODED.test(ch) ? pct(cp) : ch;
+    i += len;
   }
-  return new RegExp("^" + re);
+  return out;
 }
 
-export function robotsAllows(parsed: ReturnType<typeof parseRobots>, url: string, userAgent = "googlebot") {
-  const path = (() => { const u = new URL(url); return u.pathname + u.search; })();
-  const ua = userAgent.toLowerCase();
-  let group = parsed.groups.find((g) => g.agents.some((a) => a !== "*" && ua.includes(a)));
-  if (!group) group = parsed.groups.find((g) => g.agents.includes("*"));
-  if (!group) return { allowed: true, matchedRule: null, group: null };
-  let best: { type: "allow" | "disallow"; path: string } | null = null;
-  for (const r of group.rules) {
-    if (!r.path) continue; // "Disallow:" (empty) allows everything
-    if (robotsPatternToRegex(r.path).test(path)) {
-      if (!best || r.path.length > best.path.length || (r.path.length === best.path.length && r.type === "allow")) best = r;
+/**
+ * Google's robots matcher: `*` matches any run of characters, `$` anchors only at the end of the
+ * pattern. Tracks the set of reachable positions instead of building a regex, so a crafted rule
+ * full of `*` cannot backtrack for minutes on the shared server.
+ */
+export function robotsPathMatches(path: string, pattern: string): boolean {
+  let pos = [0];
+  for (let j = 0; j < pattern.length; j++) {
+    const c = pattern[j];
+    if (c === "$" && j === pattern.length - 1) return pos[pos.length - 1] === path.length;
+    if (c === "*") {
+      const from = pos[0];
+      pos = Array.from({ length: path.length - from + 1 }, (_, k) => from + k);
+    } else {
+      const next: number[] = [];
+      for (const p of pos) if (p < path.length && path[p] === c) next.push(p + 1);
+      if (!next.length) return false;
+      pos = next;
     }
   }
-  return { allowed: !best || best.type === "allow", matchedRule: best, group: group.agents };
+  return true;
+}
+
+/** Product token of a User-agent line: "Googlebot/2.1" and "googlebot*" both mean googlebot. */
+function productToken(agent: string): string {
+  return agent === "*" ? "*" : (/^[a-z0-9_-]+/i.exec(agent.trim())?.[0] ?? "").toLowerCase();
+}
+
+/** Whether a crawler name or full UA string names this product token (at a word start, so "bot" is not in "googlebot"). */
+function uaNames(ua: string, token: string): boolean {
+  for (let i = ua.indexOf(token); i >= 0; i = ua.indexOf(token, i + 1)) if (i === 0 || !/[a-z0-9]/.test(ua[i - 1])) return true;
+  return false;
+}
+
+type CompiledGroup = { agents: string[]; rules: { rule: { type: "allow" | "disallow"; path: string }; pattern: string }[] };
+const groupCache = new WeakMap<ReturnType<typeof parseRobots>, Map<string, CompiledGroup | null>>();
+
+/**
+ * The rules that apply to a crawler: the group(s) naming the longest product token the crawler's name
+ * contains (Googlebot-Image picks its own group over Googlebot's, and falls back to Googlebot's when it
+ * has none), `*` only when nothing names it; groups naming the same agent are merged (RFC 9309 2.2.1).
+ */
+function selectRobotsGroup(parsed: ReturnType<typeof parseRobots>, userAgent: string): CompiledGroup | null {
+  const ua = userAgent.toLowerCase();
+  let cache = groupCache.get(parsed);
+  if (!cache) groupCache.set(parsed, (cache = new Map()));
+  if (cache.has(ua)) return cache.get(ua)!;
+  let best = "";
+  for (const g of parsed.groups) for (const a of g.agents) {
+    const t = productToken(a);
+    if (t && t !== "*" && t.length > best.length && uaNames(ua, t)) best = t;
+  }
+  const token = best || "*";
+  const matching = parsed.groups.filter((g) => g.agents.some((a) => productToken(a) === token));
+  const compiled = matching.length
+    ? { agents: [...new Set(matching.flatMap((g) => g.agents))], rules: matching.flatMap((g) => g.rules).filter((r) => r.path).map((rule) => ({ rule, pattern: normalizeRobotsPath(rule.path) })) }
+    : null;
+  cache.set(ua, compiled);
+  return compiled;
+}
+
+/** Whether robots.txt lets this crawler fetch the URL: longest matching rule wins, allow wins a tie, an empty Disallow allows all. */
+export function robotsAllows(parsed: ReturnType<typeof parseRobots>, url: string, userAgent = "googlebot") {
+  const u = new URL(url);
+  const path = normalizeRobotsPath(u.pathname + u.search);
+  const group = selectRobotsGroup(parsed, userAgent);
+  if (!group) return { allowed: true, matchedRule: null, group: null };
+  let best: CompiledGroup["rules"][number] | null = null;
+  for (const r of group.rules) {
+    if (!robotsPathMatches(path, r.pattern)) continue;
+    if (!best || r.pattern.length > best.pattern.length || (r.pattern.length === best.pattern.length && r.rule.type === "allow")) best = r;
+  }
+  return { allowed: !best || best.rule.type === "allow", matchedRule: best?.rule ?? null, group: group.agents };
 }
 
 /** All @type values declared in a page's JSON-LD blocks (including @graph nodes); "(invalid JSON-LD)" marks unparsable blocks. */
@@ -292,17 +449,19 @@ async function verifyFavicon(candidate: { url: string; source: string; declaredP
   return { ...candidate, status, contentType, bytes, width, height, format, crawlable, issues };
 }
 
-export interface AuditOptions { maxHeadings?: number; maxImagesMissingAlt?: number; checkFavicon?: boolean }
+export interface AuditOptions { maxHeadings?: number; maxImagesMissingAlt?: number; checkFavicon?: boolean; fresh?: boolean }
 export type AuditResult = Awaited<ReturnType<typeof auditPage>>;
 
 /** Core of page_audit, reused by site_crawl and compare_pages. */
 export async function auditPage(url: string, opts: AuditOptions = {}) {
-  const a = { url, maxHeadings: opts.maxHeadings ?? 60, maxImagesMissingAlt: opts.maxImagesMissingAlt ?? 20, checkFavicon: opts.checkFavicon ?? false };
+  const a = { url, maxHeadings: opts.maxHeadings ?? 60, maxImagesMissingAlt: opts.maxImagesMissingAlt ?? 20, checkFavicon: opts.checkFavicon ?? false, fresh: opts.fresh ?? false };
   const t0 = Date.now();
-  const { response, chain } = await fetchFollow(a.url);
+  // fresh: bypass CDN/page caches with a unique query parameter and no-cache headers; the parameter is
+  // stripped from every URL in the result (and from finalUrl before the canonical comparison).
+  const { response, chain } = await fetchFollow(a.fresh ? withCacheBuster(a.url) : a.url, a.fresh ? { headers: FRESH_HEADERS } : {});
   const html = await response.text();
   const ms = Date.now() - t0;
-  const finalUrl = response.url || (chain.length ? undefined : a.url) || a.url;
+  const finalUrl = stripCacheBuster(response.url || a.url);
   const $ = cheerio.load(html);
   const base = new URL(finalUrl);
   const text = (sel: string) => $(sel).first().text().trim();
@@ -313,7 +472,7 @@ export async function auditPage(url: string, opts: AuditOptions = {}) {
   const metaRobots = attr('meta[name="robots"]', "content") ?? "";
   const xRobots = response.headers.get("x-robots-tag") ?? "";
   const canonical = attr('link[rel="canonical"]', "href");
-  const canonicalAbs = canonical ? new URL(canonical, finalUrl).toString() : undefined;
+  const canonicalAbs = canonical ? stripCacheBuster(new URL(canonical, finalUrl).toString()) : undefined;
   const lang = $("html").attr("lang");
   const hreflang = $('link[rel="alternate"][hreflang]').map((_, el) => ({ hreflang: $(el).attr("hreflang"), href: $(el).attr("href") })).get();
   const og = Object.fromEntries($('meta[property^="og:"]').map((_, el) => [[$(el).attr("property"), $(el).attr("content")]]).get());
@@ -368,7 +527,7 @@ export async function auditPage(url: string, opts: AuditOptions = {}) {
     for (const m of favicon.issues) add("warning", m);
   }
 
-  return {
+  const result = {
     requestedUrl: a.url,
     finalUrl,
     status: response.status,
@@ -376,6 +535,7 @@ export async function auditPage(url: string, opts: AuditOptions = {}) {
     fetchMs: ms,
     htmlBytes: Buffer.byteLength(html),
     contentType: response.headers.get("content-type"),
+    cache: cacheInfo(response.headers, a.fresh),
     title: { text: title, length: title.length },
     metaDescription: { text: description, length: description.length },
     robots: { meta: metaRobots || null, header: xRobots || null },
@@ -392,6 +552,7 @@ export async function auditPage(url: string, opts: AuditOptions = {}) {
     structuredData: [...new Set(jsonLdTypes)],
     issues,
   };
+  return a.fresh ? stripCacheBuster(result) : result;
 }
 
 /* ---------- registration ---------- */
@@ -462,6 +623,7 @@ export function registerWebTools(server: McpServer) {
         maxHeadings: z.number().int().min(0).max(200).default(60).describe("How many H1-H3 headings to include in the outline."),
         maxImagesMissingAlt: z.number().int().min(0).max(200).default(20),
         checkFavicon: z.boolean().default(true).describe("Fetch the favicon and robots.txt to verify size, shape and crawlability (2 extra requests)."),
+        fresh: z.boolean().default(false).describe("Bypass CDN and page caches (cache-busting query parameter + no-cache headers) to see a change you just published. The result's cache field shows whether a cache answered."),
       },
     },
     tool(async (a) => auditPage(a.url, a)),
@@ -492,7 +654,8 @@ export function registerWebTools(server: McpServer) {
         const psiKey = envValue("PAGESPEED_API_KEY");
           if (psiKey) params.set("key", psiKey);
         const fetchOnce = async () => {
-          const res = await fetchWithTimeout(`https://www.googleapis.com/pagespeedonline/v5/runPagespeed?${params}`, {}, 150_000);
+          // Lighthouse JSON carries base64 screenshots: allow more than the 15 MB page default from this fixed Google host.
+          const res = await fetchWithTimeout(`https://www.googleapis.com/pagespeedonline/v5/runPagespeed?${params}`, {}, 150_000, { maxBytes: 50 * 1024 * 1024 });
           const data = (await res.json()) as PsiResponse;
           if (!res.ok || data.error) throw new Error(`PageSpeed API: ${data.error?.message ?? `HTTP ${res.status}`}`);
           return data;

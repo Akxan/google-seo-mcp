@@ -7,6 +7,7 @@ import { describeCredentialSource, runWithAuth } from "./google.js";
 import { loadHosted } from "./hosted/index.js";
 import { loadOAuth } from "./oauth.js";
 import { startDigestSchedule } from "./digest.js";
+import { privateAddressesBlocked, setNetworkTransport } from "./net.js";
 
 const PORT = Number(envValue("MCP_PORT") ?? 8080);
 const HOST = envValue("MCP_HOST") ?? "127.0.0.1";
@@ -49,11 +50,16 @@ function json(res: http.ServerResponse, status: number, body: unknown) {
 }
 
 export function startHttp() {
+  // A shared instance must not fetch loopback/private/metadata addresses for its callers (SSRF).
+  setNetworkTransport("http");
   const hosted = loadHosted();
   // Optional OAuth layer (SEO_MCP_OAUTH=1) for clients that cannot send a static bearer token.
   const oauth = loadOAuth();
   // Optional weekly Search Console digest (SEO_MCP_DIGEST_SITES), so a drop reports itself.
   const digest = startDigestSchedule();
+  if (!privateAddressesBlocked()) {
+    console.error(`WARNING: SEO_MCP_ALLOW_PRIVATE_URLS is set: tools will fetch loopback, private and cloud-metadata addresses for any caller${hosted || oauth ? ", including hosted users and OAuth clients" : ""}.`);
+  }
   if (!TOKEN && HOST !== "127.0.0.1" && HOST !== "localhost" && HOST !== "::1") {
     console.error("WARNING: MCP_AUTH_TOKEN is not set while binding to a non-loopback host. Anyone reaching this port can query your Google data.");
   }

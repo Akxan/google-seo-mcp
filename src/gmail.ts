@@ -8,6 +8,7 @@ import path from "node:path";
 import { GoogleAuth } from "google-auth-library";
 import { google, type gmail_v1 } from "googleapis";
 import { envValue } from "./env.js";
+import { decodeBody } from "./net.js";
 
 export const GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"];
 export const DEFAULT_GMAIL_CREDENTIALS_PATH = path.join(os.homedir(), ".config", "google-seo-mcp", "gmail.json");
@@ -43,7 +44,7 @@ export function header(m: gmail_v1.Schema$Message, name: string): string | undef
   return m.payload?.headers?.find((h) => h.name?.toLowerCase() === name)?.value ?? undefined;
 }
 
-export interface BodyPartRef { mimeType: string; size: number; data?: string; attachmentId?: string }
+export interface BodyPartRef { mimeType: string; size: number; data?: string; attachmentId?: string; charset?: string }
 
 /**
  * The readable body parts (text/plain and text/html) of a message payload, attachments excluded.
@@ -56,12 +57,19 @@ export function collectBodyParts(payload: gmail_v1.Schema$MessagePart | undefine
     const mime = (p.mimeType ?? "").toLowerCase();
     // A part with a filename is an attachment, even when it is text/plain.
     if (!p.filename && /^text\/(plain|html)$/.test(mime) && (p.body?.data || p.body?.attachmentId)) {
-      out.push({ mimeType: mime, size: p.body?.size ?? 0, data: p.body?.data ?? undefined, attachmentId: p.body?.attachmentId ?? undefined });
+      // Gmail undoes the transfer encoding but not the charset: the bytes are still in the declared one.
+      const charset = /;\s*charset\s*=\s*["']?([^"';\s]+)/i.exec(p.headers?.find((h) => h.name?.toLowerCase() === "content-type")?.value ?? "")?.[1];
+      out.push({ mimeType: mime, size: p.body?.size ?? 0, data: p.body?.data ?? undefined, attachmentId: p.body?.attachmentId ?? undefined, ...(charset ? { charset } : {}) });
     }
     p.parts?.forEach(walk);
   };
   walk(payload);
   return out;
+}
+
+/** Text of a body part from Gmail's base64url data, decoded with the part's declared charset (ISO-8859-1, Shift_JIS, GBK ...), else the HTML's own declaration, else UTF-8. Pure, for tests. */
+export function decodeBodyPart(base64url: string, part: Pick<BodyPartRef, "mimeType" | "charset">): string {
+  return decodeBody(Buffer.from(base64url, "base64url"), part.charset ? `${part.mimeType}; charset=${part.charset}` : part.mimeType).text;
 }
 
 // Named entities worth decoding: the structural ones plus what Spanish and French copy actually uses.

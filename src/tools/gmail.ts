@@ -4,7 +4,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { tool } from "../util.js";
-import { collectAttachments, collectBodyParts, getGmail, header, htmlToText } from "../gmail.js";
+import { collectAttachments, collectBodyParts, decodeBodyPart, getGmail, header, htmlToText } from "../gmail.js";
 import { commitBlobs, imageOptionShape, renderImageOutputs } from "./github.js";
 
 const repoParam = z.string().regex(/^[\w.-]+\/[\w.-]+$/).describe("Repository as 'owner/name'.");
@@ -58,11 +58,11 @@ export function registerGmailTools(server: McpServer) {
       const chosen = a.format === "html" ? html : plain.length ? plain : html;
       const source = chosen.length ? chosen[0].mimeType : "none";
       const pieces = await Promise.all(chosen.map(async (p) => {
-        if (p.data) return Buffer.from(p.data, "base64url").toString("utf8");
+        if (p.data) return decodeBodyPart(p.data, p);
         if (!p.attachmentId) return "";
         // Gmail moves large bodies out of the payload and leaves only an attachment id behind.
         const att = (await gmail.users.messages.attachments.get({ userId: "me", messageId: a.messageId, id: p.attachmentId })).data;
-        return Buffer.from(att.data ?? "", "base64url").toString("utf8");
+        return decodeBodyPart(att.data ?? "", p);
       }));
       const joined = pieces.join("\n\n").trim();
       const full = source === "text/html" && a.format === "text" ? htmlToText(joined) : joined;

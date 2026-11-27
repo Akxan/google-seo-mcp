@@ -798,7 +798,7 @@ export function registerGitHubTools(server: McpServer) {
       },
     },
     tool(async (a) => {
-      const res = await fetchWithTimeout(a.sourceUrl, {}, 30_000);
+      const res = await fetchWithTimeout(a.sourceUrl, {}, 60_000, { maxBytes: 40 * 1024 * 1024 });
       if (!res.ok) throw new Error(`Source image returned HTTP ${res.status}.`);
       const src = Buffer.from(await res.arrayBuffer());
       if (src.length > 40 * 1024 * 1024) throw new Error("Source image is larger than 40 MB.");

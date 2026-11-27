@@ -662,7 +662,7 @@ export function registerWordPressTools(server: McpServer, sites: WpSite[]) {
     tool(async (a) => {
       const site = pick(a.site);
       if (a.setFeatured && !a.attachToPost) throw new Error("setFeatured needs attachToPost: say which post the image belongs to.");
-      const res = await fetchWithTimeout(a.sourceUrl, { headers: { "User-Agent": "google-seo-mcp image fetch" } }, 60_000);
+      const res = await fetchWithTimeout(a.sourceUrl, { headers: { "User-Agent": "google-seo-mcp image fetch" } }, 60_000, { maxBytes: 40 * 1024 * 1024 });
       if (!res.ok) throw new Error(`Could not fetch ${a.sourceUrl}: HTTP ${res.status}`);
       const src = Buffer.from(await res.arrayBuffer());
       const opts: ImageOptions = { path: a.filename, width: a.width, height: a.height, focus: a.focus, format: a.format, quality: a.quality };
