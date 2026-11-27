@@ -79,7 +79,7 @@ export function registerCrawlTools(server: McpServer) {
           processed += batch.length;
           await mapLimit(batch, a.concurrency, async (url) => {
             try {
-              const r = await auditPage(url, { maxHeadings: 0, maxImagesMissingAlt: 0 });
+              const r = await auditPage(url, { maxHeadings: 0, maxImagesMissingAlt: 0, keepHtml: true });
               const finalUrl = cleanUrl(r.finalUrl);
               const finalKey = normalizeUrl(finalUrl);
               linkStatus.set(url, r.status);
@@ -89,9 +89,8 @@ export function registerCrawlTools(server: McpServer) {
               if (!/text\/html/.test(r.contentType ?? "")) return;
               if (finalKey !== key && seen.has(finalKey) && r.redirectChain.length) return; // redirected onto a page crawled separately
               const d = depth.get(key) ?? Infinity;
-              // discover links
-              const res = await fetchWithTimeout(finalUrl);
-              const $ = cheerio.load(await res.text());
+              // discover links (from the HTML auditPage already fetched, instead of downloading the page again)
+              const $ = cheerio.load(r.html ?? "");
               const found = new Set<string>();
               $("a[href]").each((_, el) => { try { const u = cleanUrl(new URL($(el).attr("href")!, finalUrl).toString()); if (allowed(u)) found.add(u); } catch { /* ignore */ } });
               for (const u of found) {
@@ -248,9 +247,8 @@ export function registerCrawlTools(server: McpServer) {
       const STOP = new Set("the a an of in on to for and or is are with from by at as vs it this that these those you your we our they their be been was were will can not no yes more most very also than then so if but about into over after before up down out all any each other such only own same too just de la el los las en y o del al un una para con por que es se su lo mi tu sus le les como más pero sin sobre entre hasta desde este esta estos estas ese esa eso también muy ya son fue han hay está están puede pueden".split(" "));
       const rows = await mapLimit(urls, 4, async (url) => {
         try {
-          const r = await auditPage(url, { maxHeadings: 40, maxImagesMissingAlt: 0 });
-          const res = await fetchWithTimeout(r.finalUrl);
-          const $ = cheerio.load(await res.text());
+          const r = await auditPage(url, { maxHeadings: 40, maxImagesMissingAlt: 0, keepHtml: true });
+          const $ = cheerio.load(r.html ?? "");
           $("script, style, nav, header, footer, noscript").remove();
           const $main = $("main, article").first().length ? $("main, article").first() : $("body");
           const text = $main.text().toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, " ");

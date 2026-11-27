@@ -9,7 +9,7 @@ import * as cheerio from "cheerio";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { round, tool, heartbeat, resolveDate } from "../util.js";
 import { contentWords, countWords, firstWords, isQuestion, QUESTION_TERMS, splitSentences } from "../text.js";
-import { collectSitemapUrls, fetchWithTimeout, parseRobots, robotsAllows } from "./web.js";
+import { cacheInfo, collectSitemapUrls, fetchMaybeFresh, fetchWithTimeout, parseRobots, robotsAllows } from "./web.js";
 import { query as gscQuery } from "./gsc.js";
 
 /* ---------- shared helpers ---------- */
@@ -21,8 +21,8 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
   return out;
 }
 
-async function loadPage(url: string) {
-  const res = await fetchWithTimeout(url);
+async function loadPage(url: string, fresh = false) {
+  const res = fresh ? await fetchMaybeFresh(url, true) : await fetchWithTimeout(url);
   const html = await res.text();
   return { res, html, $: cheerio.load(html) };
 }
@@ -696,10 +696,10 @@ export function registerGeoTools(server: McpServer) {
       title: "GEO readiness score of a page",
       description:
         "Score how easily AI answer engines (ChatGPT, Perplexity, Google AI Overviews) can extract and cite a page: direct answer in the first paragraph, question-style headings, FAQ section and FAQPage schema, lists/tables, quotable statistics, summary section, author and dates (E-E-A-T), outbound citations, structured data. Returns a 0-100 score, the signals found and concrete fixes.",
-      inputSchema: { url: z.string().url() },
+      inputSchema: { url: z.string().url(), fresh: z.boolean().default(false).describe("Bypass CDN and page caches (right after publishing a change).") },
     },
     tool(async (a) => {
-      const { res, html, $ } = await loadPage(a.url);
+      const { res, html, $ } = await loadPage(a.url, a.fresh);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const p = analyzePage(a.url, $, html);
       const checks: { signal: string; points: number; max: number; detail: string; fix?: string }[] = [];
@@ -716,7 +716,7 @@ export function registerGeoTools(server: McpServer) {
       add("Structured data present", p.schemaTypes.length ? (p.schemaTypes.some((t) => /Article|BlogPosting|FAQPage|TouristTrip|Product|Event|LocalBusiness/.test(t)) ? 8 : 4) : 0, 8, `types: ${p.schemaTypes.join(", ") || "none"}`, "Add Article/BlogPosting (or the matching type) JSON-LD with headline, author, dates, image.");
       add("Depth and readability", (p.wordCount >= 600 ? 4 : p.wordCount >= 300 ? 2 : 0) + (p.avgParagraphWords > 0 && p.avgParagraphWords <= 90 ? 3 : 1), 7, `${p.wordCount} words, ${p.paragraphs} paragraphs, avg ${p.avgParagraphWords} words/paragraph`, "Aim for 600+ words with short paragraphs (under 90 words).");
       const score = checks.reduce((s, c) => s + c.points, 0);
-      return { url: a.url, score, grade: score >= 80 ? "A" : score >= 65 ? "B" : score >= 50 ? "C" : "D", h1: p.h1, checks, fixes: checks.filter((c) => c.fix).sort((x, y) => (y.max - y.points) - (x.max - x.points)).map((c) => c.fix), firstParagraph: p.firstParagraph.slice(0, 400), questionHeadings: p.questionHeadings, schemaTypes: p.schemaTypes };
+      return { url: a.url, score, grade: score >= 80 ? "A" : score >= 65 ? "B" : score >= 50 ? "C" : "D", h1: p.h1, checks, fixes: checks.filter((c) => c.fix).sort((x, y) => (y.max - y.points) - (x.max - x.points)).map((c) => c.fix), firstParagraph: p.firstParagraph.slice(0, 400), questionHeadings: p.questionHeadings, schemaTypes: p.schemaTypes, cache: cacheInfo(res.headers, a.fresh) };
     }),
   );
 

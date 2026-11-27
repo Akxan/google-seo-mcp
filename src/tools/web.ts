@@ -14,6 +14,7 @@ disableTypes(["icns", "jxl", "jxl-stream", "heif"]);
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { heartbeat, round, tool } from "../util.js";
 import { safeFetch } from "../net.js";
+import { countWords, displayWidth } from "../text.js";
 
 const UA = "Mozilla/5.0 (compatible; google-seo-mcp/0.1; +https://github.com/Akxan/google-seo-mcp)";
 
@@ -449,7 +450,7 @@ async function verifyFavicon(candidate: { url: string; source: string; declaredP
   return { ...candidate, status, contentType, bytes, width, height, format, crawlable, issues };
 }
 
-export interface AuditOptions { maxHeadings?: number; maxImagesMissingAlt?: number; checkFavicon?: boolean; fresh?: boolean }
+export interface AuditOptions { maxHeadings?: number; maxImagesMissingAlt?: number; checkFavicon?: boolean; fresh?: boolean; /** Also return the raw HTML (for callers that parse links or text themselves instead of fetching the page twice). */ keepHtml?: boolean }
 export type AuditResult = Awaited<ReturnType<typeof auditPage>>;
 
 /** Core of page_audit, reused by site_crawl and compare_pages. */
@@ -500,18 +501,22 @@ export async function auditPage(url: string, opts: AuditOptions = {}) {
   const jsonLdTypes = extractJsonLdTypes($);
   $("script, style, noscript, template").remove();
   const bodyText = $("body").text().replace(/\s+/g, " ").trim();
-  const wordCount = bodyText ? bodyText.split(" ").length : 0;
+  const wordCount = countWords(bodyText);
 
   const issues: { severity: "error" | "warning" | "info"; message: string }[] = [];
   const add = (severity: "error" | "warning" | "info", message: string) => issues.push({ severity, message });
   if (response.status !== 200) add("error", `HTTP status ${response.status}`);
   if (chain.length) add("info", `Reached via ${chain.length} redirect(s): ${chain.map((c) => `${c.status} ${c.url}`).join(" -> ")}`);
+  // Lengths are judged by display width: a Chinese or Japanese character takes two columns, so a 32-character
+  // CJK title is already truncated in results even though 32 < 60.
+  const titleWidth = displayWidth(title), descWidth = displayWidth(description);
+  const wide = (n: number, w: number) => (w !== n ? `${n} chars, ${w} columns wide` : `${n} chars`);
   if (!title) add("error", "Missing <title>");
-  else if (title.length > 60) add("warning", `Title is ${title.length} chars (aim for 30-60)`);
-  else if (title.length < 30) add("info", `Title is short (${title.length} chars)`);
+  else if (titleWidth > 60) add("warning", `Title is ${wide(title.length, titleWidth)} (aim for 30-60; East Asian characters count double)`);
+  else if (titleWidth < 30) add("info", `Title is short (${wide(title.length, titleWidth)})`);
   if (!description) add("warning", "Missing meta description");
-  else if (description.length > 160) add("warning", `Meta description is ${description.length} chars (aim for 120-155)`);
-  else if (description.length < 70) add("info", `Meta description is short (${description.length} chars)`);
+  else if (descWidth > 160) add("warning", `Meta description is ${wide(description.length, descWidth)} (aim for 120-155; East Asian characters count double)`);
+  else if (descWidth < 70) add("info", `Meta description is short (${wide(description.length, descWidth)})`);
   if (/noindex/i.test(metaRobots) || /noindex/i.test(xRobots)) add("error", "Page is noindex");
   if (!canonicalAbs) add("warning", "No canonical link");
   else if (canonicalAbs.replace(/\/$/, "") !== finalUrl.replace(/\/$/, "")) add("warning", `Canonical points elsewhere: ${canonicalAbs}`);
@@ -534,6 +539,7 @@ export async function auditPage(url: string, opts: AuditOptions = {}) {
     redirectChain: chain,
     fetchMs: ms,
     htmlBytes: Buffer.byteLength(html),
+    html: opts.keepHtml ? html : undefined,
     contentType: response.headers.get("content-type"),
     cache: cacheInfo(response.headers, a.fresh),
     title: { text: title, length: title.length },
@@ -617,7 +623,7 @@ export function registerWebTools(server: McpServer) {
     {
       title: "On-page SEO audit of a URL",
       description:
-        "The general on-page check; pair it with structured_data_audit for schema, geo_page_score for AI-answer readiness and eeat_audit for trust signals. Fetch a page like a crawler and report: final URL and redirect chain, status, title, meta description, robots (meta + X-Robots-Tag), canonical, lang/hreflang, Open Graph, RSS/Atom feeds, favicon (declared icons, apple-touch-icon, manifest, theme-color, and a live check that it is square, >=48x48 and crawlable by Googlebot/Googlebot-Image, which is what the mobile result icon needs), H1/H2/H3 outline, images missing alt, internal/external/nofollow link counts, word count, JSON-LD schema types, HTML size and fetch time, plus a list of flagged issues. Works for any site, no authorization needed.",
+        "The general on-page check (pair it with structured_data_audit, geo_page_score, eeat_audit). Fetches a page like a crawler: redirect chain, status, title and description (length by display width), robots meta and header, canonical, hreflang, Open Graph, feeds, favicon (square, >=48 px and crawlable, as the mobile result icon requires), heading outline, images without alt, link counts, word count, JSON-LD types, cache headers and flagged issues. Any site, no authorization.",
       inputSchema: {
         url: z.string().url(),
         maxHeadings: z.number().int().min(0).max(200).default(60).describe("How many H1-H3 headings to include in the outline."),
@@ -634,7 +640,7 @@ export function registerWebTools(server: McpServer) {
     {
       title: "PageSpeed Insights / Core Web Vitals",
       description:
-        "Run Google PageSpeed Insights for a URL. Returns Lighthouse category scores (performance, SEO, accessibility, best practices), lab metrics (LCP, CLS, TBT, FCP, Speed Index), real-user CrUX data for the page and for the whole origin (LCP, INP, CLS, FCP, TTFB), so low-traffic pages still get field numbers, the failed audits of every requested category, and the top opportunities with estimated savings. Set PAGESPEED_API_KEY for a higher quota. Each run takes 15-60 s; Google caches results for a short while, so if a call times out simply call again. A 'Lighthouse returned error' after retry usually means the page never becomes idle (endless animations/JS) and cannot be audited by PSI.",
+        "Run Google PageSpeed Insights for a URL. Returns Lighthouse category scores (performance, SEO, accessibility, best practices), lab metrics (LCP, CLS, TBT, FCP, Speed Index), real-user CrUX data for the page and for the whole origin (LCP, INP, CLS, FCP, TTFB), so low-traffic pages still get field numbers, the failed audits of every requested category, and the top opportunities with estimated savings. Takes 15-60 s; set PAGESPEED_API_KEY for a higher quota.",
       inputSchema: {
         url: z.string().url(),
         strategy: z.enum(["mobile", "desktop", "both"]).default("mobile"),
@@ -664,8 +670,18 @@ export function registerWebTools(server: McpServer) {
         try {
           data = await fetchOnce();
         } catch (err) {
-          if (!/Lighthouse returned error|Something went wrong|HTTP 5\d\d/.test((err as Error).message)) throw err;
-          data = await fetchOnce(); // one retry for transient Lighthouse failures
+          const first = (err as Error).message;
+          if (/abort|timed out/i.test(first)) throw new Error(`${first}. Google caches recent runs for a short while: calling again often returns at once.`);
+          if (!/Lighthouse returned error|Something went wrong|HTTP 5\d\d/.test(first)) throw err;
+          try {
+            data = await fetchOnce(); // one retry for transient Lighthouse failures
+          } catch (again) {
+            const m = (again as Error).message;
+            // The troubleshooting used to sit in the tool description, paid for on every turn; it belongs here.
+            if (/Lighthouse returned error/.test(m)) throw new Error(`${m}. Failed twice: the page probably never becomes idle (endless animations or scripts), so PageSpeed cannot audit it.`);
+            if (/abort|timed out/i.test(m)) throw new Error(`${m}. Google caches recent runs for a short while: calling again often returns at once.`);
+            throw again;
+          }
         }
         const lh = data.lighthouseResult;
         const audits = lh?.audits ?? {};
