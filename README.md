@@ -368,6 +368,8 @@ All settings live in `.env` (see [`.env.example`](.env.example), which documents
 | `GMAIL_CREDENTIALS` | optional: authorized_user JSON written by `npm run auth -- --gmail` (Gmail read-only), for `gmail_find_attachments` / `github_commit_attachment` |
 | `WP_SITES` | JSON array of WordPress sites reachable over SSH; omit to disable `wp_*` tools |
 | `SEO_MCP_READ_ONLY=1` or `--read-only` | register no write tools |
+| `SEO_MCP_ALLOW_PRIVATE_URLS=1` | HTTP mode: let tools fetch loopback, private, link-local and cloud-metadata addresses, which are blocked by default (SSRF protection). Only on an instance where every caller is trusted; never with hosted mode or OAuth clients |
+| `SEO_MCP_BLOCK_PRIVATE_URLS=1` | stdio mode: block those addresses as the HTTP transport does (by default stdio allows them, so `http://localhost:4321` can be audited during development) |
 ### Prompts (slash commands)
 
 Six ready-made workflows are registered as MCP prompts, so a client shows them as slash commands and the model follows a written sequence instead of guessing which tool fits: `/traffic_drop` (what changed when clicks fell, and whether it is ranking, indexing or technical), `/quick_wins` (near-miss rankings plus pages that rank but are not clicked, merged and ranked), `/publish_check` (one page: on-page, structured data, sharing card, AI-answer readiness), `/site_health` (whole-site technical pass), `/monthly_report` (Search Console and GA4 written as a report), `/index_bloat` (thin archives that should not be indexed).
@@ -467,7 +469,7 @@ The server is free. Search Console and GA4 use your own Google service account o
 
 ### Can it change my live website, and how is that kept safe?
 
-Only the write tools can change anything: WordPress edits, GitHub commits, Search Console sitemaps and properties, GA4 key events and custom dimensions, and IndexNow submissions. Every write tool is annotated as such, offers a `dryRun` preview, is logged to an audit trail and disappears entirely in read-only mode (`SEO_MCP_READ_ONLY=1`). The server also tells the model to treat fetched page text as untrusted data, never as instructions.
+Only the write tools can change anything: WordPress edits, GitHub commits, Search Console sitemaps and properties, GA4 key events and custom dimensions, and IndexNow submissions. Every write tool is annotated as such, offers a `dryRun` preview, is logged to an audit trail and disappears entirely in read-only mode (`SEO_MCP_READ_ONLY=1`). The server also tells the model to treat fetched page text as untrusted data, never as instructions, and when it runs as an HTTP server it refuses to fetch loopback, private-network and cloud-metadata addresses, so a planted instruction cannot turn a page fetch into a probe of your own network.
 
 ### Does it help with GEO and AI search (ChatGPT, Perplexity, Google AI Overviews)?
 

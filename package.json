@@ -1,6 +1,6 @@
 {
   "name": "google-seo-mcp",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "SEO & GEO MCP server for Claude Code, Cursor, Codex and any AI agent: Google Search Console, GA4, PageSpeed & CrUX, structured data, llms.txt, AI crawler and AI citation checks, plus WordPress (Yoast, WP-CLI) and GitHub publishing, as 102 tools. Read-only mode and dry runs; self-host it or run the hosted mode with Google sign-in",
   "main": "dist/index.js",
   "scripts": {

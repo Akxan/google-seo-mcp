@@ -481,6 +481,8 @@ Cookie 为 `HttpOnly`、`SameSite=Lax`，HTTPS 下带 `Secure`；表单带 CSRF 
 | `CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID` | 无 | 可选：只读的 Cloudflare API 令牌（账户权限 Workers Scripts Read、Workers CI Read、Cloudflare Pages Read）和对应账户 ID，让 `github_build_status` 能读到往往不向 GitHub 回报的 Workers Builds 与 Pages 部署状态 |
 | `GMAIL_CREDENTIALS` | `~/.config/google-seo-mcp/gmail.json` | `npm run auth -- --gmail` 生成的只读 Gmail 授权文件，附件工具用；服务器上放 `secrets/gmail.json` |
 | `SEO_MCP_READ_ONLY` / `SEO_MCP_TOOLSETS` | 无 | 见运行模式 |
+| `SEO_MCP_ALLOW_PRIVATE_URLS` | 无 | HTTP 模式默认拒绝抓取回环、内网、链路本地和云元数据地址（防 SSRF），设为 `1` 放行；只在所有调用方都可信的实例上用，开了托管模式或 OAuth 的实例绝不能开 |
+| `SEO_MCP_BLOCK_PRIVATE_URLS` | 无 | stdio 模式默认允许这些地址（方便本地审计 `http://localhost:4321`），设为 `1` 则像 HTTP 模式一样拦截 |
 | `SEO_MCP_HOSTED_CLIENT_ID`、`SEO_MCP_HOSTED_CLIENT_SECRET`、`SEO_MCP_HOSTED_SECRET`、`SEO_MCP_PUBLIC_URL`（可选 `SEO_MCP_DATA_DIR`、`SEO_MCP_HOSTED_CONTACT`、`SEO_MCP_HOSTED_VERIFIED`） | 无 | 托管模式：别人用 Google 登录、各自拿只读令牌，见上一节 |
 | `SEO_MCP_GITHUB_APP_ID`、`SEO_MCP_GITHUB_APP_SLUG`、`SEO_MCP_GITHUB_APP_CLIENT_ID`、`SEO_MCP_GITHUB_APP_CLIENT_SECRET`、`SEO_MCP_GITHUB_APP_PRIVATE_KEY_FILE` | 无 | 托管模式：用户安装到自己仓库上的 GitHub App，让他们的令牌获得 `github_*` 工具（一小时安装令牌） |
 | `SEO_MCP_MAX_RESULT_CHARS` | `120000` | 单次工具结果的字符上限，超出时截断最长的数组并提示如何缩小范围 |
@@ -507,7 +509,7 @@ google-seo-mcp 是一个开源（MIT）的 [Model Context Protocol](https://mode
 
 ### 会改动我的线上网站吗？安全吗？
 
-只有写入类工具会改动：WordPress 编辑、GitHub 提交、Search Console 站点地图和资源、GA4 关键事件和自定义维度、IndexNow 提交。每个写入工具都带了标注，都能先 `dryRun` 预览，每次调用都记审计日志；开启只读模式（`SEO_MCP_READ_ONLY=1`）后这些工具根本不会注册。服务还会告诉模型：抓取到的网页文字一律当作不可信数据，绝不当成指令执行。
+只有写入类工具会改动：WordPress 编辑、GitHub 提交、Search Console 站点地图和资源、GA4 关键事件和自定义维度、IndexNow 提交。每个写入工具都带了标注，都能先 `dryRun` 预览，每次调用都记审计日志；开启只读模式（`SEO_MCP_READ_ONLY=1`）后这些工具根本不会注册。服务还会告诉模型：抓取到的网页文字一律当作不可信数据，绝不当成指令执行；以 HTTP 服务运行时，它还拒绝抓取回环、内网和云元数据地址，网页里藏的指令没法借抓取网页去探测你自己的网络。
 
 ### 能帮网站提升在 AI 搜索里的可见度吗（ChatGPT、Perplexity、Google AI 概览）？
 

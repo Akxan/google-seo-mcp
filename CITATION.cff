@@ -7,7 +7,7 @@ authors:
 repository-code: "https://github.com/Akxan/google-seo-mcp"
 url: "https://github.com/Akxan/google-seo-mcp#readme"
 license: MIT
-version: 0.13.0
+version: 0.14.0
 date-released: 2026-11-27
 keywords:
   - model-context-protocol

@@ -4,11 +4,24 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-27
+
+### Security
+- **Fetch tools could be pointed at the server's own network (SSRF).** Any caller of a URL-taking tool (an OAuth client, a hosted user, or a model following instructions planted in a fetched page) could make the server request 127.0.0.1, private ranges or the cloud metadata address 169.254.169.254 and read the answer. While the HTTP transport runs, every fetch of a caller-supplied URL now refuses loopback, private, link-local, CGNAT, multicast and reserved IPv4/IPv6 addresses (IPv4-mapped forms included). The check runs in the socket's DNS lookup, so DNS rebinding is caught too, and literal IPs are checked on every redirect hop. stdio keeps allowing them for local development (`http://localhost:4321`). `SEO_MCP_ALLOW_PRIVATE_URLS=1` lifts the block on HTTP; `SEO_MCP_BLOCK_PRIVATE_URLS=1` applies it on stdio.
+- **A slow or huge response could hang a tool or exhaust shared memory.** The fetch timeout stopped at the response headers and bodies had no size limit. The timeout now covers the whole body, bodies are capped at 15 MB by default (40 MB for image downloads, 50 MB for sitemaps and PageSpeed), redirects are followed by the server itself (at most 10, credentials dropped across origins) and only http and https are accepted.
+- **A crafted robots.txt rule could stall the event loop.** Wildcard rules were compiled to backtracking regular expressions; matching now uses a linear algorithm.
+
 ### Added
+- **`fresh` option for `page_audit` and `geo_page_score`**: bypasses CDN and page caches with a cache-busting query parameter (stripped from every URL in the result) and `Cache-Control: no-cache`, for checking a change right after publishing. Both now report a `cache` object (`cf-cache-status`, `age`, `x-cache`, `last-modified`) so a cached copy is recognisable. Static assets served by Cloudflare Workers ignore query strings and may still report a HIT; they are replaced atomically on deploy.
 - **`github_get_file` can search a whole file**: `find` (with optional `regex`, `ignoreCase`, `context`, `maxMatches`) returns each match's line number, UTF-8 byte offset (usable as `offset`) and grep-style context instead of the content. This works on private repositories, where `github_search_code` often returns nothing because GitHub does not index them. Long single-line files are excerpted around the match, and regexes run with a 2-second timeout so a catastrophic pattern cannot stall the shared server.
 - **`github_build_status` reads Cloudflare Workers Builds and Pages deployments** for the commit when `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are set. A new `cloudflare` section shows status, branch, time and a dashboard link; a successful build counts as built, queued or running builds keep `waitSeconds` polling, and permission or API errors become a note instead of failing the tool. Hosted users never use the operator's Cloudflare account.
 
 ### Fixed
+- **Pages and emails in GBK, Shift_JIS, windows-1252 and other legacy charsets came out garbled.** Fetched text is now decoded with the byte-order mark, the Content-Type charset or (HTML) a `<meta charset>` / `http-equiv` / XML declaration in the first 4 KB, falling back to UTF-8. Gmail body parts are decoded with their declared charset.
+- **robots.txt checks could apply the wrong group.** The first group whose name appeared anywhere in the crawler name was used, so Googlebot-Image fell into the Googlebot group even when it had its own; groups naming the same agent were not merged; Unicode rules such as `/café` never matched the percent-encoded path. The group with the longest matching product token now wins (`*` only as fallback), same-agent groups are merged, and rules and paths are compared in one percent-encoded form (RFC 9309). Affects `robots_check`, `ai_crawler_access`, `site_crawl` and the favicon check.
+- **`page_audit` judged CJK titles and descriptions by character count**, so a 32-character Chinese title that is already cut off in results passed as "short". Lengths are now judged by display width (East Asian characters count double), and the word count uses the CJK-aware counter.
+- `site_crawl` and `compare_pages` fetched every page twice (once to audit it, once to read its links or text); they now reuse the audited HTML. Child sitemaps of an index are fetched four at a time, with the same output order and limits.
+- `pagespeed`: the troubleshooting text moved from the tool description (sent on every turn) into the error messages it explains.
 - **`github_commit_files` no longer silently overwrites a commit another session made while the call was running.** It now reads every file at one resolved head commit, builds on exactly that commit and fast-forwards only; if the branch moved, it refuses with a clear "re-run" error instead of committing edits computed on stale content.
 - **Word counts, sentence splitting and term matching now work for Chinese and Japanese.** Counting spaces made a 2,000-character Chinese article "40 words", so `geo_page_score` withheld its depth points, `geo_answer_coverage` called every passage "thin" and the crawlers flagged thin content; sentences after 。！？ were not split at all. `countWords()` uses `Intl.Segmenter`, `splitSentences()` splits after CJK full stops without a following space, `compare_pages` and `cross_site_links` share the bigram-aware tokenizer, and stop words cover the 14 supported languages.
 - **Oversized results now trim nested arrays too.** `fitResult()` only shortened top-level arrays, so a batch result whose bulk sat in `reports[n].rows` could stay over the cap; it now trims the largest arrays at any depth and says which path was cut.
@@ -254,7 +267,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - stdio and stateless Streamable HTTP transports with Bearer auth.
 
 [unreleased]: https://github.com/Akxan/google-seo-mcp/compare/v0.10.0...HEAD
-[Unreleased]: https://github.com/Akxan/google-seo-mcp/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/Akxan/google-seo-mcp/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/Akxan/google-seo-mcp/compare/v0.10.0...v0.11.0
