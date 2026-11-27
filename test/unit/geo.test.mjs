@@ -123,3 +123,14 @@ test("rankSources counts domains and finds your own position, including subdomai
   assert.deepEqual(rankSources(sources).yours, []);
   assert.equal(rankSources(sources).bestRank, null);
 });
+
+test("isQuestion handles accented question words, ¿ and every supported language", () => {
+  for (const q of ["qué ver en sevilla", "por qué se expulsó a los judíos", "où manger à paris", "¿Cuánto cuesta un tour?", "quin és el millor barri",
+    "warum sind die preise gestiegen", "perché il cielo è blu", "o que fazer em lisboa", "как выучить китайский", "як дістатися до аеропорту",
+    "كيف أتعلم الصينية", "איך להגיע לסביליה", "怎么学中文", "如何申请签证", "东京哪里好玩", "学中文难吗", "東京 どこ", "서울 어디", "何塞是谁"]) {
+    assert.equal(isQuestion(q), true, q);
+  }
+  for (const s of ["Tips for your trip", "on page seo checklist", "seville jewish quarter map", "何塞", "Historia de la judería", "jüdisches viertel sevilla", "קבר"]) {
+    assert.equal(isQuestion(s), false, s);
+  }
+});

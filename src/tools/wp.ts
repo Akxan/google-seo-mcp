@@ -63,6 +63,10 @@ function ssh(site: WpSite, remoteCommand: string, stdin?: string, timeoutMs = 12
     const child = spawn("ssh", args, { stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
+    // Decode as UTF-8 streams: appending raw chunks garbled any multibyte character that straddled a
+    // 64 KB chunk boundary, and a long Spanish or Chinese post read that way could be written back garbled.
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
       reject(new Error(`ssh to ${site.host} timed out after ${timeoutMs}ms`));

@@ -8,6 +8,7 @@ import { envValue } from "../env.js";
 import * as cheerio from "cheerio";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { round, tool, heartbeat, resolveDate } from "../util.js";
+import { isQuestion } from "../text.js";
 import { collectSitemapUrls, fetchWithTimeout, parseRobots, robotsAllows } from "./web.js";
 import { query as gscQuery } from "./gsc.js";
 
@@ -54,10 +55,7 @@ function typesOf(node: Record<string, unknown>): string[] {
   return (Array.isArray(t) ? t : [t]).map(String);
 }
 
-const QUESTION_WORDS = /^(how|what|why|when|where|which|who|is|are|can|does|do|should|best|top|cómo|como|qué|que|por qué|cuándo|cuando|dónde|donde|cuál|cual|quién|quien|cuánto|cuanto|mejor|mejores|es|son|puedo|se puede|wie|was|warum|wann|wo|welche|comment|quoi|pourquoi|quand|où)\b/i;
-
-// Full-width ？ (CJK) and ؟ (Arabic) end questions too.
-export function isQuestion(s: string) { return /[?？؟]\s*$/.test(s) || QUESTION_WORDS.test(s.trim()); }
+export { isQuestion };
 
 const STOP = new Set("the a an of in on to for and or is are with from by at as vs de la el los las en y o del al un una para con por que es se su lo mi".split(" "));
 const CJK_RUN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+/gu;

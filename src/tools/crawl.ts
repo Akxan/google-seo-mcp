@@ -10,6 +10,7 @@ import { imageSize, disableTypes } from "image-size";
 disableTypes(["icns", "jxl", "jxl-stream", "heif"]);
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { heartbeat, round, tool } from "../util.js";
+import { isQuestion } from "../text.js";
 import { auditPage, collectSitemapUrls, fetchWithTimeout, parseLinkHeader, parseRobots, robotsAllows } from "./web.js";
 
 async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
@@ -350,7 +351,7 @@ export function registerCrawlTools(server: McpServer) {
       const groups = await mapLimit(queries, 4, async ({ label, q }) => ({ label, query: q, suggestions: await fetchSuggest(q) }));
       const all = new Set<string>();
       for (const g of groups) for (const s of g.suggestions) all.add(s.toLowerCase());
-      const questions = [...all].filter((s) => /^(how|what|why|when|where|which|is|can|does|do|should|cómo|qué|por qué|cuándo|dónde|cuál|es|se puede|wie|was|warum|wann|wo|welche|comment|quoi|pourquoi|quand|où|come|cosa|perché|quando|dove|quale)\b/.test(s));
+      const questions = [...all].filter((s) => isQuestion(s));
       return { seed: a.seed, hl: a.hl, gl: a.gl, requests: groups.length, uniqueSuggestions: all.size, questions, groups: groups.filter((g) => g.suggestions.length), all: [...all] };
     }),
   );

@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import sharp from "sharp";
-import { heartbeat, tool } from "../util.js";
+import { heartbeat, MAX_RESULT_CHARS, tool } from "../util.js";
 import { fetchWithTimeout } from "./web.js";
 import { currentRequest } from "../google.js";
 
@@ -160,6 +160,22 @@ export function sliceUtf8(buf: Buffer, offset: number, maxBytes: number): { text
   return { text: buf.subarray(start, end).toString("utf8"), start, end, truncated: end < buf.length };
 }
 
+/**
+ * Like sliceUtf8, but shrinks the window until the JSON-escaped text fits maxChars. Quotes, backslashes and
+ * newlines in source code grow when escaped, and a reply over the server's result cap used to be cut to 2,000
+ * characters while nextOffset still pointed past the full window, so whatever lay in between was silently
+ * skipped. Pure, for tests.
+ */
+export function sliceUtf8Fitting(buf: Buffer, offset: number, maxBytes: number, maxChars: number) {
+  let window = Math.max(1, Math.trunc(maxBytes));
+  let s = sliceUtf8(buf, offset, window);
+  while (window > 1000 && JSON.stringify(s.text).length > maxChars) {
+    window = Math.max(1000, Math.floor(window * Math.min(0.9, maxChars / JSON.stringify(s.text).length)));
+    s = sliceUtf8(buf, offset, window);
+  }
+  return s;
+}
+
 async function branchHead(repo: string, branch: string): Promise<string | null> {
   try { const r = await gh<{ object: { sha: string } }>(`/repos/${repo}/git/ref/heads/${branch}`); return r.object.sha; } catch { return null; }
 }
@@ -183,7 +199,7 @@ export async function commitBlobs(repo: string, branch: string, message: string,
   const newTree = await gh<{ sha: string }>(`/repos/${repo}/git/trees`, { method: "POST", body: JSON.stringify({ base_tree: headCommit.tree.sha, tree }) });
   const commit = await gh<{ sha: string; html_url: string }>(`/repos/${repo}/git/commits`, { method: "POST", body: JSON.stringify({ message, tree: newTree.sha, parents: [headSha] }) });
   await gh(`/repos/${repo}/git/refs/heads/${branch}`, { method: "PATCH", body: JSON.stringify({ sha: commit.sha, force: false }) });
-  return { commit: commit.sha.slice(0, 7), url: commit.html_url };
+  return { commit: commit.sha.slice(0, 7), sha: commit.sha, url: commit.html_url };
 }
 
 /** Image file extensions a commit might carry. SVG is left out: it is text a model can legitimately write. */
@@ -271,7 +287,8 @@ export function registerGitHubTools(server: McpServer) {
       const file = await readRepoFile(a.repo, path, ref);
       if (!file) throw new Error(`${path} not found on '${ref}' (or it is a directory: use github_list_dir).`);
       if (file.text === null) throw new Error(`${path} is binary (${file.bytes} bytes); this tool returns text only.`);
-      const { text, start, end, truncated } = sliceUtf8(file.buf, a.offset, a.maxBytes);
+      // Leave room for the reply's other fields under the server-wide result cap.
+      const { text, start, end, truncated } = sliceUtf8Fitting(file.buf, a.offset, a.maxBytes, MAX_RESULT_CHARS - 4000);
       return {
         repo: a.repo, path, ref, sha: file.sha, size: file.bytes, url: file.url,
         offset: start, returnedBytes: end - start, truncated,
@@ -343,8 +360,12 @@ export function registerGitHubTools(server: McpServer) {
     },
     tool(async (a, extra) => {
       let sha: string;
-      if (a.ref && /^[0-9a-f]{7,40}$/i.test(a.ref)) sha = a.ref;
-      else {
+      if (a.ref && /^[0-9a-f]{40}$/i.test(a.ref)) sha = a.ref;
+      else if (a.ref && /^[0-9a-f]{7,39}$/i.test(a.ref)) {
+        // The deployments and Actions-runs endpoints only match a full sha: a short one returns nothing,
+        // so a 7-character commit id from github_commit_files would report "no deployments" forever.
+        sha = (await gh<{ sha: string }>(`/repos/${a.repo}/commits/${a.ref}`)).sha;
+      } else {
         const branch = a.ref ?? (await gh<{ default_branch: string }>(`/repos/${a.repo}`)).default_branch;
         const head = await branchHead(a.repo, branch);
         if (!head) throw new Error(`branch '${branch}' not found in ${a.repo}`);

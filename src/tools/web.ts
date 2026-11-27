@@ -58,7 +58,10 @@ export async function collectSitemapUrls(sitemapUrl: string, opts: { maxSitemaps
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       let body: string;
       const buf = Buffer.from(await res.arrayBuffer());
-      body = u.endsWith(".gz") || res.headers.get("content-type")?.includes("gzip") ? gunzipSync(buf).toString("utf8") : buf.toString("utf8");
+      // Decide by the gzip magic bytes, not the extension: fetch already decompresses Content-Encoding: gzip,
+      // and a .gz name on plain XML used to throw. The output cap stops a decompression bomb (the sitemap
+      // protocol allows 50 MB uncompressed) from exhausting the memory every client shares.
+      body = buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b ? gunzipSync(buf, { maxOutputLength: 64 * 1024 * 1024 }).toString("utf8") : buf.toString("utf8");
       if (/<sitemapindex/i.test(body)) {
         const children = [...body.matchAll(/<sitemap>[\s\S]*?<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((m) => decodeXml(m[1]));
         sitemaps.push({ url: u, type: "index", count: children.length });

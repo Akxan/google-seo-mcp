@@ -3,6 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { searchconsole_v1 } from "googleapis";
 import { searchConsole } from "../google.js";
 import { resolveDate, round, tool, heartbeat } from "../util.js";
+import { isQuestion } from "../text.js";
 import { wpPostIndexForHost } from "./wp.js";
 import { collectSitemapUrls, fetchWithTimeout } from "./web.js";
 import * as cheerio from "cheerio";
@@ -472,9 +473,8 @@ export function registerSearchConsoleTools(server: McpServer) {
       },
     },
     tool(async (args) => {
-      const QUESTION = /^(how|what|why|when|where|which|who|is|are|can|does|do|should|best|top|cómo|como|qué|que|por qué|cuándo|cuando|dónde|donde|cuál|cual|quién|quien|cuánto|cuanto|mejor|mejores|vale la pena|se puede|wie|was|warum|wann|wo|welche|comment|quoi|pourquoi|quand|où)\b|\?$/i;
       const rows = await query({ ...args, dimensions: ["query", "page"], rowLimit: MAX_ROWS });
-      const qs = rows.filter((r) => r.impressions >= args.minImpressions && QUESTION.test(r.keys.query.trim())).sort((a, b) => b.impressions - a.impressions);
+      const qs = rows.filter((r) => r.impressions >= args.minImpressions && isQuestion(r.keys.query)).sort((a, b) => b.impressions - a.impressions);
       const byPage = new Map<string, Row[]>();
       for (const r of qs) byPage.set(r.keys.page, [...(byPage.get(r.keys.page) ?? []), r]);
       const pagesSorted = [...byPage.entries()].sort((a, b) => b[1].reduce((s, r) => s + r.impressions, 0) - a[1].reduce((s, r) => s + r.impressions, 0));

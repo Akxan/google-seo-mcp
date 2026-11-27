@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyTextEdits, sliceUtf8, imageContentRefusal, MAX_INLINE_IMAGE_BYTES } from "../../dist/tools/github.js";
+import { applyTextEdits, sliceUtf8, imageContentRefusal, MAX_INLINE_IMAGE_BYTES, sliceUtf8Fitting } from "../../dist/tools/github.js";
 
 test("applyTextEdits replaces a unique match, in order, without $-pattern surprises", () => {
   const r = applyTextEdits("a=1\nb=2\nc=3\n", [{ find: "b=2", replace: "b=$&20" }, { find: "c=3", replace: "" }]);
@@ -56,4 +56,15 @@ test("imageContentRefusal leaves text, SVG and tiny files alone", () => {
   assert.equal(imageContentRefusal("public/logo.svg", Buffer.from(`<svg>${"<path/>".repeat(2000)}</svg>`)), null, "SVG is text a model may legitimately write");
   assert.equal(imageContentRefusal("public/favicon.ico", Buffer.alloc(1024, 1)), null, "a tiny icon still passes");
   assert.equal(imageContentRefusal("data.json", Buffer.from(JSON.stringify({ a: "x".repeat(9000) }))), null);
+});
+
+test("sliceUtf8Fitting shrinks the window until the escaped text fits, so nextOffset never skips content", () => {
+  const buf = Buffer.from('"a\\b"\n'.repeat(20000)); // quotes, backslashes and newlines double when JSON-escaped
+  const s = sliceUtf8Fitting(buf, 0, 100000, 50000);
+  assert.ok(JSON.stringify(s.text).length <= 50000);
+  assert.equal(Buffer.byteLength(s.text), s.end - s.start);
+  assert.equal(s.truncated, true);
+  const plain = sliceUtf8Fitting(Buffer.from("x".repeat(3000)), 0, 100000, 50000);
+  assert.equal(plain.end, 3000);
+  assert.equal(plain.truncated, false);
 });
