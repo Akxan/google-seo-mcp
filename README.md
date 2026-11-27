@@ -135,7 +135,7 @@ flowchart LR
 
 **Hosted mode.** With the `SEO_MCP_HOSTED_*` variables set, `src/hosted/` adds a landing page, Google OAuth sign-in and a token dashboard. A `seo_…` bearer token on `/mcp` resolves to that user's encrypted refresh token, and the request runs inside an `AsyncLocalStorage` scope so every Google client created by the tools uses that grant instead of the operator's credentials; the server instance for such requests is read-only and limited to own-data toolsets.
 
-**Safety.** Write tools are recognised by name and receive `readOnlyHint:false` (`destructiveHint:true` for deletes, raw WP-CLI and commits). `--read-only` drops them at registration; `--toolsets=gsc,web` trims the tool list (102 definitions ≈ 37k tokens). Server instructions tell the model that fetched page text and CMS content are untrusted data.
+**Safety.** Write tools are recognised by name and receive `readOnlyHint:false` (`destructiveHint:true` for deletes, raw WP-CLI and commits). `--read-only` drops them at registration; `--toolsets=gsc,web` trims the tool list (102 definitions ≈ 36k tokens). Server instructions tell the model that fetched page text and CMS content are untrusted data.
 
 ## Quick start
 
@@ -323,7 +323,7 @@ LangChain (`langchain-mcp-adapters`), Google ADK (`MCPToolset`) and the Vercel A
 ### Third-party and local models
 
 - Desktop: Cherry Studio and Cline let you pick DeepSeek, Qwen, GLM, Kimi or a local Ollama model and add this server as a Streamable HTTP MCP server with the Authorization header.
-- The tool catalogue is about 37k tokens and travels with every turn, and 102 tools are a lot for smaller models. Point them at a second, read-only instance with a trimmed toolset and its own token, so a confused model can neither write nor see what it does not need:
+- The tool catalogue is about 36k tokens and travels with every turn, and 102 tools are a lot for smaller models. Point them at a second, read-only instance with a trimmed toolset and its own token, so a confused model can neither write nor see what it does not need:
 
 ```yaml
 # docker-compose.yml: a second service next to the main one
@@ -379,7 +379,7 @@ Client support, as tested on 2026-09-17: the **Claude Code CLI** lists them as `
 
 In HTTP mode a single instance can also be narrowed **per connection**, without changing the server's configuration or affecting other clients: append `?toolsets=gsc,ga4,web,geo,analysis` to the endpoint URL, and `?readOnly=1` to make that entry point unable to write. Both parameters only ever remove access — a request cannot reach a toolset the instance was not started with, and cannot turn a read-only tenant into a writing one. An unknown toolset name returns 400 rather than silently yielding an empty server.
 
-The full set of tool definitions costs roughly 37k tokens in every conversation. Pointing a day-to-day client at `/mcp?toolsets=gsc,ga4,web,geo,analysis` cuts that to about 21k, and `?toolsets=gsc,ga4` to about 12k; keep the full URL for the connection you use to edit sites.
+The full set of tool definitions costs roughly 36k tokens in every conversation. Pointing a day-to-day client at `/mcp?toolsets=gsc,ga4,web,geo,analysis` cuts that to about 21k, and `?toolsets=gsc,ga4` to about 12k; keep the full URL for the connection you use to edit sites.
 | `SEO_MCP_MAX_RESULT_CHARS` | cap on a single tool result (default 120000); oversized arrays are trimmed with a note on how to narrow the query |
 | `MCP_TRANSPORT=http`, `MCP_HOST`, `MCP_PORT`, `MCP_PATH`, `MCP_AUTH_TOKEN` | HTTP mode |
 | `SEO_MCP_OAUTH=1` | HTTP mode: also accept OAuth, for clients that cannot send an `Authorization` header (ChatGPT). Needs `MCP_AUTH_TOKEN`; grants live in `<SEO_MCP_DATA_DIR>/oauth.db` |

@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import fs from "node:fs";
 import path from "node:path";
 import { envValue } from "./env.js";
@@ -254,5 +255,35 @@ export function createServer(overrides: ServerOptions = {}): McpServer {
   // inferred. Only register one whose toolsets are actually enabled here, so a narrowed
   // instance never offers a workflow it cannot run.
   registerPrompts(server, (toolset) => !opts.toolsets || opts.toolsets.includes(toolset));
+  compactToolList(server);
   return server;
+}
+
+/**
+ * Drop parts of each tool's JSON Schema that tell the model nothing: the `$schema` URL on every tool and the
+ * ±(2^53−1) bounds Zod adds to every `.int()`. The catalogue travels with every conversation, so this is
+ * pure token cost (about 7k characters for the full catalogue). Validation is unaffected: arguments are
+ * still checked against the Zod schemas. Pure, for tests.
+ */
+export function compactJsonSchema(node: unknown, root = true): unknown {
+  if (Array.isArray(node)) return node.map((n) => compactJsonSchema(n, false));
+  if (!node || typeof node !== "object") return node;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+    if (root && k === "$schema") continue;
+    if ((k === "maximum" && v === Number.MAX_SAFE_INTEGER) || (k === "minimum" && v === Number.MIN_SAFE_INTEGER)) continue;
+    out[k] = compactJsonSchema(v, false);
+  }
+  return out;
+}
+
+function compactToolList(server: McpServer): void {
+  // McpServer installs its tools/list handler when the first tool is registered; wrap that handler.
+  const handlers = (server.server as unknown as { _requestHandlers?: Map<string, (req: unknown, extra: unknown) => unknown> })._requestHandlers;
+  const original = handlers?.get("tools/list");
+  if (!original) return; // SDK internals changed: keep the uncompacted list rather than break tools/list
+  server.server.setRequestHandler(ListToolsRequestSchema, async (req, extra) => {
+    const res = (await original(req, extra)) as { tools: { inputSchema?: unknown }[] };
+    return { ...res, tools: res.tools.map((t) => ({ ...t, inputSchema: compactJsonSchema(t.inputSchema) })) } as never;
+  });
 }

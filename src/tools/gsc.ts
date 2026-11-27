@@ -342,12 +342,15 @@ export function registerSearchConsoleTools(server: McpServer) {
     },
     tool(async (args) => {
       const filters = [...(args.filters ?? []), ...(args.country ? [{ dimension: "country" as const, operator: "equals" as const, expression: args.country }] : [])];
-      const rows = await query({ ...args, dimensions: ["query", "page"], rowLimit: MAX_ROWS, filters: filters.length ? filters : undefined });
-      const hits = rows.filter((r) => r.position != null && r.position >= args.minPosition && r.position <= args.maxPosition && r.impressions >= args.minImpressions);
-      hits.sort((a, b) => b.impressions - a.impressions);
       let host: string | undefined;
       try { host = args.siteUrl.startsWith("sc-domain:") ? args.siteUrl.slice(10) : new URL(args.siteUrl).hostname; } catch { /* ignore */ }
-      const wp = host ? await wpPostIndexForHost(host).catch(() => null) : null;
+      // The Search Console query and the WordPress post index (an SSH round trip) are independent: run them together.
+      const [rows, wp] = await Promise.all([
+        query({ ...args, dimensions: ["query", "page"], rowLimit: MAX_ROWS, filters: filters.length ? filters : undefined }),
+        host ? wpPostIndexForHost(host).catch(() => null) : Promise.resolve(null),
+      ]);
+      const hits = rows.filter((r) => r.position != null && r.position >= args.minPosition && r.position <= args.maxPosition && r.impressions >= args.minImpressions);
+      hits.sort((a, b) => b.impressions - a.impressions);
       const wpFor = (page: string) => wp?.byPath.get(normalizePath(page));
       const byPage = new Map<string, { page: string; queries: number; impressions: number; clicks: number; bestQuery: string; wpPostId?: number; wpTitle?: string }>();
       for (const r of hits) {
@@ -522,8 +525,11 @@ export function registerSearchConsoleTools(server: McpServer) {
       },
     },
     tool(async (args) => {
-      const types = await query({ ...args, dimensions: ["searchAppearance"], rowLimit: 100 });
-      const totals = (await query({ ...args, dimensions: [], rowLimit: 1 }))[0];
+      const [types, totalRows] = await Promise.all([
+        query({ ...args, dimensions: ["searchAppearance"], rowLimit: 100 }),
+        query({ ...args, dimensions: [], rowLimit: 1 }),
+      ]);
+      const totals = totalRows[0];
       const detail = await Promise.all(types.map(async (t) => {
         const pages = await query({ ...args, dimensions: ["page"], rowLimit: args.pagesPerType, filters: [{ dimension: "searchAppearance", operator: "equals", expression: t.keys.searchAppearance }] });
         return { appearance: t.keys.searchAppearance, clicks: t.clicks, impressions: t.impressions, ctr: t.ctr, position: t.position, shareOfImpressions: totals?.impressions ? round(t.impressions / totals.impressions, 3) : null, topPages: flatten(pages) };

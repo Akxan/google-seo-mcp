@@ -6,6 +6,26 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { GoogleAuth, OAuth2Client } from "google-auth-library";
 import { google } from "googleapis";
 
+// Read-only queries that Google sends as POST: safe to retry. Writes (creating a key event, a custom
+// dimension) are not on the list, so a timeout after the server already applied one is never replayed.
+const READ_ONLY_POST = /searchAnalytics\/query|:runReport|:batchRunReports|:runPivotReport|:batchRunPivotReports|:runFunnelReport|:runRealtimeReport|:checkCompatibility|urlInspection\/index:inspect/i;
+const TRANSIENT_CODES = new Set(["ECONNRESET", "ETIMEDOUT", "ECONNABORTED", "EAI_AGAIN", "EPIPE", "UND_ERR_SOCKET"]);
+
+/** Whether a failed Google API call should be retried: transient errors only, and POST only for read-only queries. Pure, for tests. */
+export function shouldRetryGoogle(err: { code?: string; response?: { status?: number }; config?: { method?: string; url?: unknown; retryConfig?: { currentRetryAttempt?: number; retry?: number } } }): boolean {
+  const cfg = err.config?.retryConfig;
+  if (!cfg || (cfg.currentRetryAttempt ?? 0) >= (cfg.retry ?? 0)) return false;
+  const status = err.response?.status;
+  const transient = status ? status === 429 || status >= 500 : TRANSIENT_CODES.has(String(err.code));
+  if (!transient) return false;
+  const method = String(err.config?.method ?? "GET").toUpperCase();
+  return method === "GET" || method === "HEAD" || (method === "POST" && READ_ONLY_POST.test(String(err.config?.url ?? "")));
+}
+
+// Every Google API call had no timeout (a stuck connection held a tool call until the client gave up)
+// and a 429 or 503 from Search Console or GA4 failed the whole tool on the first try.
+google.options({ timeout: 90_000, retryConfig: { retry: 2, retryDelay: 1000, shouldRetry: shouldRetryGoogle as never } });
+
 export const SCOPES = [
   "https://www.googleapis.com/auth/webmasters",
   "https://www.googleapis.com/auth/analytics.readonly",

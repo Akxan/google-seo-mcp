@@ -4,25 +4,56 @@ import { envValue } from "./env.js";
 /** Upper bound for a tool result; larger payloads are trimmed so one call cannot flood the model's context. */
 export const MAX_RESULT_CHARS = Number(envValue("SEO_MCP_MAX_RESULT_CHARS") ?? 120_000);
 
-/** Trim oversized arrays inside a result (longest arrays first) until it fits, and say what was cut. */
+type Path = (string | number)[];
+
+/** Arrays longer than 5 items anywhere in the value (up to 4 levels deep), e.g. `rows` inside each report of a batch. */
+function arraysIn(value: unknown, path: Path, out: { path: Path; len: number; size: number }[], depth = 0): void {
+  if (depth > 4 || !value || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    if (value.length > 5) out.push({ path, len: value.length, size: JSON.stringify(value).length });
+    value.forEach((v, i) => arraysIn(v, [...path, i], out, depth + 1));
+    return;
+  }
+  for (const [k, v] of Object.entries(value)) arraysIn(v, [...path, k], out, depth + 1);
+}
+
+function getAt(root: unknown, path: Path): unknown {
+  let cur = root as Record<string | number, unknown> | undefined;
+  for (const p of path) { if (!cur || typeof cur !== "object") return undefined; cur = cur[p] as Record<string | number, unknown> | undefined; }
+  return cur;
+}
+
+function setAt(root: Record<string | number, unknown>, path: Path, value: unknown): void {
+  let cur = root;
+  for (const p of path.slice(0, -1)) cur = cur[p] as Record<string | number, unknown>;
+  cur[path[path.length - 1]] = value;
+}
+
+const label = (path: Path) => path.slice(1).map((p, i) => (typeof p === "number" ? `[${p}]` : i ? `.${p}` : p)).join("") || "items";
+
+/** Trim oversized arrays inside a result (largest first, at any depth) until it fits, and say what was cut. */
 export function fitResult(data: unknown, max = MAX_RESULT_CHARS): { data: unknown; truncated?: string } {
   let text = JSON.stringify(data);
   if (text.length <= max || !data || typeof data !== "object") return { data };
-  const clone = JSON.parse(text) as Record<string, unknown>;
+  const holder = { root: JSON.parse(text) as unknown };
   const notes: string[] = [];
-  const arrays = Object.entries(clone).filter(([, v]) => Array.isArray(v) && (v as unknown[]).length > 5).sort((a, b) => JSON.stringify(b[1]).length - JSON.stringify(a[1]).length);
-  for (const [key, value] of arrays) {
-    const arr = value as unknown[];
+  const candidates: { path: Path; len: number; size: number }[] = [];
+  arraysIn(holder.root, ["root"], candidates);
+  candidates.sort((a, b) => b.size - a.size);
+  for (const c of candidates) {
+    if (text.length <= max) break;
+    const arr = getAt(holder, c.path);
+    if (!Array.isArray(arr) || arr.length <= 5) continue; // already removed with a parent, or trimmed
     let keep = arr.length;
     while (keep > 5 && text.length > max) {
       keep = Math.max(5, Math.floor(keep / 2));
-      clone[key] = arr.slice(0, keep);
-      text = JSON.stringify(clone);
+      setAt(holder, c.path, arr.slice(0, keep));
+      text = JSON.stringify(holder.root);
     }
-    if (keep < arr.length) notes.push(`${key}: ${keep} of ${arr.length} items`);
-    if (text.length <= max) break;
+    if (keep < arr.length) notes.push(`${label(c.path)}: ${keep} of ${arr.length} items`);
   }
-  if (text.length > max) { // still too big: fall back to a hard cut of long strings
+  const clone = holder.root as Record<string, unknown>;
+  if (text.length > max && !Array.isArray(clone)) { // still too big: fall back to a hard cut of long strings
     for (const [key, value] of Object.entries(clone)) if (typeof value === "string" && value.length > 2000) { clone[key] = value.slice(0, 2000) + "…"; notes.push(`${key}: string cut to 2000 chars`); }
     text = JSON.stringify(clone);
   }

@@ -10,7 +10,7 @@ import { imageSize, disableTypes } from "image-size";
 disableTypes(["icns", "jxl", "jxl-stream", "heif"]);
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { heartbeat, round, tool } from "../util.js";
-import { isQuestion } from "../text.js";
+import { contentWords, isQuestion } from "../text.js";
 import { auditPage, collectSitemapUrls, fetchWithTimeout, parseLinkHeader, parseRobots, robotsAllows } from "./web.js";
 
 async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
@@ -131,7 +131,9 @@ export function registerCrawlTools(server: McpServer) {
           thinPages: ok.filter((p) => p.wordCount < 300 && !p.noindex).map((p) => ({ url: p.url, words: p.wordCount })),
           canonicalMismatch: ok.filter((p) => p.canonical && normalizeUrl(p.canonical) !== normalizeUrl(p.url)).map((p) => ({ url: p.url, canonical: p.canonical })),
           imagesMissingAltTotal: ok.reduce((s, p) => s + p.imagesMissingAlt, 0),
-          orphanPages: orphans.slice(0, 200),
+          // Pages left in the queue may be the ones linking to these, so a truncated crawl cannot call them orphans.
+          orphanPages: queue.length ? undefined : orphans.slice(0, 200),
+          orphanPagesNote: queue.length && orphans.length ? `Not reported: the crawl stopped at maxPages with ${queue.length} URLs left, so ${orphans.length} sitemap URLs without an inbound link may be linked from pages not crawled. Raise maxPages to check them.` : undefined,
           crawledNotInSitemap: a.includeSitemap && sitemapUrls.size ? ok.filter((p) => !p.inSitemap && !p.noindex).map((p) => p.url).slice(0, 200) : undefined,
           leastLinkedPages: inlinkCounts.slice(0, 20),
           deepestPages: [...inlinkCounts].filter((x) => x.depth != null).sort((x, y) => (y.depth as number) - (x.depth as number)).slice(0, 10),
@@ -253,7 +255,8 @@ export function registerCrawlTools(server: McpServer) {
           const $main = $("main, article").first().length ? $("main, article").first() : $("body");
           const text = $main.text().toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, " ");
           const freq = new Map<string, number>();
-          for (const w of text.split(/\s+/)) if (w.length > 3 && !STOP.has(w) && !/^\d+$/.test(w)) freq.set(w, (freq.get(w) ?? 0) + 1);
+          // contentWords splits Chinese/Japanese into bigrams, which are kept even though they are short.
+          for (const w of contentWords(text)) if ((w.length > 3 || /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(w)) && !STOP.has(w) && !/^\d+$/.test(w)) freq.set(w, (freq.get(w) ?? 0) + 1);
           const terms = [...freq.entries()].sort((x, y) => y[1] - x[1]).slice(0, 80);
           const blocked = r.wordCount < 60 && /checking your browser|just a moment|verify you are human|access denied|enable javascript and cookies/i.test($("body").text());
           return { url, status: r.status, blocked: blocked || undefined, note: blocked ? "Anti-bot page returned instead of content; word counts and terms are not meaningful" : undefined, title: r.title.text, titleLength: r.title.length, descriptionLength: r.metaDescription.length, wordCount: r.wordCount, h1: r.headings.h1Count, h2: r.headings.h2Count, h3: r.headings.h3Count, lists: $main.find("ul, ol").length, tables: $main.find("table").length, images: r.images.total, internalLinks: r.links.internal, externalLinks: r.links.external, schema: r.structuredData, fetchMs: r.fetchMs, htmlKB: Math.round(r.htmlBytes / 1024), outline: r.headings.outline.map((h) => `${h.tag}: ${h.text}`), terms: Object.fromEntries(terms) };
@@ -334,11 +337,22 @@ export function registerCrawlTools(server: McpServer) {
       const prefixesByLang: Record<string, string[]> = {
         en: ["how", "what", "why", "when", "where", "which", "is", "can", "best", "vs", "near", "cheap", "price"],
         es: ["cómo", "qué", "por qué", "cuándo", "dónde", "cuál", "es", "mejor", "precio", "barato", "cerca de", "vs"],
+        ca: ["com", "què", "per què", "quan", "on", "quin", "millor", "preu"],
         de: ["wie", "was", "warum", "wann", "wo", "welche", "beste", "preis", "günstig"],
         fr: ["comment", "quoi", "pourquoi", "quand", "où", "quel", "meilleur", "prix", "pas cher"],
         it: ["come", "cosa", "perché", "quando", "dove", "quale", "migliore", "prezzo"],
+        pt: ["como", "o que", "por que", "quando", "onde", "qual", "melhor", "preço", "barato"],
+        ru: ["как", "что", "почему", "когда", "где", "какой", "лучший", "цена"],
+        uk: ["як", "що", "чому", "коли", "де", "який", "найкращий", "ціна"],
+        ar: ["كيف", "ما", "لماذا", "متى", "أين", "أفضل", "سعر"],
+        he: ["איך", "מה", "למה", "מתי", "איפה", "הכי טוב", "מחיר"],
+        zh: ["怎么", "如何", "为什么", "哪里", "哪个", "多少钱", "推荐", "价格"],
+        "zh-tw": ["怎麼", "如何", "為什麼", "哪裡", "哪個", "多少錢", "推薦", "價格"],
+        "zh-hk": ["點樣", "如何", "為什麼", "邊度", "幾錢", "推介", "價錢"],
+        ja: ["どう", "なぜ", "いつ", "どこ", "どれ", "おすすめ", "料金", "やり方"],
+        ko: ["어떻게", "왜", "언제", "어디", "추천", "가격", "방법"],
       };
-      const prefixes = a.questions ? (prefixesByLang[a.hl.split("-")[0]] ?? prefixesByLang.en) : [];
+      const prefixes = a.questions ? (prefixesByLang[a.hl.toLowerCase()] ?? prefixesByLang[a.hl.split("-")[0].toLowerCase()] ?? prefixesByLang.en) : [];
       const queries: { label: string; q: string }[] = [{ label: "seed", q: a.seed }, ...prefixes.map((p) => ({ label: p, q: `${p} ${a.seed}` })), ...(a.extraPrefixes ?? []).map((p) => ({ label: p, q: `${p} ${a.seed}` }))];
       if (a.alphabet) for (const c of "abcdefghijklmnopqrstuvwxyz") queries.push({ label: `+${c}`, q: `${a.seed} ${c}` });
       const fetchSuggest = async (q: string): Promise<string[]> => {

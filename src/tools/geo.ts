@@ -8,7 +8,7 @@ import { envValue } from "../env.js";
 import * as cheerio from "cheerio";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { round, tool, heartbeat, resolveDate } from "../util.js";
-import { isQuestion } from "../text.js";
+import { contentWords, countWords, firstWords, isQuestion, QUESTION_TERMS, splitSentences } from "../text.js";
 import { collectSitemapUrls, fetchWithTimeout, parseRobots, robotsAllows } from "./web.js";
 import { query as gscQuery } from "./gsc.js";
 
@@ -57,24 +57,7 @@ function typesOf(node: Record<string, unknown>): string[] {
 
 export { isQuestion };
 
-const STOP = new Set("the a an of in on to for and or is are with from by at as vs de la el los las en y o del al un una para con por que es se su lo mi".split(" "));
-const CJK_RUN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+/gu;
-const HAS_CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
-// Chinese and Japanese have no spaces between words, so runs of those scripts become character bigrams;
-// otherwise a whole heading would be one "word" and never overlap with anything.
-export function contentWords(s: string) {
-  const out: string[] = [];
-  for (const w of s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/)) {
-    if (!w) continue;
-    if (!HAS_CJK.test(w)) { if (w.length > 2 && !STOP.has(w)) out.push(w); continue; }
-    for (const run of w.split(CJK_RUN)) if (run.length > 2 && !STOP.has(run)) out.push(run);
-    for (const run of w.match(CJK_RUN) ?? []) {
-      if (run.length === 1) continue;
-      for (let i = 0; i + 1 < run.length; i++) out.push(run.slice(i, i + 2));
-    }
-  }
-  return out;
-}
+export { contentWords };
 
 // Hebrew and Arabic glue prepositions/articles to the next word (ה+, ב+, ו+…; ال, وال, بال…), so "ברובע" must
 // still match "הרובע". The extra forms are only used for matching, never shown.
@@ -309,7 +292,7 @@ function analyzePage(url: string, $: cheerio.CheerioAPI, html: string) {
     try { const u = new URL($(el).attr("href")!, url); if (u.hostname !== base.hostname && /^https?:$/.test(u.protocol)) { externalDomains.add(u.hostname); if (!/nofollow/i.test($(el).attr("rel") ?? "")) externalDofollow++; } } catch { /* ignore */ }
   });
   const text = $main.text().replace(/\s+/g, " ").trim();
-  const sentences = text.split(/(?<=[.!?。])\s+/);
+  const sentences = splitSentences(text);
   const statSentences = sentences.filter((s) => /\d/.test(s) && /(%|€|\$|km|min|hour|hora|year|año|people|personas|\d{4})/i.test(s)).length;
   // A summary block is usually introduced by a short label (a heading, a bold lead-in or a small caption),
   // so look at short elements as well as headings, in every supported language.
@@ -319,8 +302,8 @@ function analyzePage(url: string, $: cheerio.CheerioAPI, html: string) {
       const t = $(el).text().replace(/\s+/g, " ").trim();
       return t.length > 0 && t.length <= 60 ? isSummaryLabel(t) : /^.{2,40}?\s*[:：]/u.test(t) && isSummaryLabel(t.slice(0, 45));
     });
-  const wordCount = text ? text.split(" ").length : 0;
-  const avgParagraphWords = paragraphs.length ? Math.round(paragraphs.reduce((a, p) => a + p.split(" ").length, 0) / paragraphs.length) : 0;
+  const wordCount = countWords(text);
+  const avgParagraphWords = paragraphs.length ? Math.round(paragraphs.reduce((a, p) => a + countWords(p), 0) / paragraphs.length) : 0;
   const lastUpdatedVisible = hasUpdatedLabel(text.slice(0, 5000));
   return { h1, headings, questionHeadings, firstParagraph, h1Overlap, lists, tables, faqHeading, faqSchema, authorSchema, authorMeta, datePublished, dateModified, lastUpdatedVisible, externalDomains: [...externalDomains], externalDofollow, statSentences, summarySection, wordCount, avgParagraphWords, paragraphs: paragraphs.length, schemaTypes: [...new Set(nodes.flatMap(typesOf))], htmlBytes: Buffer.byteLength(html) };
 }
@@ -380,7 +363,7 @@ export function splitBlocks($: cheerio.CheerioAPI, maxBlocks = 80): AnswerBlock[
   let cur: AnswerBlock = { heading: "", level: 0, text: "", words: 0, hasList: false, hasTable: false, hasNumber: false };
   const push = () => {
     cur.text = cur.text.replace(/\s+/g, " ").trim().slice(0, BLOCK_TEXT_CAP);
-    cur.words = cur.text ? cur.text.split(" ").length : 0;
+    cur.words = countWords(cur.text);
     cur.hasNumber = /\d/.test(cur.text);
     if (cur.heading || cur.words) blocks.push(cur);
   };
@@ -406,10 +389,10 @@ export function splitBlocks($: cheerio.CheerioAPI, maxBlocks = 80): AnswerBlock[
 }
 
 export function sentences(text: string): string[] {
-  return text.split(/(?<=[.!?。！？])\s+/).map((x) => x.trim()).filter(Boolean);
+  return splitSentences(text);
 }
 
-const ASK = new Set("how what why when where which who whose can does do should is are best top cheapest nearest cómo como qué que por cuándo cuando dónde donde cuál cual quién quien cuánto cuanto mejor mejores puedo cerca wie was warum wann welche comment quoi pourquoi quand".split(" "));
+const ASK = QUESTION_TERMS;
 
 /** The terms an answer must actually contain: content words minus the interrogative itself. */
 export function questionTerms(question: string): string[] {
@@ -470,8 +453,8 @@ export function evaluateAnswer(question: string, block: AnswerBlock, weights?: M
   // where the answer actually starts: first sentence carrying most of the question
   let hitIndex = sents.findIndex((s) => coverage(q, stems(s), weights) >= 0.6);
   if (hitIndex < 0) hitIndex = bodyHit >= 0.6 ? 0 : -1;
-  const leadWords = hitIndex > 0 ? sents.slice(0, hitIndex).join(" ").split(" ").length : 0;
-  const answer = (hitIndex < 0 ? sents : sents.slice(hitIndex)).slice(0, 2).join(" ").split(" ").slice(0, 70).join(" ");
+  const leadWords = hitIndex > 0 ? countWords(sents.slice(0, hitIndex).join(" ")) : 0;
+  const answer = firstWords((hitIndex < 0 ? sents : sents.slice(hitIndex)).slice(0, 2).join(" "), 70);
   const issues: string[] = [];
   for (const want of expectationsOf(question)) {
     if (want === "number" && !block.hasNumber) issues.push("the question asks for a figure, the passage has no number");
@@ -606,7 +589,7 @@ export function registerGeoTools(server: McpServer) {
       const { urls } = await collectSitemapUrls(sitemapUrl, { maxUrls: 5000 });
       const filtered = urls.map((u) => u.loc).filter((u) => !a.excludePatterns.some((p) => u.includes(p))).slice(0, a.maxPages);
       const home = await loadPage(`${origin}/`);
-      const siteName = a.siteName ?? home.$("title").first().text().trim() ?? origin;
+      const siteName = a.siteName || home.$("title").first().text().trim() || origin; // `??` kept an empty <title> as the site name
       const summary = a.summary ?? home.$('meta[name="description"]').attr("content")?.trim() ?? "";
       const pages = await mapLimit(filtered, 5, async (url) => {
         try {
@@ -989,7 +972,9 @@ export function registerGeoTools(server: McpServer) {
         const checked = asked.filter((a) => !a.page || wanted.includes(a.page)).slice(0, args.maxQuestions);
         const fetched = await mapLimit(wanted, 4, async (url) => {
           try {
-            const { $ } = await loadPage(url);
+            const { res, $ } = await loadPage(url);
+            // A 404 or 500 page has passages too; judging the questions against it would report "missing" answers that are a broken URL.
+            if (!res.ok) return { url, blocks: [] as AnswerBlock[], error: `HTTP ${res.status}` };
             return { url, blocks: splitBlocks($), error: undefined as string | undefined };
           } catch (e) { return { url, blocks: [] as AnswerBlock[], error: (e as Error).message }; }
         });

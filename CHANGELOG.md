@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+- **Word counts, sentence splitting and term matching now work for Chinese and Japanese.** Counting spaces made a 2,000-character Chinese article "40 words", so `geo_page_score` withheld its depth points, `geo_answer_coverage` called every passage "thin" and the crawlers flagged thin content; sentences after 。！？ were not split at all. `countWords()` uses `Intl.Segmenter`, `splitSentences()` splits after CJK full stops without a following space, `compare_pages` and `cross_site_links` share the bigram-aware tokenizer, and stop words cover the 14 supported languages.
+- **Oversized results now trim nested arrays too.** `fitResult()` only shortened top-level arrays, so a batch result whose bulk sat in `reports[n].rows` could stay over the cap; it now trims the largest arrays at any depth and says which path was cut.
+- `site_crawl` no longer reports orphan pages when it stopped at `maxPages` (pages left in the queue may be the ones linking to them) and explains why instead.
+- `geo_answer_coverage` no longer judges questions against a 404 or 500 page.
+- `llms_txt_generate` falls back to the origin when the home page's `<title>` is empty instead of using an empty name.
+- The WordPress post index behind `gsc_opportunities` expires after 10 minutes instead of living until the next restart, so new posts get their IDs.
+
+### Changed
+- **Every Google API call has a 90-second timeout and retries transient failures** (429, 5xx, connection resets) twice with back-off. POSTs are retried only for read-only queries (Search Analytics, GA4 reports, URL Inspection), so a write such as creating a key event is never replayed.
+- **The tool catalogue is about 5% smaller**: `tools/list` no longer sends the `$schema` URL on every tool or the ±(2^53−1) bounds Zod adds to every integer. Arguments are still validated against the full schemas.
+- Independent requests run in parallel: `migration_check` fetches Search Console, the old sitemap and the Wayback Machine together, `gsc_opportunities` loads the WordPress post index alongside its query, and `gsc_rich_results_report` runs its two queries together.
+- `keyword_suggest` has question prefixes for Catalan, Portuguese, Russian, Ukrainian, Arabic, Hebrew, Chinese (simplified, Taiwan, Hong Kong), Japanese and Korean instead of falling back to English.
+
 ## [0.13.0] - 2026-11-27
 
 ### Fixed

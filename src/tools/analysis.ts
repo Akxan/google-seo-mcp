@@ -7,6 +7,7 @@ import { envValue } from "../env.js";
 import * as cheerio from "cheerio";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { heartbeat, resolveDate, round, tool } from "../util.js";
+import { contentWords } from "../text.js";
 import { collectSitemapUrls, fetchWithTimeout } from "./web.js";
 import { normalizePath, query as gscQuery } from "./gsc.js";
 import { buildDigest, renderDigest } from "../digest.js";
@@ -178,24 +179,32 @@ export function registerAnalysisTools(server: McpServer) {
     tool(async (a, extra) => {
       const stop = heartbeat(extra, "checking URLs on the new host");
       try {
-        const gsc = await gscQuery({ siteUrl: a.siteUrl, startDate: a.startDate, endDate: a.endDate, dimensions: ["page"], rowLimit: 25000 });
+        // The three sources are independent; fetch them together (the Wayback lookup alone can take two minutes).
+        const host = hostFromProperty(a.siteUrl);
+        const [gsc, sm, wb] = await Promise.all([
+          gscQuery({ siteUrl: a.siteUrl, startDate: a.startDate, endDate: a.endDate, dimensions: ["page"], rowLimit: 25000 }),
+          a.oldSitemapUrl ? collectSitemapUrls(a.oldSitemapUrl, { maxUrls: 5000 }) : Promise.resolve(null),
+          a.includeWayback
+            ? (async (): Promise<{ rows?: ReturnType<typeof parseCdxRows>; error?: string }> => {
+                try {
+                  const res = await fetchWithTimeout(waybackCdxUrl(host, a.waybackLimit, a.waybackFromYear), { headers: { Accept: "application/json" } }, 120_000);
+                  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                  return { rows: parseCdxRows(await res.json(), host) };
+                } catch (e) { return { error: `Internet Archive lookup failed: ${(e as Error).message}` }; }
+              })()
+            : Promise.resolve(null),
+        ]);
         const traffic = new Map<string, { clicks: number; impressions: number }>();
         for (const r of gsc) traffic.set(normalizePath(r.keys.page), { clicks: r.clicks, impressions: r.impressions });
-        const urls = new Map<string, string>(); // path -> original URL
+        const urls = new Map<string, string>(); // path -> original URL; merged in the same order as before: GSC, sitemap, Wayback
         for (const r of gsc) urls.set(normalizePath(r.keys.page), r.keys.page);
         let sitemapCount = 0;
-        if (a.oldSitemapUrl) { const sm = await collectSitemapUrls(a.oldSitemapUrl, { maxUrls: 5000 }); sitemapCount = sm.urls.length; for (const u of sm.urls) { const p = normalizePath(u.loc); if (!urls.has(p)) urls.set(p, u.loc); } }
+        if (sm) { sitemapCount = sm.urls.length; for (const u of sm.urls) { const p = normalizePath(u.loc); if (!urls.has(p)) urls.set(p, u.loc); } }
         let waybackCount = 0, waybackNew = 0;
-        let waybackError: string | undefined;
-        if (a.includeWayback) {
-          const host = hostFromProperty(a.siteUrl);
-          try {
-            const res = await fetchWithTimeout(waybackCdxUrl(host, a.waybackLimit, a.waybackFromYear), { headers: { Accept: "application/json" } }, 120_000);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const rows = parseCdxRows(await res.json(), host);
-            waybackCount = rows.length;
-            for (const r of rows) { const p = normalizePath(r.url); if (!urls.has(p)) { urls.set(p, r.url); waybackNew++; } }
-          } catch (e) { waybackError = `Internet Archive lookup failed: ${(e as Error).message}`; }
+        const waybackError: string | undefined = wb?.error;
+        if (wb?.rows) {
+          waybackCount = wb.rows.length;
+          for (const r of wb.rows) { const p = normalizePath(r.url); if (!urls.has(p)) { urls.set(p, r.url); waybackNew++; } }
         }
         const list = [...urls.entries()].map(([path, url]) => ({ path, url, ...(traffic.get(path) ?? { clicks: 0, impressions: 0 }) })).sort((x, y) => y.clicks - x.clicks || y.impressions - x.impressions).slice(0, a.maxUrls);
         const newOrigin = a.newHost.startsWith("http") ? new URL(a.newHost).origin : `https://${a.newHost}`;
@@ -252,8 +261,7 @@ export function registerAnalysisTools(server: McpServer) {
         gscQuery({ siteUrl: a.siteA, startDate: a.startDate, endDate: a.endDate, dimensions: ["query", "page"], rowLimit: 25000 }),
         gscQuery({ siteUrl: a.siteB, startDate: a.startDate, endDate: a.endDate, dimensions: ["query", "page"], rowLimit: 25000 }),
       ]);
-      const STOP = new Set("the a an of in on to for and or is are with from by at as de la el los las en y o del al un una para con por que es se su lo".split(" "));
-      const terms = (q: string) => q.toLowerCase().split(/\s+/).filter((w) => w.length > 2 && !STOP.has(w));
+      const terms = (q: string) => contentWords(q); // stop words dropped; Chinese/Japanese split into bigrams
       type PQ = { page: string; queries: Map<string, number>; terms: Map<string, number>; impressions: number };
       const build = (rows: typeof ra) => { const m = new Map<string, PQ>(); for (const r of rows) { if (r.impressions < a.minImpressions) continue; const p = m.get(r.keys.page) ?? { page: r.keys.page, queries: new Map(), terms: new Map(), impressions: 0 }; p.queries.set(r.keys.query, r.impressions); for (const t of terms(r.keys.query)) p.terms.set(t, (p.terms.get(t) ?? 0) + r.impressions); p.impressions += r.impressions; m.set(r.keys.page, p); } return [...m.values()]; };
       const A = build(ra), B = build(rb);

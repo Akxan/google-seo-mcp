@@ -224,14 +224,17 @@ async function runHelper<T = unknown>(site: WpSite, name: keyof typeof HELPERS, 
 }
 
 /** Cached index of published post URLs per site, used to map Search Console pages to post IDs. */
-const postIndexCache = new Map<string, { home: string; byPath: Map<string, { ID: number; title: string }> }>();
+// Kept for 10 minutes: the cache used to live as long as the process, so a post published after the last
+// deploy never got its ID in gsc_opportunities until the server restarted.
+const POST_INDEX_TTL_MS = 10 * 60_000;
+const postIndexCache = new Map<string, { home: string; byPath: Map<string, { ID: number; title: string }>; at: number }>();
 async function postIndex(site: WpSite) {
   const cached = postIndexCache.get(site.name);
-  if (cached) return cached;
+  if (cached && Date.now() - cached.at < POST_INDEX_TTL_MS) return cached;
   const data = await runHelper<{ home: string; posts: { ID: number; title: string; url: string; type: string }[] }>(site, "wp", "post_index", [], "{}");
   const byPath = new Map<string, { ID: number; title: string }>();
   for (const p of data.posts) byPath.set(normalizePathLocal(p.url), { ID: p.ID, title: p.title });
-  const entry = { home: data.home, byPath };
+  const entry = { home: data.home, byPath, at: Date.now() };
   postIndexCache.set(site.name, entry);
   return entry;
 }
