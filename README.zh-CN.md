@@ -39,7 +39,7 @@
 | `gsc_opportunities` | 展示高但排名在 8 到 20 位的关键词与页面，自动映射到 WordPress 文章 ID |
 | `gsc_cannibalization` | 同一关键词被多个页面分摊的情况 |
 | `gsc_index_coverage` | 批量 URL 检查，汇总索引状态；另给出收录该页的站点地图、引荐链接、带严重级别的富媒体结果问题，以及孤立页标记 |
-| `page_audit` | 抓取任意 URL：title、描述、canonical、robots、标题结构、缺 alt 图片、内外链、字数、结构化数据、问题清单 |
+| `page_audit` | 抓取任意 URL：title、描述（长度按显示宽度判断，中日韩字符算两格）、canonical、robots、标题结构、缺 alt 图片、内外链、字数（中日文也算得准）、结构化数据、缓存状态、问题清单；`fresh` 在刚发布后绕过缓存 |
 | `pagespeed` | PageSpeed Insights：性能与 SEO 得分、Core Web Vitals 实验室与真实用户数据、优化建议（需 `PAGESPEED_API_KEY`） |
 | `sitemap_check` | 拉取站点地图（支持索引与 gz），抽样或全量检查状态码 |
 | `robots_check` | 解析 robots.txt，判断 URL 对指定 UA 是否可抓取 |
@@ -73,7 +73,7 @@
 | `wikipedia_pageviews` | 通过 Wikidata 找到某个实体在各语言维基百科的条目，给出逐月浏览量、同比变化与季节性高峰（免费，无需密钥） |
 | `brand_mentions` | 全网品牌提及及是否已链接（需 `BRAVE_API_KEY`，免费额度） |
 | `reviews_snapshot` | Google 商家评分与最新评论（需 `GOOGLE_PLACES_API_KEY`，需开结算） |
-| `github_get_file` / `github_list_dir` / `github_search_code` / `github_list_commits` / `github_build_status` / `github_commit_files` / `github_commit_image` | 读写 GitHub 仓库：一次提交多个文件（整文件、对大文件做局部 find/replace、base64 二进制），从网址取图在服务器上转 webp、裁剪、生成变体后提交；静态站可从任何客户端修改（用 `GITHUB_TOKEN` 或本机 `gh` 登录）；`github_build_status` 查提交后站点是否真的构建成功并上线（检查项、部署记录，或对不回报状态的托管商直接抓页面验证） |
+| `github_get_file` / `github_list_dir` / `github_search_code` / `github_list_commits` / `github_build_status` / `github_commit_files` / `github_commit_image` | 读写 GitHub 仓库：一次提交多个文件（整文件、对大文件做局部 find/replace、base64 二进制），从网址取图在服务器上转 webp、裁剪、生成变体后提交；静态站可从任何客户端修改（用 `GITHUB_TOKEN` 或本机 `gh` 登录）；`github_build_status` 查提交后站点是否真的构建成功并上线（检查项、部署记录，或对不回报状态的托管商直接抓页面验证）；`github_get_file` 用 `find` 可以在整个文件里搜索，返回行号和字节偏移（私有仓库的代码搜索查不到内容时用它）；`github_build_status` 配了只读 Cloudflare 令牌后还能读 Workers Builds 与 Pages 的部署状态 |
 | `gmail_get_message` | 读取一封邮件的正文（纯文本或 HTML 转文本，支持分页），用于接收别人邮件发来的文章草稿或修改意见 |
 | `oauth_list_grants` / `oauth_revoke_grant` | 查看谁通过 OAuth 连着这台服务(客户端名、权限范围、调用次数、最后一次调用),并一键吊销;只有运营者令牌能看到这两个工具,通过 OAuth 连进来的客户端看不到 |
 | `gmail_find_attachments` / `github_commit_attachment` | 只读搜索已授权的 Gmail 邮箱并列出每封邮件的附件；把邮件里的照片在服务器上转 webp、裁剪、生成变体后直接提交进仓库，全程不经过客户端 |
