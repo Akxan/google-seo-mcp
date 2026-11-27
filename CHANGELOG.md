@@ -4,7 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+- **`github_get_file` can search a whole file**: `find` (with optional `regex`, `ignoreCase`, `context`, `maxMatches`) returns each match's line number, UTF-8 byte offset (usable as `offset`) and grep-style context instead of the content. This works on private repositories, where `github_search_code` often returns nothing because GitHub does not index them. Long single-line files are excerpted around the match, and regexes run with a 2-second timeout so a catastrophic pattern cannot stall the shared server.
+- **`github_build_status` reads Cloudflare Workers Builds and Pages deployments** for the commit when `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are set. A new `cloudflare` section shows status, branch, time and a dashboard link; a successful build counts as built, queued or running builds keep `waitSeconds` polling, and permission or API errors become a note instead of failing the tool. Hosted users never use the operator's Cloudflare account.
+
 ### Fixed
+- **`github_commit_files` no longer silently overwrites a commit another session made while the call was running.** It now reads every file at one resolved head commit, builds on exactly that commit and fast-forwards only; if the branch moved, it refuses with a clear "re-run" error instead of committing edits computed on stale content.
 - **Word counts, sentence splitting and term matching now work for Chinese and Japanese.** Counting spaces made a 2,000-character Chinese article "40 words", so `geo_page_score` withheld its depth points, `geo_answer_coverage` called every passage "thin" and the crawlers flagged thin content; sentences after 。！？ were not split at all. `countWords()` uses `Intl.Segmenter`, `splitSentences()` splits after CJK full stops without a following space, `compare_pages` and `cross_site_links` share the bigram-aware tokenizer, and stop words cover the 14 supported languages.
 - **Oversized results now trim nested arrays too.** `fitResult()` only shortened top-level arrays, so a batch result whose bulk sat in `reports[n].rows` could stay over the cap; it now trims the largest arrays at any depth and says which path was cut.
 - `site_crawl` no longer reports orphan pages when it stopped at `maxPages` (pages left in the queue may be the ones linking to them) and explains why instead.

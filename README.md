@@ -364,6 +364,7 @@ All settings live in `.env` (see [`.env.example`](.env.example), which documents
 | `BRAVE_API_KEY`, `PERPLEXITY_API_KEY`, `GOOGLE_PLACES_API_KEY` | optional: brand mentions, AI citation check, Google reviews |
 | `INDEXNOW_KEY`, `INDEXNOW_KEY_LOCATION` | optional: IndexNow submissions |
 | `GITHUB_TOKEN` | GitHub tools (falls back to `gh auth token`) |
+| `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | optional: a read-only Cloudflare API token (Account → Workers Scripts Read, Workers CI Read, Cloudflare Pages Read) and its account ID, so `github_build_status` can report Workers Builds and Pages deployments, which often do not report to GitHub |
 | `GMAIL_CREDENTIALS` | optional: authorized_user JSON written by `npm run auth -- --gmail` (Gmail read-only), for `gmail_find_attachments` / `github_commit_attachment` |
 | `WP_SITES` | JSON array of WordPress sites reachable over SSH; omit to disable `wp_*` tools |
 | `SEO_MCP_READ_ONLY=1` or `--read-only` | register no write tools |

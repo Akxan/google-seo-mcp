@@ -478,6 +478,7 @@ Cookie 为 `HttpOnly`、`SameSite=Lax`，HTTPS 下带 `Secure`；表单带 CSRF 
 | `BRAVE_API_KEY` | 无 | Brave Search，仅 `brand_mentions` |
 | `GOOGLE_PLACES_API_KEY` | 无 | Places API (New)，仅 `reviews_snapshot` |
 | `GITHUB_TOKEN` | 无 | GitHub 工具；未设时尝试 `gh auth token` |
+| `CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID` | 无 | 可选：只读的 Cloudflare API 令牌（账户权限 Workers Scripts Read、Workers CI Read、Cloudflare Pages Read）和对应账户 ID，让 `github_build_status` 能读到往往不向 GitHub 回报的 Workers Builds 与 Pages 部署状态 |
 | `GMAIL_CREDENTIALS` | `~/.config/google-seo-mcp/gmail.json` | `npm run auth -- --gmail` 生成的只读 Gmail 授权文件，附件工具用；服务器上放 `secrets/gmail.json` |
 | `SEO_MCP_READ_ONLY` / `SEO_MCP_TOOLSETS` | 无 | 见运行模式 |
 | `SEO_MCP_HOSTED_CLIENT_ID`、`SEO_MCP_HOSTED_CLIENT_SECRET`、`SEO_MCP_HOSTED_SECRET`、`SEO_MCP_PUBLIC_URL`（可选 `SEO_MCP_DATA_DIR`、`SEO_MCP_HOSTED_CONTACT`、`SEO_MCP_HOSTED_VERIFIED`） | 无 | 托管模式：别人用 Google 登录、各自拿只读令牌，见上一节 |
